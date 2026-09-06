@@ -2,11 +2,11 @@
 
 The account service for [openplate](https://github.com/LowCarbCheck/openplate). Its first feature is end-to-end-encrypted sync between your devices.
 
-**What this server holds, in one paragraph.** An email address, an opaque ciphertext blob per account, wrapped key records it cannot unwrap, and each account's recovery code sealed under a key in the environment. It cannot read the ciphertext, not as a policy, but as a consequence of never receiving a key: your passphrase never leaves your device, and what reaches the server is a derived value that authenticates you and decrypts nothing. The escrowed recovery code is the deliberate exception, and it is what makes "forgot password" restore the diary rather than only the login. **It also means the operator of a hosted instance can open any account on it** — not through an endpoint, there is none, but by reading that column with `SERVER_SECRET` in hand. A self-hosted instance is its own operator. The full argument, including what it costs and why it was taken, is [ADR-0005](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
+**What this server holds, in one paragraph.** An email address, an opaque ciphertext blob per account, wrapped key records it cannot unwrap, and each account's recovery code sealed under a key in the environment. It cannot read the ciphertext, not as a policy, but as a consequence of never receiving a key: your passphrase never leaves your device, and what reaches the server is a derived value that authenticates you and decrypts nothing. The escrowed recovery code is the deliberate exception, and it is what makes "forgot password" restore the diary rather than only the login. **It also means the operator of a hosted instance can open any account on it**, not through an endpoint, there is none, but by reading that column with `SERVER_SECRET` in hand. A self-hosted instance is its own operator. The full argument, including what it costs and why it was taken, is [ADR-0005](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
 
-**And one thing that passes through without being held.** If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged — not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. This is also the one route where the zero-knowledge claim genuinely does not hold: the blob store cannot read what it holds, and the proxy can see everything that passes through it. Leave `UPSTREAM_API_KEY` unset and the route does not exist.
+**And one thing that passes through without being held.** If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged: not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. This is also the one route where the zero-knowledge claim genuinely does not hold: the blob store cannot read what it holds, and the proxy can see everything that passes through it. Leave `UPSTREAM_API_KEY` unset and the route does not exist.
 
-**Start with [`PROTOCOL.md`](./PROTOCOL.md).** It is the normative specification of the wire protocol, written so a third party can implement either side of it without reading this code — an alternative client against this service, or an alternative server that an openplate client can be pointed at with `SYNC_SERVER_URL`.
+**Start with [`PROTOCOL.md`](./PROTOCOL.md).** It is the normative specification of the wire protocol, written so a third party can implement either side of it without reading this code: an alternative client against this service, or an alternative server that an openplate client can be pointed at with `SYNC_SERVER_URL`.
 
 **This service is optional.** openplate is a complete, fully functional tracker without it: your diary lives in the browser, exports to JSON, and imports again on another device. Sync removes the manual step; it does not unlock anything.
 
@@ -48,7 +48,7 @@ That is the whole install. Postgres comes up alongside the service, the schema m
 
 `--project-directory .` is what keeps the repository root as the project root, so `.env` is read from where you created it and the image builds from the checkout rather than from `docker/`. If you would rather run the published image than build from source, copy `docker/compose.yml` out on its own, uncomment the `image:` line, and plain `docker compose up -d` beside it works.
 
-Then point your openplate app at it by setting `SYNC_SERVER_URL` to this service's public URL — the one a **browser** can reach, since the sync client runs in the page. If you want both halves in one file, openplate ships a combined [`docker/topologies/compose.sync.yml`](https://github.com/LowCarbCheck/openplate/blob/main/docker/topologies/compose.sync.yml) that brings up the app, this service and a shared Postgres together.
+Then point your openplate app at it by setting `SYNC_SERVER_URL` to this service's public URL, the one a **browser** can reach, since the sync client runs in the page. If you want both halves in one file, openplate ships a combined [`docker/topologies/compose.sync.yml`](https://github.com/LowCarbCheck/openplate/blob/main/docker/topologies/compose.sync.yml) that brings up the app, this service and a shared Postgres together.
 
 ### Signup is invite-only, and mail is optional
 
@@ -68,9 +68,9 @@ That prints a link (or, if you configured no `CLIENT_BASE_URL`, the raw token) *
 
 "Forgot password" works, and unlike the mailed reset this service used to have, it **restores the diary rather than only the login**.
 
-It works this way: the client generates the recovery code at signup and sends it to the server, which seals it into `accounts.recovery_code_escrow` under a subkey of `SERVER_SECRET`. `POST /v1/auth/reset/request` mails a link; `POST /v1/auth/reset/open` spends it once and hands the code back; the client then runs the ordinary recovery ceremony with it — new passphrase, re-wrapped data key, new code, re-sealed escrow, one transaction. **The reset endpoint writes nothing to the account.** Without the key records, what it returns is a string.
+It works this way: the client generates the recovery code at signup and sends it to the server, which seals it into `accounts.recovery_code_escrow` under a subkey of `SERVER_SECRET`. `POST /v1/auth/reset/request` mails a link; `POST /v1/auth/reset/open` spends it once and hands the code back; the client then runs the ordinary recovery ceremony with it: new passphrase, re-wrapped data key, new code, re-sealed escrow, one transaction. **The reset endpoint writes nothing to the account.** Without the key records, what it returns is a string.
 
-**The cost, stated plainly: you, as the operator, hold what it takes to open any account on your instance.** Not through an endpoint — there is none, and no admin call ever prints a recovery code — but by reading that column with `SERVER_SECRET` in hand. If you run an instance for other people, they are trusting you and not only the cryptography, and they should be told so.
+**The cost, stated plainly: you, as the operator, hold what it takes to open any account on your instance.** Not through an endpoint (there is none, and no admin call ever prints a recovery code), but by reading that column with `SERVER_SECRET` in hand. If you run an instance for other people, they are trusting you and not only the cryptography, and they should be told so.
 
 If you are your own operator, which is what self-hosting means, the older promise is intact: nobody but you can open your diary, and you already could.
 
@@ -161,18 +161,18 @@ arrive, use your own contact list.
 
 ### Three settings that matter more than the rest
 
-- **`SERVER_SECRET`** — back it up _with your database_. Three subkeys are derived from it: the pepper mixed into every stored auth verifier, the key behind the anti-enumeration KDF responses, and the AES key that seals each account's escrowed recovery code. A restored database with a lost secret is a database nobody can log into, **no recovery code gets anybody back in** (the pepper keys both verifiers), and **no password reset works either** (the escrow cannot be opened). The same is true of a deliberate rotation. There is no path that repairs this from the server side, so treat the secret as part of the backup, not as a setting.
-- **`TRUST_PROXY`** — set it to the number of reverse proxies in front of the service (`1` behind a single nginx or Traefik). Left at `false` behind a proxy, every request appears to come from the proxy's address and the per-IP throttle becomes one global bucket a single attacker can lock for all your users. Set to `true` with nothing in front, anyone can spoof `X-Forwarded-For` and skip the throttle entirely.
+- **`SERVER_SECRET`**: back it up _with your database_. Three subkeys are derived from it: the pepper mixed into every stored auth verifier, the key behind the anti-enumeration KDF responses, and the AES key that seals each account's escrowed recovery code. A restored database with a lost secret is a database nobody can log into, **no recovery code gets anybody back in** (the pepper keys both verifiers), and **no password reset works either** (the escrow cannot be opened). The same is true of a deliberate rotation. There is no path that repairs this from the server side, so treat the secret as part of the backup, not as a setting.
+- **`TRUST_PROXY`**: set it to the number of reverse proxies in front of the service (`1` behind a single nginx or Traefik). Left at `false` behind a proxy, every request appears to come from the proxy's address and the per-IP throttle becomes one global bucket a single attacker can lock for all your users. Set to `true` with nothing in front, anyone can spoof `X-Forwarded-For` and skip the throttle entirely.
 
-Your reverse proxy must also allow request bodies of about **2.75 MB**. Blobs are capped at 2 MB, base64 inflates them by a third, and nginx's default `client_max_body_size` is 1 MB — left at the default it rejects legitimate maximum-size syncs before this service ever sees or logs them. In nginx that is `client_max_body_size 3m;`.
+Your reverse proxy must also allow request bodies of about **2.75 MB**. Blobs are capped at 2 MB, base64 inflates them by a third, and nginx's default `client_max_body_size` is 1 MB: left at the default it rejects legitimate maximum-size syncs before this service ever sees or logs them. In nginx that is `client_max_body_size 3m;`.
 
-- **`SYNC_RESEARCH`** — off by default. Turning it on opens the `/v1/sync/contributions` and
+- **`SYNC_RESEARCH`**: off by default. Turning it on opens the `/v1/sync/contributions` and
   `/v1/sync/study` endpoints, which is what brings the openplate client's `/study` console to
   life, and makes this server hold a study graph of health-adjacent personal data.
   Read [`.env.example`](./.env.example) before you set it; it is a different undertaking from
   holding ciphertext you cannot read.
 
-Also worth knowing: **`ADMIN_TOKEN`** is the operator's break-glass credential, and it is optional. An account with `role: "admin"` reaches `/v1/admin` with its own access token, which is what puts the console in the app rather than in a shell. With neither configured nor existing, the whole `/v1/admin` tree answers the ordinary unknown-path 404 — not a 401, which would announce that a credential exists here worth guessing.
+Also worth knowing: **`ADMIN_TOKEN`** is the operator's break-glass credential, and it is optional. An account with `role: "admin"` reaches `/v1/admin` with its own access token, which is what puts the console in the app rather than in a shell. With neither configured nor existing, the whole `/v1/admin` tree answers the ordinary unknown-path 404, not a 401, which would announce that a credential exists here worth guessing.
 
 **`SERVER_PUBLIC_URL`** and **`CLIENT_BASE_URL`** are both optional and are needed together: they build the link in an invitation and in a reset mail. With neither, the admin API returns the raw token and you paste it yourself.
 
@@ -192,7 +192,7 @@ docker compose --project-directory . -f docker/compose.yml exec -T postgres \
 ```
 
 The database lives in the `postgres-data` volume declared by `docker/compose.yml`. Keep
-`SERVER_SECRET` with the dump, in whatever holds your other secrets — not in the dump itself.
+`SERVER_SECRET` with the dump, in whatever holds your other secrets, not in the dump itself.
 
 ### What your users should understand
 
@@ -202,7 +202,7 @@ If they forget the passphrase, "forgot password" mails them a link and their dia
 
 ### The admin API admits to nothing it is not asked with the right credential
 
-There is an operator API at `/v1/admin` — list accounts and invitations, read
+There is an operator API at `/v1/admin`: list accounts and invitations, read
 one account's metadata, aggregate storage counts, change what an account may do
 (`role`, its AI allowance, its display name), suspend and reactivate it, send it
 a password-reset letter, resend an invitation, and **delete an account with
@@ -227,13 +227,13 @@ operator and keeps working when every account is locked out, and an account
 whose `role` is `admin`, using its own access token. The second is what puts the
 console in the app at `/admin`, behind the same sign-in as everything else.
 
-With **neither** — no `ADMIN_TOKEN`, and the caller not an admin account — the
+With **neither** (no `ADMIN_TOKEN`, and the caller not an admin account), the
 whole `/v1/admin` tree answers the same `404` any unknown path does, to
 everybody. An instance that never configured it is indistinguishable from one
 built before the feature existed. A `401` there would announce that a
 credential exists and is merely locked.
 
-Under Compose, put the value in `.env` — `docker/compose.yml` already forwards
+Under Compose, put the value in `.env`: `docker/compose.yml` already forwards
 `ADMIN_TOKEN` into the container. Compose passes only the variables that file's
 `environment:` block names, so a variable you add to `.env` and nowhere else
 never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
@@ -275,7 +275,7 @@ Full detail, including the exact protocol, HKDF labels, and token lifetimes: [`P
 
 ## License
 
-openplate-sync is **open source** under the [MIT License](./LICENSE) (SPDX: `MIT`), matching the [openplate](https://github.com/LowCarbCheck/openplate) app. MIT is one of the most permissive licenses available: run it, read it, change it, fork it, redistribute it, host it for others — commercially or not — with no restrictions beyond keeping the copyright and license notice attached to any copy you distribute. Self-hosting this service is a first-class use, and so is running it as a hosted product for others.
+openplate-sync is **open source** under the [MIT License](./LICENSE) (SPDX: `MIT`), matching the [openplate](https://github.com/LowCarbCheck/openplate) app. MIT is one of the most permissive licenses available: run it, read it, change it, fork it, redistribute it, host it for others (commercially or not) with no restrictions beyond keeping the copyright and license notice attached to any copy you distribute. Self-hosting this service is a first-class use, and so is running it as a hosted product for others.
 
 ---
 
@@ -284,14 +284,14 @@ openplate-sync is **open source** under the [MIT License](./LICENSE) (SPDX: `MIT
 ```bash
 pnpm install
 pnpm run typecheck
-pnpm run test:unit          # node:test — handler cores, auth policy, protocol drift guard. No DB.
+pnpm run test:unit          # node:test, handler cores, auth policy, protocol drift guard. No DB.
 pnpm run test:integration   # boots the real app against a real Postgres
 pnpm run lint               # oxlint, zero warnings
 pnpm run build              # esbuild → dist/server.js
 pnpm run dev                # tsx watch
 ```
 
-`pnpm sync-api` is a thin HTTP client over the admin API — it imports no
+`pnpm sync-api` is a thin HTTP client over the admin API: it imports no
 database code, so it runs from a machine with no Postgres:
 
 ```bash
@@ -307,7 +307,7 @@ ADMIN_TOKEN=... pnpm sync-api invites create --email anna@example.org --daily-li
 ADMIN_TOKEN=... pnpm sync-api invites resend 7
 ```
 
-The token comes from `ADMIN_TOKEN` and nowhere else — there is no `--token`
+The token comes from `ADMIN_TOKEN` and nowhere else: there is no `--token`
 flag, because a credential in argv lands in shell history and is visible in
 `ps`. The target is `--url`, then `SYNC_SERVER_URL`, then
 `http://localhost:3000`. Deletion requires `--yes`. The CLI is not part of the
@@ -319,14 +319,14 @@ Two optional conveniences:
 - `docker compose -f docker/compose.dev.yml up -d` starts the contributor test database on port 5433, for the integration suite. Skip it if something already answers on that port.
 
 Linting is [oxlint](https://oxc.rs) plus a vendored `anti-slop` plugin under
-`tools/oxlint/anti-slop/` (MIT, © Dillon Mulroy — its own LICENSE ships beside
+`tools/oxlint/anti-slop/` (MIT, © Dillon Mulroy, its own LICENSE ships beside
 it). The gate is zero warnings, and `pnpm lint` runs first in the pre-push
 hook. The rule that shapes this codebase most is the one against unparsed
 input: request bodies enter as `JsonValue` and are decoded through
 `src/lib/json.ts`, which is the only module that inspects a JSON primitive at
 runtime.
 
-The integration suite targets a local Postgres at `localhost:5433` (user `postgres`, password `postgres`) and creates `openplate_sync_test` on first run. Override with `TEST_DATABASE_URL`. It deliberately does **not** use the self-hosting database in `docker/compose.yml` — that one is for self-hosters. If you have no Postgres on 5433, `docker/compose.dev.yml` is a one-service file that provides exactly that and nothing else.
+The integration suite targets a local Postgres at `localhost:5433` (user `postgres`, password `postgres`) and creates `openplate_sync_test` on first run. Override with `TEST_DATABASE_URL`. It deliberately does **not** use the self-hosting database in `docker/compose.yml`: that one is for self-hosters. If you have no Postgres on 5433, `docker/compose.dev.yml` is a one-service file that provides exactly that and nothing else.
 
 ### Layout
 
@@ -336,12 +336,12 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
 | `src/server/`         | Express glue, the sync handler cores, CORS, bearer auth, error handling.      |
 | `src/accounts/`       | Account policy as pure handlers over an injected `AccountStore`.              |
 | `src/db/`             | Drizzle schema and the two store implementations.                             |
-| `src/admin/`          | The admin metadata read contract — deliberately not part of `AccountStore`.   |
+| `src/admin/`          | The admin metadata read contract, deliberately not part of `AccountStore`.    |
 | `src/ai/`             | The completion proxy, its quota store, the minute limiter and the scrubber.  |
 | `src/mail/`           | The two letters, their strings, and the HTTP mailer that sends them.          |
 | `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                 |
-| `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only — it imports no database code.       |
-| `drizzle/migrations/` | Generated migrations. Never hand-written — see `src/db/schema.ts`.            |
+| `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only: it imports no database code.        |
+| `drizzle/migrations/` | Generated migrations. Never hand-written: see `src/db/schema.ts`.             |
 
 ### Invariants
 
@@ -351,5 +351,5 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
   timeout that an `AbortSignal` can only tighten, so an operator who set
   `UPSTREAM_TIMEOUT_MS=600000` would still be cut off at 300 with an error naming no knob.
 - **Handler cores stay pure and dependency-injected.** The shell owns Express, the database and the environment; the cores take a store, a clock and a token minter. That is why the auth suite tests rotation, reuse detection and revocation without a database.
-- **`src/protocol.ts` is a hand-maintained duplicate** of `openplate/app/lib/sync/engine/protocol.ts`. There is no shared package and no shared CI, so both repos carry a unit test asserting the constants against _transcribed literals_. Changing the protocol means editing four places — two sources and two tests — starting with PROTOCOL.md.
+- **`src/protocol.ts` is a hand-maintained duplicate** of `openplate/app/lib/sync/engine/protocol.ts`. There is no shared package and no shared CI, so both repos carry a unit test asserting the constants against _transcribed literals_. Changing the protocol means editing four places (two sources and two tests), starting with PROTOCOL.md.
 - **Migrations are generated, never written.** And journal timestamps are never hand-edited: the migrator applies only migrations newer than the last applied one, so an out-of-order value causes a later migration to be silently skipped at boot.

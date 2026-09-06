@@ -17,7 +17,7 @@ Each repo has a unit test asserting its constants against transcribed literals (
 
 ## 1. The one-paragraph summary
 
-The client holds all the keys. It serializes its whole local store, gzips it, encrypts it with AES-256-GCM under a key the server has never seen, and pushes the result as one opaque blob. The server stores bytes, versions them, and refuses writes that would clobber another device's. It also stores two small **key records** — the same data-encryption key wrapped under two different key-encryption keys, one derived from the user's passphrase and one from a recovery code — so a second device can bootstrap. The server cannot decrypt any of it. That is not a policy; it is what the math permits.
+The client holds all the keys. It serializes its whole local store, gzips it, encrypts it with AES-256-GCM under a key the server has never seen, and pushes the result as one opaque blob. The server stores bytes, versions them, and refuses writes that would clobber another device's. It also stores two small **key records** (the same data-encryption key wrapped under two different key-encryption keys, one derived from the user's passphrase and one from a recovery code) so a second device can bootstrap. The server cannot decrypt any of it. That is not a policy; it is what the math permits.
 
 The picture below is one whole session. The version handshake runs first, and it is not
 advisory: on a mismatch, or on a service it cannot reach, the client stops there rather than
@@ -71,13 +71,13 @@ sequenceDiagram
 | **Role**          | `admin` or `member`. An admin's own access token authenticates `/v1/admin`.                  |
 
 **Protocol 2 replaced the handle with an email** (ADR-0005). Version 1's
-`Handle` — an opaque per-server identifier that could not contain an `@` — is
+`Handle`, an opaque per-server identifier that could not contain an `@`, is
 gone: the column, the parser and the rule. A client speaking version 1 must
 refuse to talk to a version 2 service rather than half-work; see §6.
 
 ## 3. Cryptography (client-side; the server implements none of it)
 
-A conforming server needs none of this section — it is here so an alternative _client_ can interoperate, and so a reviewer can check the claims.
+A conforming server needs none of this section; it is here so an alternative _client_ can interoperate, and so a reviewer can check the claims.
 
 ### 3.1 Key derivation
 
@@ -102,9 +102,9 @@ recovery code ──────────────────────
 - **The `recovery-auth` label is never the `recovery-kek` label.** That domain separation is load-bearing, not tidiness. The KEK branch derives the key that opens the diary; were the same output also sent to the server, this service would store an HMAC of the material that unwraps a DEK, and "the operator cannot read your data" would rest on SHA-256 being one-way rather than on the operator never having held the value. Both labels are frozen, neither is derived from the other, and a future change to either is a new `:v2` label rather than a redefinition (ADR-0004).
 - The server never stores `authHash` or `recoveryAuthHash` either. It stores `HMAC-SHA-256(serverPepper, ...)` of each, with the pepper held outside the database. See §5.8.
 - The recovery path deliberately skips Argon2id and uses an **empty HKDF salt**. That is correct, not an oversight: RFC 5869 §3.1 permits it when the input key material is already high-entropy, which a 160-bit random code is by construction. Only low-entropy human passphrases need a memory-hard stretch and a real salt.
-- **Recovery code**: 20 random bytes (160 bits), rendered in a Crockford-style base32 alphabet (`0123456789ABCDEFGHJKMNPQRSTVWXYZ` — no `O`, `I`, `L` to survive transcription) in groups of 5. Canonically, 32 characters with the grouping removed and uppercased; that is the form the server seals.
+- **Recovery code**: 20 random bytes (160 bits), rendered in a Crockford-style base32 alphabet (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no `O`, `I`, `L` to survive transcription) in groups of 5. Canonically, 32 characters with the grouping removed and uppercased; that is the form the server seals.
 - **The recovery code is ESCROWED on the server** (protocol 2, ADR-0005). The client no longer shows it to the person: it sends the raw code once in the signup body, and the server stores `iv(12) ‖ AES-256-GCM(escrowKey, code) ‖ tag(16)` in `accounts.recovery_code_escrow`, where `escrowKey` is a third frozen HMAC subkey of `SERVER_SECRET` (`openplate-sync:escrow-key:v1`, beside the verifier pepper and the dummy-descriptor key). A mailed reset (§5.12) hands the code back to the account holder, who then runs the ordinary §5.14 rotation with it. **The operator of a managed instance therefore holds what it takes to open a diary.** That is a real change to what this service is, it is stated here rather than buried, and it is argued in full in [`docs/adr/0005-organization-accounts-and-escrowed-recovery.md`](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
-- The escrow is over the CODE, not over `KEK_r` and not over the DEK. Nothing on the server derives a KEK, unwraps a DEK, or holds one — the code becomes a key only after a client runs HKDF over it. That buys no secrecy from the operator, who can run HKDF too; it buys a server whose code path contains no decryption of user data, which is what makes the claim checkable rather than promised.
+- The escrow is over the CODE, not over `KEK_r` and not over the DEK. Nothing on the server derives a KEK, unwraps a DEK, or holds one; the code becomes a key only after a client runs HKDF over it. That buys no secrecy from the operator, who can run HKDF too; it buys a server whose code path contains no decryption of user data, which is what makes the claim checkable rather than promised.
 - KEKs are 256-bit AES-GCM keys, imported non-extractable.
 
 ### 3.2 The envelope
@@ -122,7 +122,7 @@ parse:  split(iv, rest) ─► AES-256-GCM decrypt ─► gunzip ─► UTF-8 �
   {"accountId":<int>,"blobVersion":<int>,"payloadSchemaVersion":<int>}
   ```
 
-  Binding these defeats cut-and-paste (replaying a blob into a different account) and rollback (replaying an older version, or a payload from an incompatible local-store schema). A client must present the identical triple when decrypting or the tag check fails — which is the intended behaviour, not an error to work around.
+  Binding these defeats cut-and-paste (replaying a blob into a different account) and rollback (replaying an older version, or a payload from an incompatible local-store schema). A client must present the identical triple when decrypting or the tag check fails, which is the intended behaviour, not an error to work around.
 
 - **Compression** (`gzip`, RFC 1952) is applied to the plaintext **before** encryption. Ciphertext is incompressible, so it is compress-first or not at all. See §8 for why this matters and §9.2 for the honest statement of what it leaks.
 
@@ -138,17 +138,17 @@ parse:  split(iv, rest) ─► AES-256-GCM decrypt ─► gunzip ─► UTF-8 �
   }
   ```
 
-- **Wrapped DEK**: `iv ‖ AES-256-GCM(key=KEK, plaintext=DEK)`, **no AAD** — a wrapped DEK is not bound to any particular blob version. Length is always `12 + 32 + 16 = 60` bytes.
+- **Wrapped DEK**: `iv ‖ AES-256-GCM(key=KEK, plaintext=DEK)`, **no AAD**: a wrapped DEK is not bound to any particular blob version. Length is always `12 + 32 + 16 = 60` bytes.
 
 ### 3.3 Merge semantics (client-side)
 
-Conflicts are resolved per entity by `(lamport, deviceId)`: higher Lamport counter wins; ties break on lexicographic `deviceId`. Device wall-clock is explicitly **not** an ordering authority — it drifts and is trivially wrong across devices. A tombstone participates in the same comparison as a live value. Accepted v1 trade-off: whole-record last-writer-wins, so a concurrent offline edit to the _same_ entity on two devices loses the older write silently. No field-level merge, no conflict UI.
+Conflicts are resolved per entity by `(lamport, deviceId)`: higher Lamport counter wins; ties break on lexicographic `deviceId`. Device wall-clock is explicitly **not** an ordering authority; it drifts and is trivially wrong across devices. A tombstone participates in the same comparison as a live value. Accepted v1 trade-off: whole-record last-writer-wins, so a concurrent offline edit to the _same_ entity on two devices loses the older write silently. No field-level merge, no conflict UI.
 
 ### 3.4 The share wrap (ADR-0002)
 
 A **share** is a third wrapping of the same DEK, addressed to another account's
 public key. The server stores it, serves it to the one account it is addressed
-to, and holds no key for it — §9.1 is unchanged by this feature.
+to, and holds no key for it; §9.1 is unchanged by this feature.
 
 ```
 sender (grantor, holding recipientPub):
@@ -175,7 +175,7 @@ sender (grantor, holding recipientPub):
   it means a spliced row fails its tag check rather than decrypting into the
   wrong diary.
 - **The AAD binds the recipient's key fingerprint, not the grantee's account id.**
-  Substitution attacks the key, so the key is what the binding names — and the
+  Substitution attacks the key, so the key is what the binding names, and the
   grantee reconstructs the AAD from a fingerprint computed locally, so no
   server-supplied value enters the trust path.
 - `recipientKeyFingerprint` is `SHA-256` of the raw uncompressed public key. The
@@ -187,15 +187,15 @@ sender (grantor, holding recipientPub):
 which §7 defines as an opaque integer that never appears on the wire. An owner
 knows its own; a grantee does not know the grantor's. So a grantee attempts
 decryption across the schema versions its build supports and takes the one whose
-GCM tag verifies. This is cheap, and it is the intended behaviour — do not add a
+GCM tag verifies. This is cheap, and it is the intended behaviour; do not add a
 plaintext schema-version field to solve it.
 
 ### 3.5 The research contribution envelope (ADR-0003)
 
 A **contribution** is a reduced, date-bounded slice of the diary, encrypted to a
 study's public key. It is a different artifact from a share, not a narrower one:
-different payload, different key, different lifecycle, and **no DEK is involved**
-— the wrap is over the payload directly.
+different payload, different key, different lifecycle, and **no DEK is involved**;
+the wrap is over the payload directly.
 
 **The pseudonym.** A per-account random 256-bit root lives in the owner-private
 compartment, so it survives a recovery restore and reaches a second device.
@@ -208,7 +208,7 @@ pid = HMAC-SHA-256(root, "openplate-sync:study-pseudonym:v1" ‖ uint64be(studyA
 **The bytes are fixed, because an underspecified concatenation is two
 implementations that disagree in one deployment.** The label is its UTF-8
 bytes with no terminator; `studyAccountId` is **8 bytes, unsigned,
-big-endian, always eight** — never its decimal text and never a
+big-endian, always eight**, never its decimal text and never a
 minimal-length encoding. The output is the MAC's leading 16 bytes in the
 Crockford base32 alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (no check
 symbol, no hyphens), which is exactly 26 upper-case characters. A client
@@ -222,7 +222,7 @@ _not_ have that last property: with public inputs it reverses by enumeration.
 
 The pseudonym defends against the **researcher**, not the server. The server
 authenticates the push by bearer token and therefore knows the account behind
-every row regardless — see §9.2.
+every row regardless; see §9.2.
 
 **The envelope.**
 
@@ -244,13 +244,13 @@ same reasoning that put the curve in the name.
 **The AAD carries no account id, and neither does any study-side response.**
 This is the deliberate inversion of §5.16, where `grantorAccountId` is required
 because §3.2's AAD binds it. Every AAD field here is reconstructible by the
-researcher before decryption — four ride in the response, and the fingerprint she
+researcher before decryption: four ride in the response, and the fingerprint she
 computes locally from her own key.
 
 **The payload is a fixed tier**, selected by name. A study chooses a tier and a
 window; it never supplies a field list. v1 defines one:
 
-`daily-intake:v1` — one row per calendar day in the window, with `date` (day
+`daily-intake:v1`: one row per calendar day in the window, with `date` (day
 granularity, no timestamps), `energyKcal`, `proteinG`, `carbsG`, `fatG`,
 `fiberG`, `loggedEntryCount`. The count exists because a researcher cannot
 otherwise tell "ate nothing" from "did not log"; it is a count, never the
@@ -272,27 +272,27 @@ A new field is a protocol revision, never a configuration. See ADR-0003.
   a re-escrow after a rotation is comparable with what was there before, and a
   client that renders the code in groups of five can post back what it rendered.
   A conforming client accepts both forms too.
-- Every non-2xx response body is `{"error": "<human-readable text>"}`. The text is diagnostic only — clients must branch on the **status code**, never on the message.
+- Every non-2xx response body is `{"error": "<human-readable text>"}`. The text is diagnostic only; clients must branch on the **status code**, never on the message.
 - Requests exceeding the body limit are rejected with `413`.
 
 ### 4.1 Authentication
 
 A bearer token in an `Authorization: Bearer <token>` header. **No cookies, in either direction.**
 
-- `Access-Control-Allow-Origin: *`, and `Access-Control-Allow-Credentials` is never sent. Any openplate client — ours, a self-hoster's on their own domain, or a third-party implementation — can therefore talk to any instance of this service regardless of origin.
+- `Access-Control-Allow-Origin: *`, and `Access-Control-Allow-Credentials` is never sent. Any openplate client (ours, a self-hoster's on their own domain, or a third-party implementation) can therefore talk to any instance of this service regardless of origin.
 - That combination is safe precisely _because_ there is no ambient credential. A hostile page can issue a cross-origin request and will get a `401`, because the browser has nothing to attach automatically. This is the CSRF property cookies lack, and it is the reason the wide-open origin is a considered choice rather than a shortcut.
 - Unauthenticated callers get `401`. Authenticated-but-not-permitted callers get `403`. A conforming server must not conflate them.
 
-This replaced a same-origin session cookie that existed while the handler cores were mounted inside the openplate app. That change, and the move of the sync routes from `/api/sync` to `/v1/sync`, are **pre-1.0 and do not bump `PROTOCOL_VERSION`**: zero production blobs exist, there are no third-party implementations, and no deployed client can be broken by them. Once this document is published alongside a public release, that latitude ends — see §7.
+This replaced a same-origin session cookie that existed while the handler cores were mounted inside the openplate app. That change, and the move of the sync routes from `/api/sync` to `/v1/sync`, are **pre-1.0 and do not bump `PROTOCOL_VERSION`**: zero production blobs exist, there are no third-party implementations, and no deployed client can be broken by them. Once this document is published alongside a public release, that latitude ends; see §7.
 
 ### 4.2 Token lifecycle
 
-Two token kinds, both opaque random strings, both stored **only as SHA-256 digests**. A dumped token table yields nothing replayable, and unstretched SHA-256 is correct here because the pre-image is 256 bits of randomness — there is no dictionary to run.
+Two token kinds, both opaque random strings, both stored **only as SHA-256 digests**. A dumped token table yields nothing replayable, and unstretched SHA-256 is correct here because the pre-image is 256 bits of randomness; there is no dictionary to run.
 
 | Token     | Lifetime | Purpose                                                                               |
 | --------- | -------- | ------------------------------------------------------------------------------------- |
 | `access`  | 15 min   | Sent on every request. Short, because a leaked one is useful for as long as it lives. |
-| `refresh` | 30 days  | Exchanged for a new pair. Rotating — every use spends it.                             |
+| `refresh` | 30 days  | Exchanged for a new pair. Rotating: every use spends it.                              |
 
 **Why an opaque pair and not a JWT.** Revocation is load-bearing in this protocol: a passphrase change and a recovery-code rotation must invalidate every outstanding session _immediately_, and a user changing their passphrase under suspicion expects exactly that. A stateless token can only be made to expire, never to stop working, without adding the same server-side denylist that a database-backed opaque token already is.
 
@@ -301,7 +301,7 @@ Two token kinds, both opaque random strings, both stored **only as SHA-256 diges
 **Rotation and reuse detection.** Each pair carries a _family_ identifier that survives rotation.
 
 - `POST /v1/auth/refresh` with a valid refresh token revokes it and returns a fresh pair in the same family.
-- Presenting a refresh token that is **already revoked** is the reuse signal: the legitimate client rotated it, so whoever is presenting it now holds a copy they should not. The whole family is revoked. This logs out the attacker _and_ the real user, which is the correct outcome — the alternative leaves a thief with a working session.
+- Presenting a refresh token that is **already revoked** is the reuse signal: the legitimate client rotated it, so whoever is presenting it now holds a copy they should not. The whole family is revoked. This logs out the attacker _and_ the real user, which is the correct outcome; the alternative leaves a thief with a working session.
 - Access tokens minted by earlier rotations are deliberately left alone; they expire within minutes on their own, and revoking them at rotation time would break a request that is legitimately in flight.
 
 **Revocation triggers.** Every one of these revokes **all** outstanding `access` and `refresh` tokens for the account:
@@ -311,7 +311,7 @@ Two token kinds, both opaque random strings, both stored **only as SHA-256 diges
 - suspension by an operator
 - account deletion (by row cascade)
 
-`POST /v1/auth/logout` revokes one family — that device — and leaves the account's other sessions alone.
+`POST /v1/auth/logout` revokes one family (that device) and leaves the account's other sessions alone.
 
 **Session tokens are the only kind in `account_tokens`.** Until 0.5.0 that table also held two single-use LINK kinds, minted to be put in a message: one confirmed an address, the other redeemed a mailed recovery link. Both went with the mailer, and neither came back. Protocol 2 has no address confirmation at all (the invitation is the verification, §5.8) and its reset link **replaces no credential** (§5.12).
 
@@ -330,17 +330,17 @@ Both are 256 bits of randomness, both are stored only as a SHA-256 digest, and b
 
 Two families, under one versioned namespace:
 
-| Family               | Prefix                         | Auth                        |
-| -------------------- | ------------------------------ | --------------------------- |
-| Sync (§5.1–§5.5)     | `/v1/sync` (`SYNC_API_PREFIX`) | Bearer, always              |
-| Handshake (§5.6)     | `/health`                      | None                        |
-| Account (§5.7–§5.15) | `/v1/auth`                     | Mixed — stated per endpoint |
+| Family                  | Prefix                         | Auth                       |
+| ----------------------- | ------------------------------ | -------------------------- |
+| Sync (§5.1 to §5.5)     | `/v1/sync` (`SYNC_API_PREFIX`) | Bearer, always             |
+| Handshake (§5.6)        | `/health`                      | None                       |
+| Account (§5.7 to §5.15) | `/v1/auth`                     | Mixed: stated per endpoint |
 
-**A suspended account is refused everywhere.** `POST /login`, `POST /refresh`, `POST /recover`, `POST /recover-rotate`, every bearer-guarded route and the admin tree answer `403 {"error":"account-suspended"}` — that exact string, so a client can recognise it and say what happened. On `login` and the recovery paths the check runs AFTER the credential is verified, so an unknown address still gets the ordinary indistinguishable `401`.
+**A suspended account is refused everywhere.** `POST /login`, `POST /refresh`, `POST /recover`, `POST /recover-rotate`, every bearer-guarded route and the admin tree answer `403 {"error":"account-suspended"}`, that exact string, so a client can recognise it and say what happened. On `login` and the recovery paths the check runs AFTER the credential is verified, so an unknown address still gets the ordinary indistinguishable `401`.
 
-Paths in §5.1–§5.5 are written relative to `SYNC_API_PREFIX`; everything else is absolute.
+Paths in §5.1 to §5.5 are written relative to `SYNC_API_PREFIX`; everything else is absolute.
 
-### 5.1 `POST /blob` — push (compare-and-swap)
+### 5.1 `POST /blob`: push (compare-and-swap)
 
 Request:
 
@@ -348,7 +348,7 @@ Request:
 { "baseVersion": 3, "envelopeVersion": 1, "ciphertext": "<base64>" }
 ```
 
-- `baseVersion` — the `blobVersion` the client believes is currently stored. `0` asserts "this account has no blob yet".
+- `baseVersion`: the `blobVersion` the client believes is currently stored. `0` asserts "this account has no blob yet".
 - The write is accepted **only if** `baseVersion` equals the account's current version. This is the entire concurrency model. There is no force-push and no `If-Match`-less write.
 
 Responses:
@@ -363,14 +363,14 @@ Responses:
 
 **The 409 recovery loop is mandatory client behaviour**, not an optimization: pull `currentVersion`, decrypt it, merge it with local state (§3.3), re-encrypt with the AAD bound to the _new_ `blobVersion`, and push again with `baseVersion: currentVersion`. A client that treats `409` as a fatal error will strand the user's device permanently out of sync.
 
-### 5.2 `GET /blob` — pull
+### 5.2 `GET /blob`: pull
 
 | Status | Body                                                                                                                |
 | ------ | ------------------------------------------------------------------------------------------------------------------- |
 | `200`  | `{"blobVersion": 4, "envelopeVersion": 1, "ciphertext": "<base64>", "createdAt": "<iso>"}`                          |
-| `404`  | `{"error": "..."}` — this account has never pushed a blob. Not an error condition; it is how a fresh account looks. |
+| `404`  | `{"error": "..."}`: this account has never pushed a blob. Not an error condition; it is how a fresh account looks.  |
 
-### 5.3 `GET /key-records` — list
+### 5.3 `GET /key-records`: list
 
 ```json
 {
@@ -388,7 +388,7 @@ Responses:
 
 Returns `{"records": []}` for an account that has not completed setup. At most one record per `kind`.
 
-### 5.4 `PUT /key-records/:kind` — create or rotate (compare-and-swap)
+### 5.4 `PUT /key-records/:kind`: create or rotate (compare-and-swap)
 
 `:kind` is `passphrase` or `recovery`; anything else is `400`.
 
@@ -413,17 +413,17 @@ Responses:
 | Status | Body                                                                      |
 | ------ | ------------------------------------------------------------------------- |
 | `200`  | The stored record, same shape as a `GET /key-records` entry.              |
-| `409`  | `{"currentUpdatedAt": "<iso>" \| null}` — the CAS assertion did not hold. |
+| `409`  | `{"currentUpdatedAt": "<iso>" \| null}`: the CAS assertion did not hold.  |
 
 ### 5.5 `DELETE /key-records/:kind`
 
-`204`, no body. Idempotent — deleting a record that does not exist is still `204`.
+`204`, no body. Idempotent: deleting a record that does not exist is still `204`.
 
 > Deleting the **only remaining** key record makes every stored blob permanently undecryptable. The server does not prevent this; a client must not offer it without an unmistakable warning.
 >
-> **A share (§5.16) does not count as a key record here.** It is cryptographically a third wrap of the same DEK, but it is another person's capability — revocable by them, unverifiable by you, and dependent on their continued cooperation and honesty. Deleting both key records still bricks the account with live shares in existence, and no client may ever offer "recover your data through your dietician" as a recovery path.
+> **A share (§5.16) does not count as a key record here.** It is cryptographically a third wrap of the same DEK, but it is another person's capability, revocable by them, unverifiable by you, and dependent on their continued cooperation and honesty. Deleting both key records still bricks the account with live shares in existence, and no client may ever offer "recover your data through your dietician" as a recovery path.
 
-### 5.6 `GET /health` — version handshake
+### 5.6 `GET /health`: version handshake
 
 Unauthenticated, deliberately: a client must be able to discover that it is incompatible _before_ it has credentials, and a healthcheck that needed a token would be reporting on the token.
 
@@ -438,7 +438,7 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 
 `instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, and `ai` is `null` when no upstream key is configured.
 
-It is **descriptive, never authoritative**. `mail: true` does not promise a letter arrives, and `ai` reports what the operator configured rather than granting anything — an account with `dailyAiLimit: 0` gets a `403` whatever this says.
+It is **descriptive, never authoritative**. `mail: true` does not promise a letter arrives, and `ai` reports what the operator configured rather than granting anything; an account with `dailyAiLimit: 0` gets a `403` whatever this says.
 
 `signupMode` is **gone** in protocol 2, along with the setting it described: signup is invite-only on every instance, always (§5.8). A service that still publishes it is speaking version 1.
 
@@ -461,7 +461,7 @@ A client MUST treat `text` and `url` as hostile input. They come from whatever s
 
 ---
 
-### 5.7 `POST /v1/auth/kdf` — pre-login KDF descriptor
+### 5.7 `POST /v1/auth/kdf`: pre-login KDF descriptor
 
 Unauthenticated, IP-throttled. Returns the Argon2id salt and parameters a device needs to derive `authHash` before it can log in.
 
@@ -507,7 +507,7 @@ Unauthenticated, IP-throttled. **An invite is the only way to create an account*
 }
 ```
 
-**There is no `email` field, and that is the point.** The address comes from the invite row, inside the transaction. A body cannot claim a mailbox the operator did not write to, which is what makes the invitation itself the address verification: the person who received the letter is the person redeeming it, so there is no confirmation link and nothing left to confirm afterwards. `role` and `dailyAiLimit` come from the invite for the same reason — an account never asks for its own standing.
+**There is no `email` field, and that is the point.** The address comes from the invite row, inside the transaction. A body cannot claim a mailbox the operator did not write to, which is what makes the invitation itself the address verification: the person who received the letter is the person redeeming it, so there is no confirmation link and nothing left to confirm afterwards. `role` and `dailyAiLimit` come from the invite for the same reason: an account never asks for its own standing.
 
 `recoveryAuthHash`, `recoveryCode` and BOTH key records are **required**. Each was optional in protocol 1 and none is now:
 
@@ -515,13 +515,13 @@ Unauthenticated, IP-throttled. **An invite is the only way to create an account*
 - A `passphrase` record is what lets the passphrase decrypt anything; without it the account logs in and reads nothing, and the client has discarded the passphrase by the time it would find out.
 - A `recovery` record is what lets the escrowed code unwrap; without it a mailed reset delivers a credential that authenticates and opens nothing, discovered on the day it is needed.
 
-`recoveryCode` is validated as Crockford base32 of 20 bytes — 32 characters once spaces and hyphens are stripped and the value is uppercased — and canonicalised to that form before it is sealed. It is never logged, in any form, on any path.
+`recoveryCode` is validated as Crockford base32 of 20 bytes (32 characters once spaces and hyphens are stripped and the value is uppercased) and canonicalised to that form before it is sealed. It is never logged, in any form, on any path.
 
 | Status | Meaning                                                                                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `201`  | `{"account": AccountView, "tokens": {...}}` (§5.15). A session is always issued; there is nothing left to confirm.                                                        |
 | `400`  | An `authHash`, `recoveryAuthHash` or `recoveryCode` of the wrong shape; a descriptor without a 16-byte salt and positive Argon2id params; or `keyRecords` missing a kind. |
-| `403`  | `{"error":"invite-invalid"}` — the invite is missing, malformed, of another service, unknown, expired, revoked or already redeemed. All seven, one answer.                |
+| `403`  | `{"error":"invite-invalid"}`: the invite is missing, malformed, of another service, unknown, expired, revoked or already redeemed. All seven, one answer.                 |
 | `409`  | An account already exists for the invite's address. The invite is NOT consumed.                                                                                           |
 | `429`  | Throttled. `Retry-After` in seconds.                                                                                                                                      |
 
@@ -559,7 +559,7 @@ Unauthenticated, throttled per IP **and** email. A `401` counts against that buc
 
 Request `{"email": "...", "authHash": "..."}` → `200` `{"account": AccountView, "tokens": {...}}`.
 
-`400` when `email` is not a plausible address or `authHash` is not 32 base64-decoded bytes: the request never reaches the credential check, so this status carries no information about whether the account exists. `401` for an unknown account and for a wrong auth-hash, with **identical** body text and after **identical work**, because the verifier comparison runs on both branches against a full-width stand-in. `403 {"error":"account-suspended"}` when the account is suspended — checked AFTER the credential, so only somebody who has proved they own the account is told why the door is shut. `429` when throttled.
+`400` when `email` is not a plausible address or `authHash` is not 32 base64-decoded bytes: the request never reaches the credential check, so this status carries no information about whether the account exists. `401` for an unknown account and for a wrong auth-hash, with **identical** body text and after **identical work**, because the verifier comparison runs on both branches against a full-width stand-in. `403 {"error":"account-suspended"}` when the account is suspended, checked AFTER the credential, so only somebody who has proved they own the account is told why the door is shut. `429` when throttled.
 
 ### 5.10 `POST /v1/auth/refresh`
 
@@ -567,17 +567,17 @@ Unauthenticated (the refresh token is the credential). Request `{"refreshToken":
 
 ### 5.11 `POST /v1/auth/logout`
 
-Bearer. `204`. Revokes the caller's token family — this device only.
+Bearer. `204`. Revokes the caller's token family: this device only.
 
-### 5.12 `POST /v1/auth/reset/request` and `POST /v1/auth/reset/open` — the mailed reset
+### 5.12 `POST /v1/auth/reset/request` and `POST /v1/auth/reset/open`: the mailed reset
 
 These numbers were retired in 0.5.0, when `verify-email` and `request-reset` went with the mailer. Protocol 2 reuses them, and reusing them rather than taking two new ones is deliberate: what stands here now is the answer to what stood here before, and a reader following a `§5.12` reference from a source comment should land on the resolution rather than on a tombstone.
 
-**§5.12.1 `POST /v1/auth/reset/request`** — unauthenticated, throttled per (IP, email), NEVER cleared on success.
+**§5.12.1 `POST /v1/auth/reset/request`**: unauthenticated, throttled per (IP, email), NEVER cleared on success.
 
 Request `{"email": "anna@example.org"}` → `202 {}`, always.
 
-`202` for a known address, an unknown one and a malformed one alike. A conforming server MUST do the same work on both branches: mint the token, digest it, and only then skip the store write and the send when there is no account. That symmetry is the whole anti-enumeration argument, and it is the one this document previously recorded as MISSING — the old `request-reset` did the expensive work only for addresses that existed, so its timing said what its body did not.
+`202` for a known address, an unknown one and a malformed one alike. A conforming server MUST do the same work on both branches: mint the token, digest it, and only then skip the store write and the send when there is no account. That symmetry is the whole anti-enumeration argument, and it is the one this document previously recorded as MISSING: the old `request-reset` did the expensive work only for addresses that existed, so its timing said what its body did not.
 
 A `400` is never returned, not even for a value that is obviously not an address: the status code would become a free oracle for the shape of the addresses this instance holds, and there is nothing a caller could usefully do with the distinction.
 
@@ -585,7 +585,7 @@ The token is 32 random bytes, base64url, prefixed `sr_`. Only its SHA-256 digest
 
 When mail is not configured the send is a no-op and the endpoint still answers `202`. A self-hoster's users then have no reset; the operator's remedy is `POST /v1/admin/accounts/:id/reset-mail`, which returns the link.
 
-**§5.12.2 `POST /v1/auth/reset/open`** — unauthenticated, IP-throttled.
+**§5.12.2 `POST /v1/auth/reset/open`**: unauthenticated, IP-throttled.
 
 Request `{"resetToken": "sr_…"}` → `200`:
 
@@ -595,11 +595,11 @@ Request `{"resetToken": "sr_…"}` → `200`:
 
 The token is consumed in the SAME statement that reads it (`UPDATE … WHERE consumed_at IS NULL AND expires_at > now RETURNING`), so two requests carrying one token cannot both be answered. Unknown, spent and expired tokens are ONE `404 {"error":"reset-invalid"}` after identical work.
 
-**THIS ENDPOINT WRITES NOTHING TO THE ACCOUNT**, and that sentence is the whole difference from the flow §5.13 used to document. It hands back the recovery code the server already holds in escrow (§3.1); the client then runs the ORDINARY §5.14 `recover-rotate` ceremony with it — prove the code, set a new passphrase, re-wrap the DEK, mint a new code, re-escrow it, one transaction. Without the key records, what this returns is a string. A future change that let this path touch a verifier or a key record would have rebuilt the account-takeover flow ADR-0004 deleted, whatever it was called.
+**THIS ENDPOINT WRITES NOTHING TO THE ACCOUNT**, and that sentence is the whole difference from the flow §5.13 used to document. It hands back the recovery code the server already holds in escrow (§3.1); the client then runs the ORDINARY §5.14 `recover-rotate` ceremony with it: prove the code, set a new passphrase, re-wrap the DEK, mint a new code, re-escrow it, one transaction. Without the key records, what this returns is a string. A future change that let this path touch a verifier or a key record would have rebuilt the account-takeover flow ADR-0004 deleted, whatever it was called.
 
 **What it costs, stated rather than implied.** The reset works because the operator holds the recovery code. Read §3.1 and [`docs/adr/0005-organization-accounts-and-escrowed-recovery.md`](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md) before deciding to trust a hosted instance; the decision is about the operator, not about the cryptography.
 
-### 5.13 `POST /v1/auth/verify-email` — removed in 0.5.0, and not restored
+### 5.13 `POST /v1/auth/verify-email`: removed in 0.5.0, and not restored
 
 Gone with the mailer in 0.5.0, and protocol 2 does not bring it back even though this service mails again.
 
@@ -609,12 +609,12 @@ There is nothing left to confirm: an account is created by redeeming an invite A
 
 The recovery-code authenticator, and the two credential rotations. `recover-rotate` and `change-passphrase` take the same submission shape because they do the same thing; only the proof differs.
 
-**`POST /v1/auth/recover`** — unauthenticated, throttled per IP **and** email. Request `{"email": "...", "recoveryAuthHash": "<base64, 32 bytes>"}` → `200` `{"account": AccountView, "tokens": {...}}`.
+**`POST /v1/auth/recover`**: unauthenticated, throttled per IP **and** email. Request `{"email": "...", "recoveryAuthHash": "<base64, 32 bytes>"}` → `200` `{"account": AccountView, "tokens": {...}}`.
 
 What comes back is an ordinary session, deliberately not a lesser one: the holder of the recovery code is the account owner by construction, and a restricted "recovery mode" token would add a second authorization surface carrying no property the code does not already carry.
 
 ```jsonc
-// POST /v1/auth/recover-rotate — unauthenticated, proof is the recovery code
+// POST /v1/auth/recover-rotate: unauthenticated, proof is the recovery code
 {
   "email": "...",
   "recoveryAuthHash": "<the current recovery proof>",
@@ -625,7 +625,7 @@ What comes back is an ordinary session, deliberately not a lesser one: the holde
   "recoveryCode": "<the new code, in the clear>"           // REQUIRED whenever newRecoveryAuthHash is present
 }
 
-// POST /v1/auth/change-passphrase — bearer, proof is the current passphrase
+// POST /v1/auth/change-passphrase: bearer, proof is the current passphrase
 { "currentAuthHash": "...", "newAuthHash": "...", "kdfDescriptor": {...}, "keyRecords": [ ... ] }
 ```
 
@@ -650,7 +650,7 @@ Both recovery endpoints share **one** throttle bucket per (IP, email), and neith
 
 **What a rotation can and cannot do.** It restores **login**. It cannot restore **data**, because the server never held a key. A `change-passphrase` submitting `keyRecords: []` leaves a working account whose blob is permanently undecryptable, which is exactly why `recover-rotate` refuses that submission outright. A conforming client must say so, in those terms, before the user commits to the flow.
 
-**If the passphrase is lost, §5.12 is the way back**, and it works because the operator holds the code in escrow (§3.1). Protocol 1 said here that a lost passphrase and a lost code together ended an account permanently, with nobody able to open it. That sentence is now true only of an instance whose `SERVER_SECRET` is also lost — which is why that secret must be backed up WITH the database, and why losing it is worse than it looks.
+**If the passphrase is lost, §5.12 is the way back**, and it works because the operator holds the code in escrow (§3.1). Protocol 1 said here that a lost passphrase and a lost code together ended an account permanently, with nobody able to open it. That sentence is now true only of an instance whose `SERVER_SECRET` is also lost, which is why that secret must be backed up WITH the database, and why losing it is worse than it looks.
 
 **The honest form of the old warning is about the operator, not the mathematics.** A managed instance can open any account on it. A self-hosted instance is its own operator, so the old promise holds for the personal case. A conforming client says which of the two it is talking to, before a person puts a diary in it.
 
@@ -687,11 +687,11 @@ That is the only field an account may change about itself. `email` is the identi
 
 Deletion removes the account and, by cascade, every blob, key record, reset token and usage row it owns. There is no soft delete and no grace period. This is the self-serve erasure path, and it is complete by construction rather than by a cleanup job someone has to remember to run.
 
-### 5.16 Shares — `/v1/sync/shares` and `/v1/sync/shared` (ADR-0002)
+### 5.16 Shares: `/v1/sync/shares` and `/v1/sync/shared` (ADR-0002)
 
 **Present only when the deployment sets `SYNC_SHARING`.** Without it every path
 below answers the ordinary unknown-route `404`, to every caller, credentialed or
-not — the terminator is mounted _ahead_ of authentication, so an unconfigured
+not; the terminator is mounted _ahead_ of authentication, so an unconfigured
 instance is indistinguishable from one where the feature was never written.
 
 Both sides address a share by the **counterpart's account id**, never by a
@@ -703,14 +703,14 @@ pair, and that is what survives a DEK rotation.
 | Verb     | Path                        | Notes                                                                                                                                                                                                                                                                                                                        |
 | -------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PUT`    | `/shares/:granteeAccountId` | `{"wrappedDek": "<base64>", "recipientKeyFingerprint": "<string>", "expectedUpdatedAt": "<iso>" \| null}`. CAS exactly as §5.4: `null` asserts no share exists yet, any other value asserts the row last read had this `updatedAt`, and an **absent** key is a `400`. `409` returns `{"currentUpdatedAt": "<iso>" \| null}`. |
-| `GET`    | `/shares`                   | The grantor's own grants. **Never returns `wrappedDek`** — a blob addressed to somebody else's key has no use here, so it does not travel where nobody needs it.                                                                                                                                                             |
+| `GET`    | `/shares`                   | The grantor's own grants. **Never returns `wrappedDek`**: a blob addressed to somebody else's key has no use here, so it does not travel where nobody needs it.                                                                                                                                                              |
 | `DELETE` | `/shares/:granteeAccountId` | `204`, idempotent. A **hard delete**; there is no tombstone.                                                                                                                                                                                                                                                                 |
 
 **Grantee side.**
 
 | Verb     | Path                             | Notes                                                                                                                                                                                                                                  |
 | -------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/shared`                        | Shares addressed to this caller, each with its `wrappedDek` — only this caller can open it.                                                                                                                                            |
+| `GET`    | `/shared`                        | Shares addressed to this caller, each with its `wrappedDek`; only this caller can open it.                                                                                                                                             |
 | `GET`    | `/shared/:grantorAccountId/blob` | `{"grantorAccountId": <int>, "blobVersion": <int>, "envelopeVersion": <int>, "ciphertext": "<base64>", "createdAt": "<iso>"}`. **`grantorAccountId` is required**: §3.2's AAD binds it, so a grantee without it cannot decrypt at all. |
 | `DELETE` | `/shared/:grantorAccountId`      | `204`, idempotent. Lets a grantee drop a share aimed at them.                                                                                                                                                                          |
 
@@ -726,7 +726,7 @@ pair, and that is what survives a DEK rotation.
 - Unknown, foreign and never-pushed all answer the **same** `404`. Absence of a
   share must not confirm that an account exists.
 
-### 5.17 `POST /v1/sync/rotate-dek` — atomic DEK rotation (ADR-0002)
+### 5.17 `POST /v1/sync/rotate-dek`: atomic DEK rotation (ADR-0002)
 
 Bearer, as the account **owner**. One submission, one transaction:
 
@@ -747,7 +747,7 @@ service stores the result **all or nothing**.
 **Present on every deployment**, unlike §5.16. Rotation is not part of the
 sharing surface: it rewrites the caller's own blob and their own two key
 records, rows that exist on every account everywhere, and it is the answer to
-any belief that a DEK leaked — a restored backup, a lost device — on an
+any belief that a DEK leaked (a restored backup, a lost device) on an
 instance that has never shared anything. Gating the only mechanism that can
 retire a compromised DEK behind an unrelated flag would leave such an operator
 with no way to retire one.
@@ -756,7 +756,7 @@ with no way to retire one.
   rotation is atomic or it does not exist, and no sequence of individually
   committing endpoints may be documented or used as one. A partial application
   is the "logs in fine, decrypts nothing" brick §5.14 already refuses to
-  permit, with one more participant — a key record re-wrapped while the blob
+  permit, with one more participant: a key record re-wrapped while the blob
   write lost its CAS strands the owner, and a share re-wrapped while the blob
   write lost its CAS strands the clinician.
 - **`blob` is compare-and-swapped on `baseVersion`**, exactly as §5.1. A stale
@@ -768,7 +768,7 @@ with no way to retire one.
   `accounts.recovery_verifier` and the escrow (§3.1) **inside the same
   transaction** as the blob, the key records and the shares. A rotation that
   left those two on the OLD code produced an account whose escrowed code
-  authenticated and then unwrapped nothing — latent from the moment the
+  authenticated and then unwrapped nothing, latent from the moment the
   recovery code became the second authenticator, and fatal once a mailed reset
   (§5.12) began handing that code to people. The client does not show the new
   code to the person; it goes into the escrow and stays there.
@@ -781,17 +781,17 @@ with no way to retire one.
   `expectedUpdatedAt`: the submission itself is the concurrency unit.
 - **`shares` is the KEEP list, and every share row not named in it is deleted
   in the same transaction.** This inverts §5.14, where an untouched key record
-  is kept — deliberately, because these rows are somebody else's capability on
+  is kept, deliberately, because these rows are somebody else's capability on
   the caller's diary and silence must be the safe default. `shares: []`
   therefore revokes everything, and is valid; an **absent** `shares` key is a
   `400`, for the reason §5.4 requires `expectedUpdatedAt` to be written out.
-  On a deployment without `SYNC_SHARING` the list must be empty — a non-empty
+  On a deployment without `SYNC_SHARING` the list must be empty; a non-empty
   one is a `400`, since it asserts state that instance cannot hold.
 - **A named share that does not exist is a `400`**, rolled back whole, never
   treated as a grant. The grantee may have dropped their side; re-read
   `GET /v1/sync/shares` and resubmit.
 - **The retained older blob versions (§8) stay sealed under the OLD DEK** and
-  become dead weight the moment a rotation commits — unreadable to everyone,
+  become dead weight the moment a rotation commits, unreadable to everyone,
   including their owner. They are not deleted here: pruning clears them within
   five further pushes, and dropping them during a rotation would throw away
   the owner's only defence against a bad client write in the same operation.
@@ -799,16 +799,16 @@ with no way to retire one.
 | Status | Body                                                                                                                       |
 | ------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `200`  | `{"newVersion": 4, "keptShares": 1, "revokedShares": 2}`                                                                   |
-| `400`  | `{"error": "..."}` — a missing key-record kind, a malformed or absent field, a keep list naming a share that is not there. |
-| `409`  | `{"currentVersion": 5}` — the blob CAS did not hold. Nothing was written.                                                  |
-| `413`  | `{"error": "..."}` — the new blob exceeds `MAX_BLOB_BYTES`.                                                                |
+| `400`  | `{"error": "..."}`: a missing key-record kind, a malformed or absent field, a keep list naming a share that is not there.  |
+| `409`  | `{"currentVersion": 5}`: the blob CAS did not hold. Nothing was written.                                                   |
+| `413`  | `{"error": "..."}`: the new blob exceeds `MAX_BLOB_BYTES`.                                                                 |
 
 **Rotation is Tier 2 revocation, and the wording rules of §5.16 still bind.**
 Deleting a share row stops the server serving; rotating adds that future
 entries are sealed with a key the revoked party never had. Neither repossesses
 what was already downloaded, and no client may say otherwise.
 
-### 5.18 Research contributions — `/v1/sync/contributions` and `/v1/sync/study` (ADR-0003)
+### 5.18 Research contributions: `/v1/sync/contributions` and `/v1/sync/study` (ADR-0003)
 
 **Present only when the deployment sets `SYNC_RESEARCH`.** Absent, every path
 below answers the ordinary unknown-route 404 to every caller, credentialed or
@@ -819,7 +819,7 @@ not, with the terminator mounted ahead of authentication. Independent of
 
 | Verb     | Path                             | Notes                                                                                                                                                                                                                                                                                   |
 | -------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUT`    | `/contributions/:studyAccountId` | `{"pseudonym","schemaTier","body","contributionVersion"}`. CAS on a monotonic `contributionVersion`. The contribution is the cumulative dataset for the window, recomputed and re-pushed whole — the client always holds the source, so this row is a projection, never a primary copy. |
+| `PUT`    | `/contributions/:studyAccountId` | `{"pseudonym","schemaTier","body","contributionVersion"}`. CAS on a monotonic `contributionVersion`. The contribution is the cumulative dataset for the window, recomputed and re-pushed whole; the client always holds the source, so this row is a projection, never a primary copy.  |
 | `GET`    | `/contributions`                 | The contributor's own enrolments. Never returns `body`.                                                                                                                                                                                                                                 |
 | `DELETE` | `/contributions/:studyAccountId` | **Withdrawal.** One transaction: hard-delete the row, insert a pseudonym-keyed tombstone. `204`, idempotent.                                                                                                                                                                            |
 
@@ -836,40 +836,40 @@ it, it is identical for every row, and it is not a contributor identifier. The
 researcher needs it to rebuild §3.5's AAD, and per-row it would be noise.
 
 **The `contributionVersion` compare-and-swap.** The submitted value **is the new
-version**, not a base — it binds into the AAD, so it must be the value the
+version**, not a base; it binds into the AAD, so it must be the value the
 ciphertext was sealed under. The rule is **strictly greater than the stored
 one**: a client that recomputes and re-pushes the whole projection must never be
 wedged by a version that never left the device. A losing write is `409
 {"currentVersion": <int>}`, matching §5.1's shape.
 
 **The server validates `schemaTier` against the tiers this protocol defines.**
-The tier name is metadata, not content — it travels in the clear and the server
-already stores it — and without this check ADR-0003's prohibition 1 has no teeth
+The tier name is metadata, not content (it travels in the clear and the server
+already stores it) and without this check ADR-0003's prohibition 1 has no teeth
 anywhere but the client. An unknown tier is `400`.
 
 **The server does not validate the pseudonym's shape**, only that it is present
-and bounded. It cannot verify one — that would need the contributor's root — and
+and bounded. It cannot verify one (that would need the contributor's root) and
 a structural check would imply an authority it does not have.
 
 | Status | When                                                                         |
 | ------ | ---------------------------------------------------------------------------- |
 | `400`  | malformed body, unknown `schemaTier`, absent `contributionVersion`           |
-| `404`  | unknown study, unknown contribution, and any other not-found — one code path |
+| `404`  | unknown study, unknown contribution, and any other not-found: one code path  |
 | `409`  | `contributionVersion` not strictly greater than the stored one               |
 | `413`  | contribution exceeds `MAX_CONTRIBUTION_BYTES` (256 KiB)                      |
 
 **One pseudonym per study, enforced by the database.** Two contributors
 submitting the same pseudonym would silently merge into one participant series,
 and a researcher would analyse two people as one with nothing failing. An
-accidental collision is about 2^-128, so the constraint should never fire —
+accidental collision is about 2^-128, so the constraint should never fire,
 which is the point: it makes the corruption impossible rather than improbable.
 
 **Withdrawal is genuinely erasing on this side.** A contribution the study has
 not yet pulled reaches nobody. What the study already pulled cannot be
-repossessed — the tombstone carries the instruction, and honouring it is an
+repossessed: the tombstone carries the instruction, and honouring it is an
 ethics obligation this system states and cannot enforce.
 
-### 5.19 `POST /v1/chat/completions` — the AI proxy
+### 5.19 `POST /v1/chat/completions`: the AI proxy
 
 **Present only when the operator configured an upstream key.** Without one the
 path answers the ordinary unknown-path `404`, to everybody, credentialed or
@@ -909,7 +909,7 @@ the request body is a photograph of somebody's food:
 
 The request body carries a photograph, so the limit is sized for one:
 **`AI_MAX_REQUEST_BYTES`, default 8,000,000 bytes**. Base64 inflates an image
-by 4/3, so that carries a JPEG of about 5.7 MiB — a modern phone camera at
+by 4/3, so that carries a JPEG of about 5.7 MiB, a modern phone camera at
 default quality, which is what the client sends after downscaling.
 
 It is deliberately **unrelated to `MAX_BLOB_BYTES`** (§8). That bounds a diary
@@ -944,7 +944,7 @@ avoid.
 
 #### The allowance
 
-Each account carries `dailyAiLimit` — requests per **UTC day**, defaulting to
+Each account carries `dailyAiLimit`: requests per **UTC day**, defaulting to
 `0`. Every proxied response carries the account's position in it:
 
 | Header          | Meaning                                        |
@@ -961,7 +961,7 @@ Each account carries `dailyAiLimit` — requests per **UTC day**, defaulting to
 | `429`  | a sentence naming the reset instant | The allowance is spent. `Retry-After` is seconds to the next UTC midnight |
 | `429`  | a sentence naming the per-minute bound | More than `AI_RATE_LIMIT_PER_MINUTE` requests in any trailing 60 s   |
 
-`403 ai-not-allowed` is a machine code because a client MUST branch on it — it
+`403 ai-not-allowed` is a machine code because a client MUST branch on it; it
 means "this account will never succeed here until an operator changes
 something", which is a different message to show than "come back tomorrow". The
 two `429`s are sentences because there is nothing to branch on: a person reads
@@ -978,7 +978,7 @@ client that fires them together.
 | -------------------------------- | -------- | --------------------------------------------------------------------------------------- |
 | Connection refused / DNS failure  | released | The request never left this host                                                        |
 | Header timeout (no bytes yet)     | released | Nothing was served to us; our own bound gave up before the provider answered             |
-| Upstream `4xx`                    | released | The provider REFUSED it. It reached no model, so nobody billed it — and charging the account for the operator's own misconfiguration would let a broken proxy eat an organization's whole allowance in a minute |
+| Upstream `4xx`                    | released | The provider REFUSED it. It reached no model, so nobody billed it, and charging the account for the operator's own misconfiguration would let a broken proxy eat an organization's whole allowance in a minute  |
 | Upstream `5xx`                    | spent    | The provider accepted it and failed while serving. Generation may have run. Releasing here is a free infinite retry loop against exactly the provider that is flaking |
 | Body timeout / stream aborted     | spent    | Headers already arrived, so the provider ran it. That we failed to read the answer is our problem, not a refund |
 | Upstream `2xx`                    | spent    | Obviously                                                                                |
@@ -988,7 +988,7 @@ no prompt, no response, no model name, no timestamp finer than the day (§9.2).
 
 ---
 
-### 5.20 The admin API — `/v1/admin`
+### 5.20 The admin API: `/v1/admin`
 
 **Operator surface, not client surface.** An openplate client uses exactly one
 of these endpoints, and only when the signed-in account is an admin: the
@@ -1004,7 +1004,7 @@ Bearer`:
    what puts the console in the app rather than in a shell.
 
 With **neither** configured nor matching, the whole subtree answers the same
-`404` any unknown path does — to everybody. An instance that never configured
+`404` any unknown path does, to everybody. An instance that never configured
 an operator token is indistinguishable from one built before the feature
 existed. A `401` there would announce that a credential exists and is merely
 locked.
@@ -1034,7 +1034,7 @@ would leave the phone in somebody's pocket syncing for another quarter of an
 hour, which is not what an operator means by the word. Reactivating restores no
 session; the person signs in again.
 
-**An admin ACCOUNT cannot suspend, demote or delete itself** — `400`, with
+**An admin ACCOUNT cannot suspend, demote or delete itself**: `400`, with
 `{"error": "self-change"}`. An organization with one administrator who does
 that has locked everybody out of this tree, and the only remedy is a shell on
 the container. The static token is exempt, because it has no self and is the
@@ -1048,7 +1048,7 @@ and a timestamp. The reasoning is
 prohibitions 1, 2, 3, 5 and 8 ADR-0005 supersedes and whose prohibition on
 secrets in a response it does not.
 
-## 6. Version handshake — required, and required to fail closed
+## 6. Version handshake: required, and required to fail closed
 
 **A client MUST read this document from the service and check it before its first sync of a session.**
 
@@ -1061,7 +1061,7 @@ Rules:
 3. On any **mismatch**, the client **refuses to sync** and shows the user which side is older. It does not push, does not pull, does not retry, and does not silently degrade.
 4. If the handshake is unreachable or malformed, treat it as a mismatch. An unverifiable service is not a compatible one.
 
-The reference implementation is `checkProtocolCompatibility()` in both `protocol.ts` files — pure, total, and returning a user-presentable sentence rather than a boolean.
+The reference implementation is `checkProtocolCompatibility()` in both `protocol.ts` files, pure, total, and returning a user-presentable sentence rather than a boolean.
 
 **Why refusal rather than best-effort:** the blob is frequently the user's only copy of their data. A client that pushes an envelope a newer service frames differently, or decrypts one it half-understands, can corrupt that copy irrecoverably. A refused sync is a visible inconvenience; a silently wrong sync is a data-loss incident discovered weeks later. This protocol chooses the inconvenience every time.
 
@@ -1073,11 +1073,11 @@ The reference implementation is `checkProtocolCompatibility()` in both `protocol
 
 The two version numbers are independent on purpose: re-framing the crypto and re-shaping the HTTP API are different kinds of change with different blast radii.
 
-**Pre-1.0 latitude.** Until the first public release, breaking changes may be taken without the migration path a released protocol would need. Two were taken WITHOUT a version bump: the move from cookie to bearer authentication, and the move of the sync routes from `/api/sync` to `/v1/sync`. A third, 0.5.0's removal of email, was taken without one too and should not have been — see below. This paragraph is deleted at public release, and from then on the rules above are followed literally.
+**Pre-1.0 latitude.** Until the first public release, breaking changes may be taken without the migration path a released protocol would need. Two were taken WITHOUT a version bump: the move from cookie to bearer authentication, and the move of the sync routes from `/api/sync` to `/v1/sync`. A third, 0.5.0's removal of email, was taken without one too and should not have been (see below). This paragraph is deleted at public release, and from then on the rules above are followed literally.
 
 **0.5.0 changed the auth contract and did NOT bump the version, and that was the mistake this section now records.** It replaced `email` with `handle`, removed `verify-email` and `request-reset`, and added `recover` and `recover-rotate` (§5.14). Because the number stayed at `1`, the §6 handshake did not catch it: a client older than 0.5.0 posting `email` got a `400` it could not repair, while the version numbers matched and told it everything was fine.
 
-**0.6.0 bumps `PROTOCOL_VERSION` to 2, and does it for exactly that reason.** The changes are of the same class — the auth field is `email` again, signup requires an addressed invite and both key records, `signupMode` left the handshake, `AccountView` replaced the old account body, and two reset endpoints reuse §5.12 — but this time §6 catches them: a client speaking version 1 refuses to talk rather than half-working. Reasoning: [`docs/adr/0005-organization-accounts-and-escrowed-recovery.md`](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
+**0.6.0 bumps `PROTOCOL_VERSION` to 2, and does it for exactly that reason.** The changes are of the same class (the auth field is `email` again, signup requires an addressed invite and both key records, `signupMode` left the handshake, `AccountView` replaced the old account body, and two reset endpoints reuse §5.12), but this time §6 catches them: a client speaking version 1 refuses to talk rather than half-working. Reasoning: [`docs/adr/0005-organization-accounts-and-escrowed-recovery.md`](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
 
 ## 8. Size limits and the capacity plan
 
@@ -1087,31 +1087,31 @@ The two version numbers are independent on purpose: re-framing the crypto and re
 | Blob versions retained  | 5 (`BLOB_VERSION_RETENTION`) | Service, pruned oldest-first after each accepted write   |
 | Key records per account | 2 (one per `kind`)           | Service                                                  |
 
-**The capacity cliff, stated plainly.** One blob holds the account's _entire_ store. Food-log entries run roughly 400–700 bytes of JSON each before compression, so an uncompressed blob would cross 2 MiB within about 2–4 years of daily logging. That is not a theoretical concern; it is a date.
+**The capacity cliff, stated plainly.** One blob holds the account's _entire_ store. Food-log entries run roughly 400 to 700 bytes of JSON each before compression, so an uncompressed blob would cross 2 MiB within about 2 to 4 years of daily logging. That is not a theoretical concern; it is a date.
 
 `ENVELOPE_VERSION` 1 gzips the plaintext, which buys roughly an order of magnitude on JSON this repetitive (the same key names on every one of thousands of records) and pushes the cliff far enough out to not be the near-term problem. It does not remove it.
 
-**The planned fix, so it is not discovered under pressure:** chunked or per-entity blobs — many small ciphertexts with independent versions, instead of one monolith. That is a genuine change to the framing and the endpoints, so it will be a **protocol version bump**, not a patch. Operationally, the trigger to start that work is blob sizes crossing ~80% of the cap in the field, which the service logs a warning for (M128 spec 02). The cliff should be observable long before any user reaches it.
+**The planned fix, so it is not discovered under pressure:** chunked or per-entity blobs, many small ciphertexts with independent versions, instead of one monolith. That is a genuine change to the framing and the endpoints, so it will be a **protocol version bump**, not a patch. Operationally, the trigger to start that work is blob sizes crossing ~80% of the cap in the field, which the service logs a warning for (M128 spec 02). The cliff should be observable long before any user reaches it.
 
 ## 9. What the server knows
 
 ### 9.1 What it cannot know
 
-The server never receives the DEK, either KEK, the passphrase, or the recovery code. It stores `wrappedDek` blobs it has no key for. Decryption is not withheld by policy — it is unavailable.
+The server never receives the DEK, either KEK, the passphrase, or the recovery code. It stores `wrappedDek` blobs it has no key for. Decryption is not withheld by policy; it is unavailable.
 
 ### 9.2 What it does know
 
 Being honest about the metadata, because "end-to-end encrypted" is often heard as "the server knows nothing":
 
 - **Blob size**, and therefore an approximation of how much data the account holds. Compression makes this a fuzzier signal than it was, not a hidden one.
-- **Write frequency and timing** — when a device syncs, and how often.
+- **Write frequency and timing**: when a device syncs, and how often.
 - **Version numbers**: `blobVersion`, `envelopeVersion`, and the number of retained versions.
 - **KDF parameters and salt** for the passphrase record. These are not secrets; they exist to be served to a new device before login.
 - **Whether an account has completed setup** (has key records) and whether it has ever synced (has a blob).
 - **The account itself**: an **email address**, an optional display name, a role, a daily AI allowance, a suspension instant, an authentication verifier (a keyed hash of a keyed hash of the passphrase, see §5.8), a second verifier of the same construction over the recovery proof, and the account's KDF parameters. **The address names a person in the world**, which is a class of personal data 0.5.0 removed and 0.6.0 deliberately put back (ADR-0005): an organization's people are identified by the address their invitation arrived at, because that is the identifier they will still know in a month.
-- **The account's RECOVERY CODE, sealed** (`accounts.recovery_code_escrow`, §3.1). This is the entry on this list that a reader should stop at. It is AES-256-GCM under a subkey of `SERVER_SECRET`, so a dumped database alone does not open it — and the operator of a managed instance has both. **The operator of a managed instance can open any account on it.** Not through an endpoint, and not through any code path in this service, but by reading that column with the secret in hand and running the client's own HKDF. A self-hosted instance is its own operator, so the older promise holds there. Deciding whether to trust a hosted instance is therefore a decision about its operator.
-- **Pending invitations**: for each, an address, an optional name, a role and an allowance — belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
-- **AI usage**: one integer per account per UTC day. A count, never a log — no prompt, no response, no model, no timestamp beyond the day.
+- **The account's RECOVERY CODE, sealed** (`accounts.recovery_code_escrow`, §3.1). This is the entry on this list that a reader should stop at. It is AES-256-GCM under a subkey of `SERVER_SECRET`, so a dumped database alone does not open it, and the operator of a managed instance has both. **The operator of a managed instance can open any account on it.** Not through an endpoint, and not through any code path in this service, but by reading that column with the secret in hand and running the client's own HKDF. A self-hosted instance is its own operator, so the older promise holds there. Deciding whether to trust a hosted instance is therefore a decision about its operator.
+- **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
+- **AI usage**: one integer per account per UTC day. A count, never a log: no prompt, no response, no model, no timestamp beyond the day.
 - **Session metadata**: how many active sessions exist, when each was created, and when tokens were last rotated or revoked. Token values themselves are stored only as digests.
 - **The study graph**, on a deployment with `SYNC_RESEARCH` set (§5.18): which
   account contributes to which study, when, how often, and how large each
@@ -1125,7 +1125,7 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
   researcher never receives the mapping (§5.18 carries no account id),
   withdrawal hard-deletes the edge and leaves only a pseudonym, and a deployment
   without the flag has no table to hold a study graph.
-- **The sharing graph**, on a deployment with `SYNC_SHARING` set (§5.16): which account has granted read access to which other account, when the grant was made, and when the grantee exercises it. That is a relationship graph, and a genuine expansion of what this service knows, and in the setting the feature was built for — a patient and their dietician — an edge in that graph is itself health-adjacent personal data, because it says someone is under care. It is the minimum needed to authorise the read; both ends consent, since the grantor creates the row and the grantee can delete their side; and the edge is hard-deleted on revocation and cascades away when either account is deleted. A deployment that does not set `SYNC_SHARING` stores no such graph and has no table to put one in.
+- **The sharing graph**, on a deployment with `SYNC_SHARING` set (§5.16): which account has granted read access to which other account, when the grant was made, and when the grantee exercises it. That is a relationship graph, and a genuine expansion of what this service knows, and in the setting the feature was built for (a patient and their dietician), an edge in that graph is itself health-adjacent personal data, because it says someone is under care. It is the minimum needed to authorise the read; both ends consent, since the grantor creates the row and the grantee can delete their side; and the edge is hard-deleted on revocation and cascades away when either account is deleted. A deployment that does not set `SYNC_SHARING` stores no such graph and has no table to put one in.
 
 Not knowable from the above: what was eaten, when, how much, or anything else inside the payload.
 
@@ -1133,20 +1133,20 @@ Not knowable from the above: what was eaten, when, how much, or anything else in
 
 A conforming **sync** server needs, in full:
 
-1. The five endpoints of §5.1–§5.5 plus the `/health` handshake of §5.6.
-2. Per-account CAS on `blobVersion` — atomic. The reference implementation uses a `UNIQUE (accountId, blobVersion)` index and treats a unique-violation as a conflict, rather than row locking; that stays correct under `READ COMMITTED` and is simpler than `SELECT ... FOR UPDATE`. Any mechanism with the same guarantee is fine; a read-then-write without atomicity is **not**.
+1. The five endpoints of §5.1 to §5.5 plus the `/health` handshake of §5.6.
+2. Per-account CAS on `blobVersion`: atomic. The reference implementation uses a `UNIQUE (accountId, blobVersion)` index and treats a unique-violation as a conflict, rather than row locking; that stays correct under `READ COMMITTED` and is simpler than `SELECT ... FOR UPDATE`. Any mechanism with the same guarantee is fine; a read-then-write without atomicity is **not**.
 3. Per-account-and-kind CAS on key records via `expectedUpdatedAt`, with the same "absent field is a `400`" rule.
 4. Retention pruning to `BLOB_VERSION_RETENTION`.
 5. Byte-exact storage of `ciphertext` and `wrappedDek`. Never re-encode, normalize, trim, or "fix" them. Any mutation destroys the GCM tag and with it the user's data.
 
-Additionally, a server that also implements the **account** endpoints of §5.7–§5.15 must:
+Additionally, a server that also implements the **account** endpoints of §5.7 to §5.15 must:
 
 6. Serve a stable, real-shaped KDF descriptor for unknown addresses (§5.7), doing identical work on both branches, and rate-limit the endpoint by source address. A `404`, a lazily-derived dummy, or an unthrottled endpoint each re-opens the enumeration oracle the rest of the design closes, by response, by timing, or by volume.
 7. Store both verifiers as keyed hashes of the submitted `authHash` and `recoveryAuthHash` under a secret held outside the database. Never the submitted value itself, and never in plaintext.
 8. Apply §5.14's rotation submissions atomically, including the re-sealed escrow, and revoke every outstanding session on each of the triggers in §4.2.
 9. Take the account's address from the INVITE at signup and never from the request body (§5.8), and throttle `recover`, `recover-rotate` and `reset/request` on one shared bucket per (IP, email) that is never cleared on success. A server that lets a signup body name its own address has removed the only thing that verifies it.
 10. Answer `202` to every `reset/request` after identical work, and make `reset/open` write nothing to the account (§5.12). A reset that replaces a verifier is the account-takeover path this protocol deleted, whatever it is called.
-11. Refuse a suspended account at login, at refresh and on every bearer route, with `403 {"error":"account-suspended"}` — that exact string.
+11. Refuse a suspended account at login, at refresh and on every bearer route, with `403 {"error":"account-suspended"}`, that exact string.
 12. Cascade account deletion to blobs, key records, reset tokens and usage rows.
 
 A conforming server needs **none** of: the crypto in §3, JSON parsing of any payload, or knowledge of what a food log is.
@@ -1164,7 +1164,7 @@ Beyond §3 and the 409 loop of §5.1:
 - Derive the recovery proof under `openplate-sync:recovery-auth:v1` and **never** send `KEK_r`. The two are siblings over the same code, and sending the KEK branch would hand the server an HMAC of the value that opens the diary (§3.1).
 - After `POST /v1/auth/reset/open` hands back the recovery code, run the ORDINARY §5.14 `recover-rotate` with it: a new passphrase, a re-wrapped `passphrase` record, a new code, a re-wrapped `recovery` record and the new `recoveryCode` for the escrow. Stopping half way leaves an account whose escrow no longer matches its verifier.
 - Treat `404` from `GET /blob` as "new account", not as an error.
-- Send `authHash` — the `auth` HKDF branch of §3.1 — and never the passphrase, the Argon2id output, or `KEK_p`. Deriving the wrong branch is silent: it authenticates fine and produces a key that decrypts nothing.
+- Send `authHash` (the `auth` HKDF branch of §3.1) and never the passphrase, the Argon2id output, or `KEK_p`. Deriving the wrong branch is silent: it authenticates fine and produces a key that decrypts nothing.
 - Fetch the KDF descriptor (§5.7) before deriving anything on a new device. Do not assume the defaults; an account created under raised parameters will not derive correctly from them.
-- Keep the refresh token in the same storage tier as the access token and **never** reuse a spent one — a replay revokes the whole family and logs the user out (§4.2). Serialize refreshes; two tabs racing the same refresh token look exactly like a theft.
+- Keep the refresh token in the same storage tier as the access token and **never** reuse a spent one: a replay revokes the whole family and logs the user out (§4.2). Serialize refreshes; two tabs racing the same refresh token look exactly like a theft.
 - On `401`, refresh once and retry once. On a second `401`, send the user to log in rather than looping.
