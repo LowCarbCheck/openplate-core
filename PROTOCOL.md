@@ -19,6 +19,42 @@ Each repo has a unit test asserting its constants against transcribed literals (
 
 The client holds all the keys. It serializes its whole local store, gzips it, encrypts it with AES-256-GCM under a key the server has never seen, and pushes the result as one opaque blob. The server stores bytes, versions them, and refuses writes that would clobber another device's. It also stores two small **key records** — the same data-encryption key wrapped under two different key-encryption keys, one derived from the user's passphrase and one from a recovery code — so a second device can bootstrap. The server cannot decrypt any of it. That is not a policy; it is what the math permits.
 
+The picture below is one whole session. The version handshake runs first, and it is not
+advisory: on a mismatch, or on a service it cannot reach, the client stops there rather than
+pushing an envelope the other side may frame differently. §6 states that rule, §5.7 to §5.9
+are the sign-in it guards, and §5.1 is the push, including the compare-and-swap loss that a
+client must recover from.
+
+```mermaid
+%% alt: One session, in order: the version handshake, which refuses to sync on any mismatch, then the sign-in, then one compare-and-swap push.
+sequenceDiagram
+    participant C as Client
+    participant S as Sync service
+    C->>S: GET /health
+    S-->>C: protocolVersion, envelopeVersion
+    alt versions differ, or unreachable
+        C->>C: refuse to sync
+        Note over C: no push, no pull, no retry
+    else versions equal
+        C->>S: POST /v1/auth/kdf
+        S-->>C: salt, Argon2id params
+        C->>C: derive authHash, derive KEK
+        C->>S: POST /v1/auth/login
+        S-->>C: access token, refresh token
+        C->>C: encrypt snapshot under DEK
+        C->>S: POST /blob, baseVersion 3
+        alt baseVersion matches
+            S-->>C: 200, newVersion 4
+        else another device wrote first
+            S-->>C: 409, currentVersion 5
+            C->>S: GET /blob
+            C->>C: decrypt, merge, re-encrypt
+            C->>S: POST /blob, baseVersion 5
+            S-->>C: 200, newVersion 6
+        end
+    end
+```
+
 ## 2. Terminology
 
 | Term              | Meaning                                                                                      |
