@@ -5,6 +5,48 @@ All notable changes to `openplate-sync` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.7.0] - 2026-09-07
+
+### Added
+
+- **A person can report a wrong estimate, and this service can hold what they
+  send.** `POST /v1/feedback` takes an entry's figures, its consent record and
+  optionally the photograph. `GET`/`DELETE /v1/admin/feedback` let an
+  administrator read and remove one. A sweep deletes anything past the retention
+  window without an operator remembering to.
+
+  **This is the second place this service's zero-knowledge position does not
+  hold, and it is not the same shape as the first.** The AI proxy sees a
+  photograph and keeps nothing. This KEEPS what it is given, and an
+  administrator can look at it. Read
+  `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`
+  before you turn it on.
+
+- **`SYNC_FEEDBACK`, off by default.** Unset, the whole `/v1/feedback` and
+  `/v1/admin/feedback` tree answers the ordinary 404 any unknown path answers,
+  to everybody, with or without a valid token. An instance without it is
+  indistinguishable from one built before the feature existed, which is the same
+  bargain `SYNC_SHARING` and `SYNC_RESEARCH` make. `FEEDBACK_DAILY_LIMIT` and
+  `FEEDBACK_MAX_REQUEST_BYTES` bound it.
+
+- **The retention window is advertised on `GET /health`** (`instance.feedback.retentionDays`,
+  PROTOCOL.md 5.6), so the client shows the window this server will actually
+  apply rather than a number of its own. With the feature off the key is absent,
+  not null. The window is one constant here; there is no second copy anywhere to
+  drift from it.
+
+- **Migration `0010`.** `feedback_reports` and `feedback_images`, both cascading
+  from the account, so erasing an account removes its reports and its
+  photographs. The idempotency key is unique PER ACCOUNT, so one account cannot
+  burn a key value for another.
+
+- The image is stored in this Postgres, behind a `FeedbackImageStore` interface
+  with `put`, `get` and `delete`. There is no S3 client and no AWS dependency;
+  the interface exists so a later move is one adapter and no caller change.
+
+- Every read of a reported photograph is logged: which administrator, which
+  report, when.
+
 ## [0.6.2] - 2026-09-07
 
 - `PROTOCOL.md` now carries a sequence diagram of one session. It shows the
