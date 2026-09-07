@@ -33,6 +33,10 @@ test('a minimal valid environment parses with sane defaults', () => {
   // routes before anyone opts in safe (ADR-0002 / ADR-0003).
   assert.equal(config.sharingEnabled, false);
   assert.equal(config.researchEnabled, false);
+  // And the one whose absence protects a photograph rather than a ciphertext.
+  assert.equal(config.feedbackEnabled, false);
+  assert.equal(config.feedbackDailyLimit, 5);
+  assert.equal(config.feedbackMaxRequestBytes, 8_000_000);
 });
 
 test('a missing DATABASE_URL or SERVER_SECRET is fatal', () => {
@@ -203,6 +207,36 @@ test('SYNC_RESEARCH and SYNC_SHARING are independent flags', () => {
 
   // A typo must not silently mean "off" on a flag whose absence is a 404.
   assert.throws(() => parseConfig(baseEnv({ SYNC_RESEARCH: 'yes' })), /SYNC_RESEARCH/);
+});
+
+test('SYNC_FEEDBACK is off by default and implies nothing, and nothing implies it', () => {
+  // THE COST OF THIS ONE IS DIFFERENT IN KIND. Turning sharing or research on
+  // leaves this service holding more bytes it has no key for. Turning this on
+  // means the operator holds photographs of their users' food that they can
+  // look at (ADR-0006), so it must never arrive as a side effect of another
+  // flag.
+  const sharingAndResearch = parseConfig(baseEnv({ SYNC_SHARING: 'true', SYNC_RESEARCH: 'true' }));
+  assert.equal(sharingAndResearch.feedbackEnabled, false);
+
+  const feedbackOnly = parseConfig(baseEnv({ SYNC_FEEDBACK: 'true' }));
+  assert.equal(feedbackOnly.feedbackEnabled, true);
+  assert.equal(feedbackOnly.sharingEnabled, false);
+  assert.equal(feedbackOnly.researchEnabled, false);
+
+  // A typo must not silently mean "off" on a flag whose absence is a 404, and
+  // it must not silently mean "on" either.
+  assert.throws(() => parseConfig(baseEnv({ SYNC_FEEDBACK: 'yes' })), /SYNC_FEEDBACK/);
+});
+
+test('the two feedback bounds are operator knobs with sane defaults', () => {
+  const tuned = parseConfig(baseEnv({ FEEDBACK_DAILY_LIMIT: '20', FEEDBACK_MAX_REQUEST_BYTES: '2000000' }));
+  assert.equal(tuned.feedbackDailyLimit, 20);
+  assert.equal(tuned.feedbackMaxRequestBytes, 2_000_000);
+
+  // Zero is not "unlimited" and not "off": both are a misconfiguration that
+  // would read as a working instance refusing every report.
+  assert.throws(() => parseConfig(baseEnv({ FEEDBACK_DAILY_LIMIT: '0' })), /FEEDBACK_DAILY_LIMIT/);
+  assert.throws(() => parseConfig(baseEnv({ FEEDBACK_MAX_REQUEST_BYTES: '-1' })), /FEEDBACK_MAX_REQUEST_BYTES/);
 });
 
 test('an instance with nothing to say publishes no notice at all', () => {

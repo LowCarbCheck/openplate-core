@@ -19,6 +19,7 @@
  */
 import { relations, sql, type InferInsertModel, type InferSelectModel } from 'drizzle-orm';
 import {
+  boolean,
   check,
   customType,
   date,
@@ -795,6 +796,140 @@ export type InsertResearchWithdrawal = InferInsertModel<typeof researchWithdrawa
 export type SelectResearchWithdrawal = InferSelectModel<typeof researchWithdrawals>;
 
 // =============================================================================
+// Reported estimates (M200 spec 05)
+// =============================================================================
+
+/**
+ * A wrong measurement, reported by the person who saw it, with their consent.
+ *
+ * READ THIS BEFORE YOU CHANGE ANYTHING HERE. Every other table in this file
+ * holds something the operator cannot read: ciphertext, a digest, a counter, a
+ * sealed envelope. This one holds a person's figures in the clear, and
+ * `feedback_images` beside it holds their photograph. It is the SECOND place
+ * this service's zero-knowledge position does not hold, and it is not the same
+ * shape as the first: the AI proxy sees a photograph and keeps nothing, this
+ * KEEPS what it is given. See
+ * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
+ *
+ * THE WHOLE TABLE IS THE ALLOWLIST. Four things are stored: who reported it,
+ * what the figures were, whether an image came with it, and what wording the
+ * person agreed to and when. There is no diary content, no food name beyond
+ * what the reported entry itself carries, no device, no user agent and no IP.
+ * A column added here is a column an operator can read, so adding one is a
+ * privacy decision and belongs in the ADR before it belongs in this file.
+ *
+ * `onDelete: 'cascade'` on the account is the same erasure mechanism
+ * `sync_blobs` uses: deleting an account takes its reports, and through
+ * `feedback_images`'s own cascade its photographs, in the same statement.
+ */
+export const feedbackReports = pgTable(
+  'feedback_reports',
+  {
+    id: serial('id').primaryKey(),
+    accountId: integer('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /**
+     * The client's own key for this report, so a retried send is a no-op
+     * rather than a second report.
+     *
+     * UNIQUE PER ACCOUNT, NOT GLOBALLY, and the difference is a real one: a
+     * globally unique column lets any account permanently burn a key value for
+     * everybody else by sending it first. The client generates these, so the
+     * value space is whatever a client chooses, and a shared namespace across
+     * accounts is a denial of service with no upside.
+     */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /**
+     * The figures the person is disputing, verbatim as the client sent them.
+     *
+     * `jsonb` rather than columns because the server has no opinion about the
+     * shape of a measurement and must not grow one: a column per nutrient here
+     * would be this service learning the app's food model, which is the thing
+     * it has spent every other table not doing. The route bounds its SIZE and
+     * nothing else.
+     */
+    measurements: jsonb('measurements').$type<JsonObject>().notNull(),
+    /**
+     * Whether a photograph came with this report.
+     *
+     * STORED, NOT DERIVED FROM `feedback_images`. A report sent from a device
+     * whose photo cache had already evicted the image is a legitimate report
+     * with no image, and a reviewer has to be able to tell that apart from an
+     * image that was stored and later deleted by retention or erasure. A join
+     * that finds no row cannot answer which of the two happened.
+     */
+    hasImage: boolean('has_image').notNull(),
+    /**
+     * When the person agreed, by their own clock.
+     *
+     * A DEVICE-LOCAL FLAG PROVES NOTHING TO THE PERSON LOOKING AT THE IMAGE
+     * LATER, which is the whole reason this column and the one below are on
+     * the row rather than in the client's local storage. What was agreed to
+     * travels with what was sent.
+     */
+    consentAgreedAt: timestamp('consent_agreed_at').notNull(),
+    /**
+     * WHICH WORDING was shown, by version identifier, not the wording itself.
+     *
+     * The text lives in the client's locale bundles under version control, so
+     * an identifier plus a git history answers "what did this person actually
+     * read" exactly, and storing the paragraph on every row would only make
+     * that answer disagree with itself once somebody fixes a typo.
+     */
+    consentWordingVersion: text('consent_wording_version').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    // The idempotency guarantee, enforced by the database rather than by a
+    // read-then-write in the route: two retries that arrive together
+    // serialise on this index and exactly one row survives.
+    uniqueIndex('feedback_reports_account_key_idx').on(table.accountId, table.idempotencyKey),
+    // The per-account daily limit counts an account's rows for the current UTC
+    // day, and the admin list of spec 06 reads newest first.
+    index('feedback_reports_account_created_idx').on(table.accountId, table.createdAt),
+    check('feedback_reports_key_present', sql`length(${table.idempotencyKey}) > 0`),
+    check('feedback_reports_consent_version_present', sql`length(${table.consentWordingVersion}) > 0`),
+  ],
+);
+
+export type InsertFeedbackReport = InferInsertModel<typeof feedbackReports>;
+export type SelectFeedbackReport = InferSelectModel<typeof feedbackReports>;
+
+/**
+ * The photograph itself, in the Postgres this service already runs.
+ *
+ * A SEPARATE TABLE, AND THAT IS THE POINT. `FeedbackImageStore`
+ * (`feedback/feedback-image-store.ts`) is the only thing that touches it, so
+ * moving these bytes to an object store later is one adapter and no caller
+ * change. A `bytea` column on `feedback_reports` would have made every read of
+ * a report a read of a photograph, which is the opposite of what spec 06's
+ * admin list needs.
+ *
+ * NO S3, DELIBERATELY. An object store would mean a new vendor, a new secret,
+ * a new transfer question for a German health-adjacent product, and a fake
+ * bucket in a local gate that has no cloud CI. See the ADR.
+ */
+export const feedbackImages = pgTable('feedback_images', {
+  /**
+   * The report this image belongs to, and the primary key: one image per
+   * report, by construction rather than by a rule somebody has to enforce.
+   * `cascade` again, so an erased account leaves no orphaned bytes.
+   */
+  reportId: integer('report_id')
+    .primaryKey()
+    .references(() => feedbackReports.id, { onDelete: 'cascade' }),
+  /** The image type, so the bytes can be served back with an honest header. Bounded to an allowlist by the route. */
+  contentType: text('content_type').notNull(),
+  /** The photograph. The one column on this service that an operator can simply look at. */
+  bytes: bytea('bytes').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export type InsertFeedbackImage = InferInsertModel<typeof feedbackImages>;
+export type SelectFeedbackImage = InferSelectModel<typeof feedbackImages>;
+
+// =============================================================================
 // Relations
 // =============================================================================
 
@@ -812,6 +947,7 @@ export const accountsRelations = relations(accounts, ({ many }) => ({
   // purely by having contributions point at it (ADR-0003 D6).
   contributionsMade: many(researchContributions, { relationName: 'contributionsMade' }),
   contributionsReceived: many(researchContributions, { relationName: 'contributionsReceived' }),
+  feedbackReports: many(feedbackReports),
 }));
 
 export const accountTokensRelations = relations(accountTokens, ({ one }) => ({
@@ -862,4 +998,13 @@ export const researchContributionsRelations = relations(researchContributions, (
 
 export const researchWithdrawalsRelations = relations(researchWithdrawals, ({ one }) => ({
   study: one(accounts, { fields: [researchWithdrawals.studyAccountId], references: [accounts.id] }),
+}));
+
+export const feedbackReportsRelations = relations(feedbackReports, ({ one }) => ({
+  account: one(accounts, { fields: [feedbackReports.accountId], references: [accounts.id] }),
+  image: one(feedbackImages, { fields: [feedbackReports.id], references: [feedbackImages.reportId] }),
+}));
+
+export const feedbackImagesRelations = relations(feedbackImages, ({ one }) => ({
+  report: one(feedbackReports, { fields: [feedbackImages.reportId], references: [feedbackReports.id] }),
 }));

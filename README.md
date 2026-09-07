@@ -4,7 +4,11 @@ The account service for [openplate](https://github.com/LowCarbCheck/openplate). 
 
 **What this server holds, in one paragraph.** An email address, an opaque ciphertext blob per account, wrapped key records it cannot unwrap, and each account's recovery code sealed under a key in the environment. It cannot read the ciphertext, not as a policy, but as a consequence of never receiving a key: your passphrase never leaves your device, and what reaches the server is a derived value that authenticates you and decrypts nothing. The escrowed recovery code is the deliberate exception, and it is what makes "forgot password" restore the diary rather than only the login. **It also means the operator of a hosted instance can open any account on it**, not through an endpoint, there is none, but by reading that column with `SERVER_SECRET` in hand. A self-hosted instance is its own operator. The full argument, including what it costs and why it was taken, is [ADR-0005](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
 
-**And one thing that passes through without being held.** If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged: not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. This is also the one route where the zero-knowledge claim genuinely does not hold: the blob store cannot read what it holds, and the proxy can see everything that passes through it. Leave `UPSTREAM_API_KEY` unset and the route does not exist.
+**And two places the zero-knowledge claim does not hold.** Both are optional, both are off until an operator turns them on, and they are not the same shape.
+
+The first is the AI proxy. If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged: not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. It SEES a photograph and keeps nothing. Leave `UPSTREAM_API_KEY` unset and the route does not exist.
+
+The second is reported estimates. With `SYNC_FEEDBACK` on, a person who saw a wrong measurement can send that entry's figures and its photograph here, having agreed to it in plain words, and this service KEEPS what it is given: the photograph sits in the operator's database and the operator can look at it. That is a different undertaking from holding ciphertext nobody can read, and [ADR-0006](./docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md) states both holes side by side. Leave `SYNC_FEEDBACK` unset and the whole `/v1/feedback` subtree answers the ordinary unknown-path 404.
 
 **Start with [`PROTOCOL.md`](./PROTOCOL.md).** It is the normative specification of the wire protocol, written so a third party can implement either side of it without reading this code: an alternative client against this service, or an alternative server that an openplate client can be pointed at with `SYNC_SERVER_URL`.
 
@@ -127,6 +131,56 @@ the app knows not to offer a scan.
 
 Setting any of the removed variables (`SIGNUP_MODE`, `SIGNUPS_OPEN`, `EMAIL_FROM`, `SMTP_*`, `PIGEON_*`, `REQUIRE_EMAIL_VERIFICATION`) is a **boot failure**, not a no-op. See [`.env.example`](./.env.example) for why refusing to start is the safer answer.
 
+### Reported estimates, and what holding one costs you
+
+**Off by default. Read this whole section before you change that.**
+
+openplate can name a plate from a photograph, and sometimes it is wrong. With
+`SYNC_FEEDBACK=true`, a person looking at a wrong measurement can send you that
+entry's figures and the photograph they came from:
+
+```bash
+SYNC_FEEDBACK=true
+FEEDBACK_DAILY_LIMIT=5          # reports per account per UTC day, default 5
+FEEDBACK_MAX_REQUEST_BYTES=8000000   # per report, default 8 MB
+```
+
+They agree to it first, in a separate step with plain wording that names who can
+see the photograph and how long it is kept, and what they agreed to travels with
+the report: the timestamp and the version of the wording they were shown are
+stored on the row. A flag on their own device would prove nothing to anybody
+looking at that image afterwards.
+
+**What is stored, exhaustively.** The photograph, the figures from the entry
+being disputed, and the consent record. Not the diary, not a food name beyond
+what the reported entry itself carries, not an IP address, not a user agent, not
+a device identifier. An entry whose photograph the app had already evicted still
+reports, flagged as having no image, because the figures alone are still worth
+reading.
+
+**WHAT THIS COSTS YOU, PLAINLY.** You hold photographs of your users' food, in
+your database, and you can look at them. Every other write path on this service
+stores something nobody can read. This one does not, and no amount of care in
+the code changes that: it is the point of the feature. If you run an instance
+for other people, this is a promise you are now making to them, it belongs in
+whatever you told them about this server, and it is a change you should make
+deliberately rather than because a flag was there.
+
+**The bounds.** A report is capped in size and an account may store only so many
+a day, so a compromised client cannot drain your disk or your bandwidth. A
+retried report is one report: the client sends an idempotency key and a repeat
+stores nothing new, which is what lets the app queue a report durably and drain
+the queue when the phone finds a connection.
+
+The images go in the Postgres you already run and already back up. There is no
+S3 client here and no object-storage secret to hold: storage sits behind a
+`FeedbackImageStore` interface with `put`, `get` and `delete`, so a later move is
+one adapter and no change anywhere else.
+
+Leave `SYNC_FEEDBACK` unset and none of this exists. The whole `/v1/feedback`
+subtree answers the same `404` any unknown path does, to everybody, with or
+without a valid token.
+
 ### The two letters are the whole of what it sends
 
 An invitation and a password reset. Neither is a channel for anything else:
@@ -166,6 +220,10 @@ arrive, use your own contact list.
 
 Your reverse proxy must also allow request bodies of about **2.75 MB**. Blobs are capped at 2 MB, base64 inflates them by a third, and nginx's default `client_max_body_size` is 1 MB: left at the default it rejects legitimate maximum-size syncs before this service ever sees or logs them. In nginx that is `client_max_body_size 3m;`.
 
+- **`SYNC_FEEDBACK`**: off by default, and the one flag here that changes what kind of service
+  this is. Turning it on means you hold photographs of your users' food that you can read. See
+  [Reported estimates](#reported-estimates-and-what-holding-one-costs-you) above and
+  [ADR-0006](./docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md).
 - **`SYNC_RESEARCH`**: off by default. Turning it on opens the `/v1/sync/contributions` and
   `/v1/sync/study` endpoints, which is what brings the openplate client's `/study` console to
   life, and makes this server hold a study graph of health-adjacent personal data.

@@ -166,6 +166,36 @@ export interface ServiceConfig {
    */
   researchEnabled: boolean;
   /**
+   * Whether this instance accepts reported estimates (ADR-0006).
+   *
+   * `false` is the default, and it is the setting every deployment has until
+   * an operator deliberately changes it. It is not "mounted but refusing":
+   * the whole `/v1/feedback` subtree answers the ordinary unknown-path 404, to
+   * everybody, with or without a valid token (`server/create-app.ts`), for the
+   * reason `adminToken`, `sharingEnabled` and `researchEnabled` do the same.
+   *
+   * IT IS NOT LIKE THE OTHER THREE IN WHAT IT COSTS. Turning sharing or
+   * research on leaves this service holding more bytes it has no key for.
+   * Turning THIS on means the operator holds photographs of their users' food,
+   * in the clear, and can look at them. See
+   * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
+   */
+  feedbackEnabled: boolean;
+  /** How many reports one account may store per UTC day. `FEEDBACK_DAILY_LIMIT`, default 5. */
+  feedbackDailyLimit: number;
+  /**
+   * The largest request body `POST /v1/feedback` accepts, in bytes.
+   * `FEEDBACK_MAX_REQUEST_BYTES`, default 8 MB.
+   *
+   * SIZED FOR A PHOTOGRAPH AFTER BASE64, exactly as
+   * {@link ServiceConfig.aiMaxRequestBytes} is, and for the same reason: the
+   * decoded image cap is 5 MB and base64 inflates by 4/3, so a body limit at
+   * the image cap would reject a legal maximum-size report before the handler
+   * ran. It is a SEPARATE knob from the AI one because the two routes bound
+   * different things: one forwards a photograph, this one keeps it.
+   */
+  feedbackMaxRequestBytes: number;
+  /**
    * The operator's message to every client, or `null` — the default, and what
    * an instance with nothing to say has.
    *
@@ -402,6 +432,20 @@ const DEFAULT_UPSTREAM_TIMEOUT_MS = 120_000;
  */
 const DEFAULT_AI_MAX_REQUEST_BYTES = 8_000_000;
 
+/** The same 8 MB, for the same reason, on a route that KEEPS the photograph. See `Config.feedbackMaxRequestBytes`. */
+const DEFAULT_FEEDBACK_MAX_REQUEST_BYTES = 8_000_000;
+
+/**
+ * Reports per account per UTC day, by default.
+ *
+ * FIVE IS A BOUND ON ABUSE, NOT ON USEFULNESS. A person reporting a wrong
+ * estimate does it once for the entry in front of them; a compromised client
+ * looping on the endpoint is what this stops, and at five reports a day it
+ * cannot drain the operator's disk or bandwidth. An operator who wants more
+ * raises it knowing what each row costs them.
+ */
+const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
+
 /**
  * `UPSTREAM_BASE_URL` + `UPSTREAM_API_KEY`, both or neither.
  *
@@ -540,6 +584,13 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     adminToken: parseAdminToken(env),
     sharingEnabled: parseBoolean(env, 'SYNC_SHARING', false),
     researchEnabled: parseBoolean(env, 'SYNC_RESEARCH', false),
+    feedbackEnabled: parseBoolean(env, 'SYNC_FEEDBACK', false),
+    feedbackDailyLimit: parsePositiveInteger(env, 'FEEDBACK_DAILY_LIMIT', DEFAULT_FEEDBACK_DAILY_LIMIT),
+    feedbackMaxRequestBytes: parsePositiveInteger(
+      env,
+      'FEEDBACK_MAX_REQUEST_BYTES',
+      DEFAULT_FEEDBACK_MAX_REQUEST_BYTES,
+    ),
     notice: parseNotice(env),
     logLevel: parseLogLevel(env),
   };

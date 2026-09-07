@@ -10,10 +10,18 @@
  *
  * THE BODY IS A PLATE PHOTOGRAPH. It arrives here, it is serialised once, it is
  * handed to `undici`, and it is dropped when the promise settles. Nothing
- * writes it, nothing caches it, and nothing logs it. This is also the one place
- * where the service's zero-knowledge claim genuinely does not hold: the blob
- * store cannot read what it holds, and this route can see everything that
- * passes through it. ADR-0005 says so out loud, and `README.md` repeats it.
+ * writes it, nothing caches it, and nothing logs it. This is one of the two
+ * places where the service's zero-knowledge claim does not hold: the blob store
+ * cannot read what it holds, and this route can see everything that passes
+ * through it. ADR-0005 says so out loud, and `README.md` repeats it.
+ *
+ * THE OTHER ONE IS NOT THE SAME SHAPE, and M200 spec 05 added it. This route
+ * SEES a photograph and keeps nothing. `POST /v1/feedback`
+ * (`feedback/register-feedback-route.ts`, behind `SYNC_FEEDBACK`, off by
+ * default) KEEPS what it is given, in the operator's own Postgres, until
+ * somebody deletes it. Do not describe the two as one exception; see
+ * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`,
+ * which tables the difference row by row.
  *
  * ORDER OF OPERATIONS, and every step is where it is on purpose:
  *   1. identity   — no session on the request is a WIRING bug; fail closed.

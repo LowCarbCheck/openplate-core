@@ -26,6 +26,8 @@ import { createDrizzleShareStore } from '../../src/db/share-store.js';
 import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
 import { createDrizzleResearchStore } from '../../src/db/research-store.js';
 import { createDrizzleAiQuotaStore } from '../../src/ai/quota-store.js';
+import { createDrizzleFeedbackStore } from '../../src/feedback/feedback-store.js';
+import { createDrizzleFeedbackImageStore } from '../../src/feedback/feedback-image-store.js';
 import { createSilentLogger } from '../../src/logger.js';
 import { createThrottleStore, type ThrottleConfig } from '../../src/lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
@@ -123,6 +125,9 @@ export interface ServiceHarness {
 /** The production default (`AI_MAX_REQUEST_BYTES`), so a fixture exercises the real bound. */
 export const DEFAULT_AI_MAX_REQUEST_BYTES = 8_000_000;
 
+/** The production default (`FEEDBACK_MAX_REQUEST_BYTES`), so a fixture exercises the real bound. */
+export const DEFAULT_FEEDBACK_MAX_REQUEST_BYTES = 8_000_000;
+
 export const PERMISSIVE_THROTTLE: ThrottleConfig = {
   freeAttempts: 10_000,
   baseLockoutMs: 1,
@@ -170,6 +175,17 @@ export interface StartServiceOptions {
     advertisedModel?: string;
     maxRequestBytes?: number;
   } | null;
+  /**
+   * Absent (the default) boots the service the way every deployment boots
+   * today: `SYNC_FEEDBACK` unset, and the whole `/v1/feedback` subtree
+   * answering the ordinary unknown-path 404. `feedback.test.ts` opts in.
+   *
+   * The two bounds default HIGH and PRODUCTION-SIZED respectively, for the
+   * reason `PERMISSIVE_THROTTLE` exists: a suite that is not ABOUT the limits
+   * must not trip them, and `feedback-limits.test.ts` opts back in to small
+   * ones deliberately.
+   */
+  feedback?: { dailyLimit?: number; maxRequestBytes?: number } | null;
 }
 
 export async function startService(options: StartServiceOptions): Promise<ServiceHarness> {
@@ -208,6 +224,16 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           maxRequestBytes: options.ai.maxRequestBytes ?? DEFAULT_AI_MAX_REQUEST_BYTES,
         };
 
+  const feedbackSurface =
+    options.feedback == null
+      ? null
+      : {
+          reports: createDrizzleFeedbackStore(options.db),
+          images: createDrizzleFeedbackImageStore(options.db),
+          dailyLimit: options.feedback.dailyLimit ?? 10_000,
+          maxRequestBytes: options.feedback.maxRequestBytes ?? DEFAULT_FEEDBACK_MAX_REQUEST_BYTES,
+        };
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(options.db),
@@ -225,6 +251,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     },
     shares: options.sharing === true ? createDrizzleShareStore(options.db) : null,
     research: options.research === true ? createDrizzleResearchStore(options.db) : null,
+    feedback: feedbackSurface,
     ai: aiSurface,
     // `main.ts` builds this the same way, and the harness mirrors it rather
     // than omitting it: `/health` is the ONLY way a client learns whether this

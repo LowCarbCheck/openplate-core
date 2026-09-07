@@ -20,10 +20,11 @@ export type * from './contract-types.js';
 
 // HTTP composition.
 export { createApp } from './server/create-app.js';
-export type { CreateAppOptions, AdminSurfaceOptions } from './server/create-app.js';
+export type { CreateAppOptions, AdminSurfaceOptions, FeedbackSurfaceOptions } from './server/create-app.js';
 export { registerSyncRoutes } from './server/register-routes.js';
 export { registerAuthRoutes, AUTH_API_PREFIX } from './accounts/register-auth-routes.js';
 export { createAdminRoutes, ADMIN_API_PREFIX } from './server/admin-routes.js';
+export { registerFeedbackRoute, FEEDBACK_API_PREFIX } from './feedback/register-feedback-route.js';
 export { createAdminAuthMiddleware } from './server/admin-auth.js';
 export { createBearerAuthMiddleware, createEntitledUserResolver, getRequestSession } from './server/bearer-auth.js';
 
@@ -38,6 +39,10 @@ export { createDrizzleAccountStore } from './db/account-store.js';
 export { createDrizzleStorageAdapter } from './db/storage-adapter.js';
 export { createDrizzleAdminStore } from './db/admin-store.js';
 export { createDrizzleInviteStore } from './db/invite-store.js';
+export { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
+export type { FeedbackStore, SubmitFeedbackInput, SubmitFeedbackResult } from './feedback/feedback-store.js';
+export { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
+export type { FeedbackImage, FeedbackImageStore } from './feedback/feedback-image-store.js';
 export type * from './admin/admin-store.js';
 export { inviteStatus } from './admin/invite-store.js';
 export type * from './admin/invite-store.js';

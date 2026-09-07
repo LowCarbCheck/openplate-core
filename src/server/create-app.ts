@@ -45,6 +45,18 @@
  * It is INDEPENDENT of `SYNC_SHARING` — neither flag implies the other, and
  * a deployment may reasonably run either alone. See
  * `docs/adr/0003-research-contributions-pseudonymous-but-never-anonymous.md`.
+ *
+ * THE FEEDBACK TREE IS THE SAME BARGAIN AND THE BIGGEST STAKE. `SYNC_FEEDBACK`
+ * unset means the whole `/v1/feedback` subtree answers the ordinary
+ * unknown-path 404, to everybody, credentialed or not. Its terminator can sit
+ * anywhere before the fallthrough, because the path is OUTSIDE
+ * `SYNC_API_PREFIX` and no bearer middleware stands over it; it is mounted
+ * whether or not the route is, so the answer for an unconfigured instance is
+ * pinned and cannot be turned into a 401 by some later middleware. What makes
+ * this one different from the three above is not the mechanism, it is the
+ * cost of getting it wrong: an instance with this on holds photographs of its
+ * users' food that the operator can look at. See
+ * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
  */
 import express from 'express';
 import type { Express } from 'express';
@@ -60,6 +72,9 @@ import { SHARE_API_PREFIXES, registerShareRoutes } from './share-routes.js';
 import { RESEARCH_API_PREFIXES, registerResearchRoutes } from './research-routes.js';
 import { registerRotateDekRoute } from './rotate-dek-route.js';
 import { CHAT_COMPLETIONS_PATH, registerAiRoute } from '../ai/register-ai-route.js';
+import { FEEDBACK_API_PREFIX, registerFeedbackRoute } from '../feedback/register-feedback-route.js';
+import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
+import type { FeedbackStore } from '../feedback/feedback-store.js';
 import type { AiQuotaStore } from '../ai/quota-store.js';
 import type { AiUpstreamConfig } from '../ai/proxy.js';
 import { createBearerAuthMiddleware, createEntitledUserResolver } from './bearer-auth.js';
@@ -91,6 +106,21 @@ export interface AdminSurfaceOptions {
   invites: InviteStore;
   /** Where a join link points, or `null` when this instance cannot build one. */
   links?: AdminLinkBases | null;
+}
+
+/**
+ * What the reported-estimate route needs to exist. Absent is a 404 on the
+ * whole subtree, exactly as an absent share store is, and the ONE surface on
+ * this service whose absence protects a photograph rather than a ciphertext.
+ */
+export interface FeedbackSurfaceOptions {
+  reports: FeedbackStore;
+  /** Where the photograph goes. Postgres today, one adapter away from anywhere else. */
+  images: FeedbackImageStore;
+  /** Reports per account per UTC day (`FEEDBACK_DAILY_LIMIT`). */
+  dailyLimit: number;
+  /** The largest body the route accepts, in bytes (`FEEDBACK_MAX_REQUEST_BYTES`). */
+  maxRequestBytes: number;
 }
 
 /** What the AI proxy needs to exist. Absent is a 404 on its path, exactly as an absent share store is. */
@@ -166,6 +196,16 @@ export interface CreateAppOptions {
    * independently of `shares`.
    */
   research?: SyncResearchStore | null;
+  /**
+   * The reported-estimate surface, or `null`/absent for "this instance does
+   * not accept reports", the default, and what every deployment without
+   * `SYNC_FEEDBACK` gets. Absence is a 404 on the whole `/v1/feedback`
+   * subtree, not a mounted-but-refusing surface.
+   *
+   * IT IS THE ONE SURFACE HERE THAT KEEPS A PHOTOGRAPH. Read the module header
+   * before you default it to anything but `null`.
+   */
+  feedback?: FeedbackSurfaceOptions | null;
 }
 
 export function createApp(options: CreateAppOptions): Express {
@@ -321,6 +361,41 @@ export function createApp(options: CreateAppOptions): Express {
       requireAuth,
       perMinute: ai.perMinute,
       maxRequestBytes: ai.maxRequestBytes,
+    });
+  }
+
+  // THE REPORTED-ESTIMATE ROUTE, OR NOTHING THAT ADMITS TO BEING ONE.
+  //
+  // `SYNC_FEEDBACK` is unset on every deployment whose operator has not
+  // deliberately decided to hold their users' photographs. The whole
+  // `/v1/feedback` subtree then answers the ordinary unknown-path 404, to
+  // everybody, credentialed or not.
+  //
+  // The terminator is on the PREFIX rather than on the one path the route
+  // occupies, so a second verb added later is dark by default rather than by
+  // somebody remembering to add it here.
+  //
+  // AN HONEST NOTE, so nobody deletes this line believing it is dead. Today
+  // the fallthrough `handleNotFound` at the bottom of this function would give
+  // the same answer, because `/v1/feedback` sits outside `SYNC_API_PREFIX` and
+  // no bearer middleware stands over it. This mount is a PIN, not the
+  // mechanism: it fixes the answer for the whole subtree ahead of anything a
+  // later change might put between here and the fallthrough, which is exactly
+  // the mistake the share and research terminators exist to prevent. Verified
+  // by defect injection: mounting `requireAuth` on this prefix ABOVE the line
+  // below turns every anonymous probe into a 401 and fails
+  // `tests/unit/feedback-route-gating.test.ts`.
+  const feedback = options.feedback ?? null;
+  if (feedback === null) {
+    app.use(FEEDBACK_API_PREFIX, handleNotFound);
+  } else {
+    registerFeedbackRoute(app, {
+      reports: feedback.reports,
+      images: feedback.images,
+      requireAuth,
+      dailyLimit: feedback.dailyLimit,
+      maxRequestBytes: feedback.maxRequestBytes,
+      now,
     });
   }
 

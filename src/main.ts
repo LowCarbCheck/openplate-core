@@ -33,6 +33,8 @@ import { createThrottleStore } from './lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
 import { createMailer } from './mail/mailer.js';
 import { createDrizzleAiQuotaStore } from './ai/quota-store.js';
+import { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
+import { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
 import { createApp } from './server/create-app.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
@@ -147,6 +149,20 @@ async function main(): Promise<void> {
   // implies the other.
   const research = config.researchEnabled ? createDrizzleResearchStore(database.db) : null;
 
+  // `null` unless SYNC_FEEDBACK is on, which leaves the whole `/v1/feedback`
+  // subtree answering the ordinary unknown-path 404, see
+  // `server/create-app.ts`. Decided independently of every other flag, and it
+  // is the one whose cost is different in kind: an instance with this on holds
+  // photographs of its users' food that the operator can look at.
+  const feedback = config.feedbackEnabled
+    ? {
+        reports: createDrizzleFeedbackStore(database.db),
+        images: createDrizzleFeedbackImageStore(database.db),
+        dailyLimit: config.feedbackDailyLimit,
+        maxRequestBytes: config.feedbackMaxRequestBytes,
+      }
+    : null;
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
@@ -162,6 +178,7 @@ async function main(): Promise<void> {
     ai,
     shares,
     research,
+    feedback,
   });
 
   const server = app.listen(config.port, () => {
@@ -176,6 +193,7 @@ async function main(): Promise<void> {
       ai: ai !== null,
       sharing: shares !== null,
       research: research !== null,
+      feedback: feedback !== null,
     });
   });
 

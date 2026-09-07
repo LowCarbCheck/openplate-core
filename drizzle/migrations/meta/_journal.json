@@ -71,6 +71,13 @@
       "when": 1788526924728,
       "tag": "0009_curved_silk_fever",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788793570498,
+      "tag": "0010_spicy_mariko_yashida",
+      "breakpoints": true
     }
   ]
 }
