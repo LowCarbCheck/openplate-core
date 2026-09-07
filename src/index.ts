@@ -65,6 +65,22 @@ export {
 } from './feedback/feedback-retention.js';
 export type { FeedbackRetentionSweep } from './feedback/feedback-retention.js';
 export type * from './admin/admin-store.js';
+export { activityWindow, clampActivityWindowDays, zeroFillActivityDays } from './admin/account-activity.js';
+export type { ActivityDay, ActivityWindow } from './admin/account-activity.js';
+// THE OTHER RETENTION WINDOW, and the one that is not advertised because
+// nothing outside the operator's console reads it. It is the number the sweep
+// prunes `ai_usage_days` at AND the longest activity strip an operator can ask
+// for, which is why both live on one binding. See `ai/usage-retention.ts`.
+export {
+  AI_USAGE_RETENTION_DAYS,
+  AI_USAGE_RETENTION_INTERVAL_MS,
+  aiUsageRetentionCutoffDay,
+  purgeExpiredAiUsage,
+  startAiUsageRetention,
+} from './ai/usage-retention.js';
+export type { AiUsageRetentionSweep } from './ai/usage-retention.js';
+export { createDrizzleAiQuotaStore } from './ai/quota-store.js';
+export type { AiQuotaStore, ReserveResult } from './ai/quota-store.js';
 export { inviteStatus } from './admin/invite-store.js';
 export type * from './admin/invite-store.js';
 export * as schema from './db/schema.js';
@@ -80,7 +96,7 @@ export * from './lib/tokens.js';
 export * from './lib/verifier.js';
 export * from './lib/kdf-descriptor.js';
 export * from './lib/escrow.js';
-export { utcDayKey } from './lib/utc-day.js';
+export { utcDayKey, utcDayKeyDaysBefore } from './lib/utc-day.js';
 export { SERVICE_VERSION } from './version.js';
 
 // The mail PORT, and the no-op behind it. Spec 02 adds the pigeon transport.

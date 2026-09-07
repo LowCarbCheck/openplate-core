@@ -17,6 +17,7 @@ import type {
   ListAccountsInput,
 } from '../../src/admin/admin-store.js';
 import type { AccountRole, SyncKeyRecordKind } from '../../src/protocol.js';
+import type { ActivityDay } from '../../src/admin/account-activity.js';
 
 /**
  * The material an account really has in the database and which the admin API
@@ -40,8 +41,11 @@ export interface AdminSeedInput {
   dailyAiLimit?: number;
   aiUsedToday?: number;
   suspendedAt?: Date | null;
+  lastSeenAt?: Date | null;
   blobSizeBytes?: number;
   keyRecordKinds?: SyncKeyRecordKind[];
+  /** Usage rows for this account, `YYYY-MM-DD` to count. Only the days that HAVE a row, as the real store returns. */
+  activity?: Record<string, number>;
 }
 
 export interface FakeAdminStore extends AdminMetadataStore {
@@ -53,6 +57,8 @@ export interface FakeAdminStore extends AdminMetadataStore {
 export function createFakeAdminStore(): FakeAdminStore {
   const summaries = new Map<number, AdminAccountSummary>();
   const secrets = new Map<number, AdminSeedSecrets>();
+  /** Seeded usage rows per account. Sparse, like the table: a day with no spend has no entry. */
+  const activity = new Map<number, Record<string, number>>();
 
   return {
     seed(input: AdminSeedInput): AdminSeedSecrets {
@@ -66,6 +72,7 @@ export function createFakeAdminStore(): FakeAdminStore {
         aiUsedToday: input.aiUsedToday ?? 0,
         suspendedAt: input.suspendedAt ?? null,
         createdAt: new Date('2026-08-01T09:00:00.000Z'),
+        lastSeenAt: input.lastSeenAt ?? null,
         blob:
           input.blobSizeBytes === undefined
             ? null
@@ -82,12 +89,14 @@ export function createFakeAdminStore(): FakeAdminStore {
         recoveryCode: `RECOVERYCODE${String(input.id).padStart(2, '0')}ABCDEFGHJKMNPQR`,
       };
       secrets.set(input.id, seeded);
+      activity.set(input.id, input.activity ?? {});
       return seeded;
     },
 
     clear(): void {
       summaries.clear();
       secrets.clear();
+      activity.clear();
     },
 
     async listAccounts(input: ListAccountsInput): Promise<AdminAccountPage> {
@@ -97,6 +106,16 @@ export function createFakeAdminStore(): FakeAdminStore {
 
     async getAccount(input: { accountId: number; day: string }): Promise<AdminAccountSummary | null> {
       return summaries.get(input.accountId) ?? null;
+    },
+
+    async accountActivity(input: { accountId: number; fromDay: string; toDay: string }): Promise<ActivityDay[]> {
+      // The RANGE is applied here, sparsely, exactly as the real query does:
+      // a fake that returned every seeded day would let a broken window pass.
+      // String comparison is date comparison for `YYYY-MM-DD`.
+      return Object.entries(activity.get(input.accountId) ?? {})
+        .filter(([day]) => day >= input.fromDay && day <= input.toDay)
+        .map(([day, count]) => ({ day, count }))
+        .toSorted((left, right) => left.day.localeCompare(right.day));
     },
 
     async stats(): Promise<AdminStats> {

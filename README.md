@@ -125,6 +125,16 @@ different bound for a different failure: a stuck client that retries on every
 error would otherwise spend a whole day's allowance in ten seconds, and the
 first thing the person sees is that the feature stopped working.
 
+**The counters are kept for 90 days and then deleted.** Spending is recorded as
+one integer per account per UTC day, and nothing else: no prompt, no response,
+no model, no time of day. An hourly sweep inside the service deletes every row
+older than 90 days, on every instance, whether or not you have a provider key
+configured today. You need no cron entry and no maintenance command. Deleting
+an account takes its counters and its last-seen timestamp with it, in the same
+statement as the rest of the erasure. Ninety days is also the longest activity
+window `/admin` will show you for one person, so a strip you read is never
+zeroes standing in for rows that expired.
+
 Leave `UPSTREAM_API_KEY` unset and none of this exists. The route answers the
 same `404` any unknown path does, and `/health` reports `instance.ai: null` so
 the app knows not to offer a scan.
@@ -285,13 +295,23 @@ If they forget the passphrase, "forgot password" mails them a link and their dia
 ### The admin API admits to nothing it is not asked with the right credential
 
 There is an operator API at `/v1/admin`: list accounts and invitations, read
-one account's metadata, aggregate storage counts, change what an account may do
+one account's metadata, read one account's activity over the last 90 days,
+aggregate storage counts, change what an account may do
 (`role`, its AI allowance, its display name), suspend and reactivate it, send it
 a password-reset letter, resend an invitation, and **delete an account with
 everything attached to it**. That last one is why it exists at all: an erasure
 request is an obligation, and a service whose only erasure mechanism is a
 hand-written `DELETE` in a SQL client is a service that will eventually get it
 wrong.
+
+**The activity view is bounded metadata, and it is metadata about a person.** It
+answers when somebody last signed in and how many AI requests they made on each
+of the last 90 days, which is the question an operator running a study has to
+answer and today would answer by opening Postgres. It shows no diary content,
+because there is none to show: the blobs are encrypted and this service holds no
+key. Every day in the window is returned, so a day with no activity is a zero
+rather than a hole, and the window never runs past the 90 days of counters the
+service keeps.
 
 **Suspending revokes every session in the same act.** A `suspended_at` on its own
 would leave the phone in somebody's pocket syncing for another quarter of an
@@ -419,7 +439,7 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
 | `src/accounts/`       | Account policy as pure handlers over an injected `AccountStore`.              |
 | `src/db/`             | Drizzle schema and the two store implementations.                             |
 | `src/admin/`          | The admin metadata read contract, deliberately not part of `AccountStore`.    |
-| `src/ai/`             | The completion proxy, its quota store, the minute limiter and the scrubber.  |
+| `src/ai/`             | The completion proxy, its quota store, the minute limiter, the scrubber and the usage retention sweep. |
 | `src/feedback/`       | Reported estimates: submit, the operator's read side, image storage, retention. |
 | `src/mail/`           | The two letters, their strings, and the HTTP mailer that sends them.          |
 | `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                 |

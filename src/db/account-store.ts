@@ -440,6 +440,18 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
     },
 
     async deleteAccount(accountId: number): Promise<void> {
+      // ONE STATEMENT, WHICH IS ALSO ONE TRANSACTION. Everything attached goes
+      // with it through `ON DELETE CASCADE`: tokens, blobs, key records,
+      // invites, feedback rows, and the AI usage counters. There is no window
+      // in which the row is gone and its dependents are not, and no cleanup job
+      // to forget to run.
+      //
+      // THE ACTIVITY METADATA IS COVERED BY THAT AND CHECKED IN A TEST (M201).
+      // `last_seen_at` is a column ON this row, so it cannot outlive it, and
+      // `ai_usage_days.account_id` cascades. Both are properties of the schema
+      // rather than of this line, which is exactly why
+      // `tests/integration/ai-usage-retention.test.ts` COUNTS the usage rows
+      // for the id afterwards instead of trusting a 204.
       await db.delete(accounts).where(eq(accounts.id, accountId));
     },
 

@@ -68,8 +68,10 @@ before(async () => {
     role: 'admin',
     dailyAiLimit: 200,
     aiUsedToday: 3,
+    lastSeenAt: new Date('2026-09-06T18:30:00.000Z'),
     blobSizeBytes: 4096,
     keyRecordKinds: ['passphrase', 'recovery'],
+    activity: { '2026-09-06': 3 },
   });
 
   // An invite exists too, and it is REDEEMED — the state that carries the most
@@ -98,6 +100,10 @@ after(async () => {
 const READ_ENDPOINTS: readonly string[] = [
   '/v1/admin/accounts',
   '/v1/admin/accounts/3',
+  // The activity strip is a READ of the same account, so it belongs in this
+  // walk: it is the newest place a stray field could reach an operator's
+  // screen, and it is metadata about a person rather than about a row.
+  '/v1/admin/accounts/3/activity',
   '/v1/admin/stats',
   '/v1/admin/invites',
 ];
@@ -155,6 +161,7 @@ test('the account body carries exactly the documented metadata fields and nothin
     'email',
     'id',
     'keyRecordKinds',
+    'lastSeenAt',
     'role',
     'suspendedAt',
   ]);

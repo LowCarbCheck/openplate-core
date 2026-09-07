@@ -33,7 +33,7 @@
  * retry, a future bug) from driving the counter negative, which would hand out
  * free requests rather than merely miscounting.
  */
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, lt, sql } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { aiUsageDays } from '../db/schema.js';
 
@@ -58,6 +58,17 @@ export interface AiQuotaStore {
   release(input: { accountId: number; day: string }): Promise<void>;
   /** How many requests every account together spent on the given day. An operator statistic, never a limit. */
   countRequestsOn(day: string): Promise<number>;
+  /**
+   * Deletes every counter row before the given UTC day, and answers how many
+   * went. The retention half of this table, driven by
+   * `ai/usage-retention.ts`.
+   *
+   * IT LIVES ON THE STORE THAT WRITES THE TABLE, on purpose. The reserve above
+   * is the only thing that creates these rows, and putting the delete anywhere
+   * else would leave two modules holding one table between them. It is NOT on
+   * the admin metadata store, which is a read contract by construction.
+   */
+  purgeUsageBefore(input: { day: string }): Promise<number>;
 }
 
 export function createDrizzleAiQuotaStore(db: Database): AiQuotaStore {
@@ -97,6 +108,18 @@ export function createDrizzleAiQuotaStore(db: Database): AiQuotaStore {
         .from(aiUsageDays)
         .where(eq(aiUsageDays.day, day));
       return rows[0]?.total ?? 0;
+    },
+
+    async purgeUsageBefore(input: { day: string }): Promise<number> {
+      // `returning` a column rather than trusting a driver row count, so the
+      // number the sweep logs is rows this statement actually removed. The
+      // predicate is a day and not a cursor, which is what makes a second run
+      // in the same hour a no-op rather than a partial repeat.
+      const deleted = await db
+        .delete(aiUsageDays)
+        .where(lt(aiUsageDays.day, input.day))
+        .returning({ accountId: aiUsageDays.accountId });
+      return deleted.length;
     },
   };
 }

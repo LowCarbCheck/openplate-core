@@ -29,7 +29,7 @@
  * `IN (...)` each. A page is at most `MAX_ADMIN_PAGE_LIMIT` rows, and this
  * endpoint is called by one operator at human speed.
  */
-import { and, count, countDistinct, desc, eq, gt, inArray, isNull, sum } from 'drizzle-orm';
+import { and, count, countDistinct, desc, eq, gt, gte, inArray, isNull, lte, sum } from 'drizzle-orm';
 import type {
   AdminAccountPage,
   AdminAccountSummary,
@@ -38,6 +38,7 @@ import type {
   AdminStats,
   ListAccountsInput,
 } from '../admin/admin-store.js';
+import type { ActivityDay } from '../admin/account-activity.js';
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { Database } from './client.js';
 import { utcDayKey } from '../lib/utc-day.js';
@@ -52,6 +53,7 @@ interface AccountIdentityRow {
   dailyAiLimit: number;
   suspendedAt: Date | null;
   createdAt: Date;
+  lastSeenAt: Date | null;
 }
 
 /**
@@ -68,6 +70,11 @@ const IDENTITY_COLUMNS = {
   dailyAiLimit: accounts.dailyAiLimit,
   suspendedAt: accounts.suspendedAt,
   createdAt: accounts.createdAt,
+  // An operator fact, added in M201: when this person last did something on
+  // purpose. It is metadata about a person's use of a health app, so it is here
+  // and NOT on the user-facing `AccountView`, and it is nullable because an
+  // invited account that never signed in has no honest value.
+  lastSeenAt: accounts.lastSeenAt,
 } as const;
 
 /** `sum()` comes back as a numeric string (or `null` on an empty table), because a Postgres `bigint` does not fit a JS number by contract. */
@@ -148,6 +155,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       aiUsedToday: usage.get(identity.id) ?? 0,
       suspendedAt: identity.suspendedAt,
       createdAt: identity.createdAt,
+      lastSeenAt: identity.lastSeenAt,
       blob: blobs.get(identity.id) ?? null,
       keyRecordKinds: (kinds.get(identity.id) ?? []).toSorted(),
     }));
@@ -179,6 +187,26 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
 
       const [summary] = await summarize([identity], input.day);
       return summary ?? null;
+    },
+
+    async accountActivity(input: { accountId: number; fromDay: string; toDay: string }): Promise<ActivityDay[]> {
+      // BOTH ENDS INCLUSIVE, and both compared as `date`: `day` is a
+      // `date` column read as a string, so `gte`/`lte` against `YYYY-MM-DD`
+      // are date comparisons in Postgres rather than string ones, and no row
+      // can fall outside the strip the caller is about to draw.
+      const rows = await db
+        .select({ day: aiUsageDays.day, count: aiUsageDays.count })
+        .from(aiUsageDays)
+        .where(
+          and(
+            eq(aiUsageDays.accountId, input.accountId),
+            gte(aiUsageDays.day, input.fromDay),
+            lte(aiUsageDays.day, input.toDay),
+          ),
+        )
+        .orderBy(aiUsageDays.day);
+
+      return rows.map((row) => ({ day: row.day, count: row.count }));
     },
 
     async stats(input: { now: Date }): Promise<AdminStats> {

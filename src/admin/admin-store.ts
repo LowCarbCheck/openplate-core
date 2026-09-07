@@ -27,6 +27,7 @@
  * See `server/admin-routes.ts`.
  */
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
+import type { ActivityDay } from './account-activity.js';
 
 /**
  * What the admin surface knows about an account. Everything else about it is
@@ -52,6 +53,16 @@ export interface AdminAccountSummary {
   /** Non-`null` while the account is suspended. */
   suspendedAt: Date | null;
   createdAt: Date;
+  /**
+   * The last time this person did something on purpose: a sign-in or an AI
+   * request, never a token refresh and never a sync poll (`db/schema.ts`).
+   *
+   * `null` FOR AN ACCOUNT THAT HAS NEVER SIGNED IN, and it stays nullable. An
+   * invited account that was created and never used has no honest value here,
+   * and a screen that rendered an epoch or a "joined" date in its place would
+   * be answering the operator's question with a fabrication.
+   */
+  lastSeenAt: Date | null;
   /**
    * The account's current blob, described and never handed over: how many
    * bytes it occupies, and when those bytes last changed. `null` when the
@@ -109,6 +120,21 @@ export interface ListAccountsInput {
 export interface AdminMetadataStore {
   listAccounts(input: ListAccountsInput): Promise<AdminAccountPage>;
   getAccount(input: { accountId: number; day: string }): Promise<AdminAccountSummary | null>;
+  /**
+   * One account's AI spend per UTC day across an inclusive day range, for the
+   * days that HAVE a row.
+   *
+   * IT RETURNS ROWS, NOT A STRIP. The zero-fill that makes "no activity" and
+   * "no record" distinguishable is `admin/account-activity.ts`, which is pure
+   * and therefore testable without a database. A store that filled the gaps
+   * itself would be inventing rows in the layer whose job is to report what
+   * exists.
+   *
+   * The range is the caller's, already capped by the server
+   * (`admin/account-activity.ts`), because a store method with no bound is one
+   * mistyped query parameter away from a full-table read.
+   */
+  accountActivity(input: { accountId: number; fromDay: string; toDay: string }): Promise<ActivityDay[]>;
   /** `now` is injected for the same reason every clock in this repo is: `pendingInvites` and `aiRequestsToday` both key on it. */
   stats(input: { now: Date }): Promise<AdminStats>;
 }

@@ -70,6 +70,13 @@ import type { Mailer } from '../mail/mailer.js';
 import { parseDisplayName, parseEmail } from '../accounts/auth-input.js';
 import { computeExpiry, RESET_TOKEN_TTL_MS, type GeneratedToken } from '../lib/tokens.js';
 import { utcDayKey } from '../lib/utc-day.js';
+import {
+  activityWindow,
+  clampActivityWindowDays,
+  zeroFillActivityDays,
+  type ActivityDay,
+} from '../admin/account-activity.js';
+import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
 import { asBoolean, asNumber, asObject, type JsonValue } from '../lib/json.js';
 import { getAdminPrincipal } from './admin-auth.js';
 
@@ -97,6 +104,32 @@ export const MAX_ADMIN_PAGE_LIMIT = 200;
 interface AdminAccountView extends AccountView {
   blob: { sizeBytes: number; updatedAt: string } | null;
   keyRecordKinds: SyncKeyRecordKind[];
+  /**
+   * When this person last did something on purpose, or `null` for an account
+   * that has never signed in.
+   *
+   * AN OPERATOR FACT, WHICH IS WHY IT IS HERE AND NOT ON `AccountView`. The
+   * protocol's account view is what a person is shown about themselves; this
+   * answers "has this participant gone quiet", which only an operator asks. It
+   * crosses the wire as a TIMESTAMP: "3 days ago" is a rendering decision, and
+   * an API that made it would be deciding it for every client at once, in one
+   * language, against the reader's clock rather than their own.
+   */
+  lastSeenAt: string | null;
+}
+
+/**
+ * The wire shape of one account's activity strip.
+ *
+ * `days` is EVERY day in the window, in order, including the ones with no row
+ * (`admin/account-activity.ts`). `window` reports what the server actually
+ * answered with, because the request may have asked for more.
+ */
+interface AdminAccountActivityView {
+  accountId: number;
+  lastSeenAt: string | null;
+  window: { days: number; fromDay: string; toDay: string };
+  days: ActivityDay[];
 }
 
 interface AdminStatsView {
@@ -121,6 +154,7 @@ function toAccountView(summary: AdminAccountSummary): AdminAccountView {
     aiUsedToday: summary.aiUsedToday,
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
     createdAt: summary.createdAt.toISOString(),
+    lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
     blob:
       summary.blob === null
         ? null
@@ -165,6 +199,24 @@ export function parseBoundedInteger(raw: string | null, fallback: number, max: n
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > max) return { ok: false };
   return { ok: true, value: parsed };
+}
+
+/**
+ * Reads the `days` query parameter of the activity endpoint.
+ *
+ * A GARBAGE VALUE IS A `400` AND AN OVER-LONG ONE IS CAPPED, and the asymmetry
+ * is deliberate. `days=banana` or `days=0` is a caller that does not know what
+ * it asked for, and answering it with a default would hide the bug. `days=365`
+ * is a caller asking a reasonable question about a window this server does not
+ * keep: the rows beyond ninety days have been pruned
+ * (`ai/usage-retention.ts`), so the honest answer is the ninety it has, and the
+ * response says which window it drew. See `admin/account-activity.ts`.
+ */
+function parseActivityWindowDays(raw: string | null): { ok: true; value: number } | { ok: false } {
+  if (raw === null || raw === '') return { ok: true, value: AI_USAGE_RETENTION_DAYS };
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return { ok: false };
+  return { ok: true, value: clampActivityWindowDays(parsed) };
 }
 
 /** A path `:id` is an account's serial primary key: a positive integer and nothing else. */
@@ -460,6 +512,53 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         return;
       }
       res.status(200).json({ account: toAccountView(summary) });
+    }),
+  );
+
+  router.get(
+    '/accounts/:id/activity',
+    asyncHandler(async (req, res) => {
+      const accountId = parseAccountId(req.params.id ?? '');
+      if (accountId === null) {
+        sendNotFound(res);
+        return;
+      }
+
+      const days = parseActivityWindowDays(queryValue(req, 'days'));
+      if (!days.ok) {
+        // A cap is not an error, so the sentence names only what was refused:
+        // a longer window is answered, and the answer says which one it drew.
+        res.status(400).json({ error: 'days must be an integer of at least 1' });
+        return;
+      }
+
+      const now = options.now();
+      // THE ACCOUNT IS READ FIRST, for two reasons: an unknown id must be the
+      // same 404 every other account route gives, and `lastSeenAt` comes off
+      // the same projection the account endpoints use rather than off a second
+      // query that could disagree with it.
+      const summary = await metadata.getAccount({ accountId, day: utcDayKey(now) });
+      if (summary === null) {
+        sendNotFound(res);
+        return;
+      }
+
+      const window = activityWindow({ now, days: days.value });
+      const counted = await metadata.accountActivity({
+        accountId,
+        fromDay: window.fromDay,
+        toDay: window.toDay,
+      });
+
+      const view: AdminAccountActivityView = {
+        accountId,
+        lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
+        window: { days: window.days, fromDay: window.fromDay, toDay: window.toDay },
+        // Zero-filled, so a day with no activity and a day outside the answer
+        // cannot look the same to whoever reads it.
+        days: zeroFillActivityDays({ window, counted }),
+      };
+      res.status(200).json(view);
     }),
   );
 

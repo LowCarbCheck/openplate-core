@@ -1031,6 +1031,7 @@ locked.
 | `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday` |
 | `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
+| `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
 | `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `suspended`, `displayName`. At least one required |
 | `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
 | `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
@@ -1057,8 +1058,45 @@ that has locked everybody out of this tree, and the only remedy is a shell on
 the container. The static token is exempt, because it has no self and is the
 credential that exists for exactly that situation.
 
+**`GET /v1/admin/accounts/:id/activity` answers the question an operator opens
+the console with**: is this person still using the instance. It reads what the
+service already stores and collects nothing new.
+
+```json
+{
+  "accountId": 7,
+  "lastSeenAt": "2026-09-06T18:30:00.000Z",
+  "window": { "days": 90, "fromDay": "2026-06-10", "toDay": "2026-09-07" },
+  "days": [{ "day": "2026-06-10", "count": 0 }, { "day": "2026-06-11", "count": 3 }]
+}
+```
+
+- `lastSeenAt` is `null` for an account that has never signed in, and is
+  written only by a login and by a proxied completion, never by a token refresh
+  and never by a sync poll (§9.2). It crosses the wire as a **timestamp**; a
+  relative phrase is a rendering decision and belongs to the client.
+- `days` carries **every** day in the window, in order, with `count: 0` for a
+  day that has no row. A missing day and a quiet day must not look the same to
+  whoever reads the strip.
+- `?days=N` narrows the window. `N` must be an integer of at least 1, or the
+  answer is `400`. **A window longer than 90 days is answered with 90**, and
+  `window` reports what was actually drawn. Ninety is the retention window
+  below, so a longer strip could only be zeroes for rows that have been
+  deleted.
+- An unknown id is the same `404` as every other account route, and the whole
+  tree is behind the credentials above.
+
+**Retention: usage counters are kept for 90 days.** `ai_usage_days` holds one
+integer per account per UTC day (§9.2). An hourly sweep inside the service
+deletes every row older than 90 days, counting today, on every instance and
+without an operator action or a cron entry. Deleting an account removes its
+counters and its `lastSeenAt` in the same statement as the rest of the erasure,
+through `ON DELETE CASCADE`. Ninety is one number in one place: it is what the
+sweep prunes at and the longest window the endpoint above can answer.
+
 `AccountView` is the same shape the account's own `GET /v1/auth/account`
-returns (§5.15) plus `aiUsedToday`, and it carries **no verifier, no KDF
+returns (§5.15) plus `aiUsedToday`, and on the admin surface plus `lastSeenAt`,
+`blob` and `keyRecordKinds`. It carries **no verifier, no KDF
 descriptor, no escrow and no ciphertext**. A blob is reported as a byte count
 and a timestamp. The reasoning is
 `docs/adr/0001-an-admin-api-for-a-zero-knowledge-service.md`, whose
@@ -1128,7 +1166,8 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
 - **The account itself**: an **email address**, an optional display name, a role, a daily AI allowance, a suspension instant, an authentication verifier (a keyed hash of a keyed hash of the passphrase, see §5.8), a second verifier of the same construction over the recovery proof, and the account's KDF parameters. **The address names a person in the world**, which is a class of personal data 0.5.0 removed and 0.6.0 deliberately put back (ADR-0005): an organization's people are identified by the address their invitation arrived at, because that is the identifier they will still know in a month.
 - **The account's RECOVERY CODE, sealed** (`accounts.recovery_code_escrow`, §3.1). This is the entry on this list that a reader should stop at. It is AES-256-GCM under a subkey of `SERVER_SECRET`, so a dumped database alone does not open it, and the operator of a managed instance has both. **The operator of a managed instance can open any account on it.** Not through an endpoint, and not through any code path in this service, but by reading that column with the secret in hand and running the client's own HKDF. A self-hosted instance is its own operator, so the older promise holds there. Deciding whether to trust a hosted instance is therefore a decision about its operator.
 - **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
-- **AI usage**: one integer per account per UTC day. A count, never a log: no prompt, no response, no model, no timestamp beyond the day.
+- **AI usage**: one integer per account per UTC day, **kept for 90 days and then deleted** (§5.20). A count, never a log: no prompt, no response, no model, no timestamp beyond the day. An operator can read one account's counters as a day-by-day strip (`GET /v1/admin/accounts/:id/activity`), which is metadata about when a person used a health app and is bounded for exactly that reason.
+- **When a person last did something**: `accounts.last_seen_at`, written by a login and by a proxied completion, and deliberately not by a token refresh or a sync poll, so it means "somebody acted" rather than "a client was running". It is visible to an operator (§5.20) and goes with the account row on deletion.
 - **Session metadata**: how many active sessions exist, when each was created, and when tokens were last rotated or revoked. Token values themselves are stored only as digests.
 - **The study graph**, on a deployment with `SYNC_RESEARCH` set (§5.18): which
   account contributes to which study, when, how often, and how large each

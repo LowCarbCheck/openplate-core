@@ -33,6 +33,7 @@ import { createThrottleStore } from './lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
 import { createMailer } from './mail/mailer.js';
 import { createDrizzleAiQuotaStore } from './ai/quota-store.js';
+import { AI_USAGE_RETENTION_DAYS, startAiUsageRetention } from './ai/usage-retention.js';
 import { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
 import { createDrizzleFeedbackAdminStore } from './feedback/feedback-admin-store.js';
 import { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
@@ -121,12 +122,19 @@ async function main(): Promise<void> {
   // `null` unless UPSTREAM_API_KEY is set, which leaves
   // `POST /v1/chat/completions` answering the ordinary unknown-path 404 — see
   // `server/create-app.ts`.
+  // BUILT UNCONDITIONALLY, unlike the `ai` surface below. This store owns
+  // `ai_usage_days` at both ends, and the retention sweep at the bottom of this
+  // file has to run on every instance: one that had an upstream key last year
+  // and none today still holds the counters from when it did, and a sweep wired
+  // behind the flag would leave exactly those rows in place forever.
+  const aiQuota = createDrizzleAiQuotaStore(database.db);
+
   const ai =
     config.ai === null
       ? null
       : {
           upstream: config.ai,
-          quota: createDrizzleAiQuotaStore(database.db),
+          quota: aiQuota,
           perMinute: config.aiRateLimitPerMinute,
           maxRequestBytes: config.aiMaxRequestBytes,
         };
@@ -236,6 +244,19 @@ async function main(): Promise<void> {
     logger.info('Feedback retention sweep started', { retentionDays: FEEDBACK_RETENTION_DAYS });
   }
 
+  // THE COUNTERS EXPIRE, on every instance, whatever the AI surface is doing.
+  // `ai_usage_days` grew without bound from the day it was added, and one row
+  // per account per active day is a trace of when a person opened a health app.
+  // Ninety days is the operator's decision and the same window
+  // `GET /v1/admin/accounts/:id/activity` can show, so an operator never reads
+  // a pruned row as an absence of activity.
+  const aiUsageRetention = startAiUsageRetention({
+    quota: aiQuota,
+    logger,
+    now: () => new Date(),
+  });
+  logger.info('AI usage retention sweep started', { retentionDays: AI_USAGE_RETENTION_DAYS });
+
   const accountStore = authContext.store;
   const sweeper = setInterval(() => {
     void (async () => {
@@ -256,6 +277,7 @@ async function main(): Promise<void> {
     logger.info('Shutting down', { signal });
     clearInterval(sweeper);
     feedbackRetention?.stop();
+    aiUsageRetention.stop();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await database.close();
     process.exit(0);

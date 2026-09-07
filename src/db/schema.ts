@@ -124,11 +124,13 @@ export const accounts = pgTable(
      * Nullable because an account that has never signed in since the column
      * existed has no honest value to report.
      *
-     * WRITTEN BY THE AI PROXY ALONE (`ai/proxy.ts`), and deliberately not by
-     * the bearer middleware: that would be one UPDATE on every authenticated
-     * request, including every sync poll, to answer a question no code asks. A
-     * proxied completion is a request a person made on purpose, so the column
-     * means what an operator reads it as.
+     * WRITTEN BY EXACTLY TWO PLACES, a login (`accounts/auth-handlers.ts`) and
+     * a proxied completion (`ai/proxy.ts`), and deliberately not by the bearer
+     * middleware: that would be one UPDATE on every authenticated request,
+     * including every sync poll, to answer a question no code asks. Both
+     * writers are acts a person took on purpose, so the column means what an
+     * operator reads it as, and since M201 an operator does read it
+     * (`server/admin-routes.ts`).
      */
     lastSeenAt: timestamp('last_seen_at'),
     /**
@@ -422,8 +424,12 @@ export type SelectPasswordReset = InferSelectModel<typeof passwordResets>;
  * THE DAY IS UTC AND THE COLUMN IS A `date`, so the reset boundary is one the
  * client and the server agree on without a timezone negotiation, and
  * "yesterday" is never a range query. Rows accumulate at one per account per
- * active day; nothing prunes them yet, which is a decision to revisit when an
- * instance has years of them, not a leak.
+ * active day, and M201 gave them an end date: `ai/usage-retention.ts` deletes
+ * everything older than ninety days on an hourly sweep that runs on every
+ * instance, so the table no longer grows for the life of a deployment. Ninety
+ * is also the longest strip `GET /v1/admin/accounts/:id/activity` can draw, on
+ * one binding, so a pruned row can never be read as a day somebody did
+ * nothing.
  *
  * WRITTEN BY SPEC 03, which owns the proxy. Spec 01 creates the table and
  * reads today's count for `AccountView.aiUsedToday`.

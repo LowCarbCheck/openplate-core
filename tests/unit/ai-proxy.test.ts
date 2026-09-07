@@ -138,6 +138,11 @@ function createRecordingQuota(options: { failAt?: number } = {}): RecordingQuota
     async countRequestsOn(): Promise<number> {
       return store.count;
     },
+    async purgeUsageBefore(): Promise<number> {
+      // The retention half of the store, never exercised by the proxy. Present
+      // so this fake satisfies the whole port rather than a convenient part.
+      return 0;
+    },
   };
   return store;
 }

@@ -18,3 +18,19 @@
 export function utcDayKey(instant: Date): string {
   return instant.toISOString().slice(0, 10);
 }
+
+/**
+ * The UTC day `days` calendar days before `instant`, as `YYYY-MM-DD`.
+ *
+ * HERE RATHER THAN IN EITHER CALLER, because both callers are the same window
+ * seen from two ends: `ai/usage-retention.ts` deletes everything before the
+ * day this returns, and `admin/account-activity.ts` starts its strip at it. A
+ * second implementation of the subtraction would let the day the operator can
+ * see and the day the sweep keeps disagree by one, which reads as a person who
+ * stopped using the app on the oldest day of the strip.
+ *
+ * Pure, and UTC throughout, for the reasons in the module header.
+ */
+export function utcDayKeyDaysBefore(instant: Date, days: number): string {
+  return utcDayKey(new Date(instant.getTime() - days * 24 * 60 * 60 * 1000));
+}

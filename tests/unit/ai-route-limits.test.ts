@@ -61,6 +61,9 @@ function createAllowingQuota(): AiQuotaStore {
     async countRequestsOn(): Promise<number> {
       return used;
     },
+    async purgeUsageBefore(): Promise<number> {
+      return 0;
+    },
   };
 }
 
