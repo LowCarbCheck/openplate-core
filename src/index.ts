@@ -24,6 +24,7 @@ export type { CreateAppOptions, AdminSurfaceOptions, FeedbackSurfaceOptions } fr
 export { registerSyncRoutes } from './server/register-routes.js';
 export { registerAuthRoutes, AUTH_API_PREFIX } from './accounts/register-auth-routes.js';
 export { createAdminRoutes, ADMIN_API_PREFIX } from './server/admin-routes.js';
+export { createAdminFeedbackRoutes, ADMIN_FEEDBACK_PATH } from './server/admin-feedback-routes.js';
 export { registerFeedbackRoute, FEEDBACK_API_PREFIX } from './feedback/register-feedback-route.js';
 export { createAdminAuthMiddleware } from './server/admin-auth.js';
 export { createBearerAuthMiddleware, createEntitledUserResolver, getRequestSession } from './server/bearer-auth.js';
@@ -43,6 +44,24 @@ export { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
 export type { FeedbackStore, SubmitFeedbackInput, SubmitFeedbackResult } from './feedback/feedback-store.js';
 export { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
 export type { FeedbackImage, FeedbackImageStore } from './feedback/feedback-image-store.js';
+export { createDrizzleFeedbackAdminStore } from './feedback/feedback-admin-store.js';
+export type {
+  FeedbackAdminStore,
+  FeedbackReportDetail,
+  FeedbackReportSummary,
+} from './feedback/feedback-admin-store.js';
+// THE RETENTION WINDOW IS EXPORTED FOR THE CLIENT'S CONSENT WORDING. It is the
+// number a person is shown before they hand over a photograph, and the number
+// the sweep deletes on. One name, so the sentence and the behaviour cannot
+// drift apart. See `feedback/feedback-retention.ts`.
+export {
+  FEEDBACK_RETENTION_DAYS,
+  FEEDBACK_RETENTION_MS,
+  feedbackRetentionCutoff,
+  purgeExpiredFeedback,
+  startFeedbackRetention,
+} from './feedback/feedback-retention.js';
+export type { FeedbackRetentionSweep } from './feedback/feedback-retention.js';
 export type * from './admin/admin-store.js';
 export { inviteStatus } from './admin/invite-store.js';
 export type * from './admin/invite-store.js';

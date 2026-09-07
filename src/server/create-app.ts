@@ -57,6 +57,14 @@
  * cost of getting it wrong: an instance with this on holds photographs of its
  * users' food that the operator can look at. See
  * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
+ *
+ * THE OPERATOR'S SIDE OF THAT TREE IS `/v1/admin/feedback`, and it is gated
+ * TWICE: by the admin middleware every other operator route is behind, and by
+ * `SYNC_FEEDBACK` again. The second gate is a terminator inside that router
+ * rather than a mount-time branch here, so an authenticated administrator on an
+ * instance with the feature off gets the ordinary unknown-path 404 too. It is
+ * mounted in the SAME `app.use` as the account routes so one middleware
+ * instance runs per request. See `server/admin-feedback-routes.ts`.
  */
 import express from 'express';
 import type { Express } from 'express';
@@ -66,6 +74,7 @@ import type { SyncResearchStore, SyncRotationStore, SyncShareStore, SyncStorageA
 import type { AuthContext } from '../accounts/auth-handlers.js';
 import { registerAuthRoutes } from '../accounts/register-auth-routes.js';
 import { ADMIN_API_PREFIX, createAdminRoutes, type AdminLinkBases } from './admin-routes.js';
+import { createAdminFeedbackRoutes } from './admin-feedback-routes.js';
 import { createAdminAuthMiddleware } from './admin-auth.js';
 import { registerSyncRoutes } from './register-routes.js';
 import { SHARE_API_PREFIXES, registerShareRoutes } from './share-routes.js';
@@ -73,6 +82,7 @@ import { RESEARCH_API_PREFIXES, registerResearchRoutes } from './research-routes
 import { registerRotateDekRoute } from './rotate-dek-route.js';
 import { CHAT_COMPLETIONS_PATH, registerAiRoute } from '../ai/register-ai-route.js';
 import { FEEDBACK_API_PREFIX, registerFeedbackRoute } from '../feedback/register-feedback-route.js';
+import type { FeedbackAdminStore } from '../feedback/feedback-admin-store.js';
 import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
 import type { FeedbackStore } from '../feedback/feedback-store.js';
 import type { AiQuotaStore } from '../ai/quota-store.js';
@@ -115,6 +125,13 @@ export interface AdminSurfaceOptions {
  */
 export interface FeedbackSurfaceOptions {
   reports: FeedbackStore;
+  /**
+   * The operator's side of the same table: list, read one, delete one, and the
+   * enumeration the retention sweep needs. SEPARATE FROM `reports` because the
+   * write path is a person acting on their own row and this is somebody acting
+   * on theirs, see `feedback/feedback-admin-store.ts`.
+   */
+  review: FeedbackAdminStore;
   /** Where the photograph goes. Postgres today, one adapter away from anywhere else. */
   images: FeedbackImageStore;
   /** Reports per account per UTC day (`FEEDBACK_DAILY_LIMIT`). */
@@ -404,11 +421,24 @@ export function createApp(options: CreateAppOptions): Express {
   // indistinguishable from one where the feature was never written, because
   // `createAdminAuthMiddleware` answers the ordinary unknown-path 404 in that
   // case rather than a 401. See its header and this module's.
+  //
+  // THE OPERATOR'S FEEDBACK ROUTER IS MOUNTED IN THE SAME `app.use`, ahead of
+  // the account routes, so ONE admin middleware instance runs per request. Two
+  // separate `app.use(ADMIN_API_PREFIX, adminAuth, ...)` mounts would
+  // authenticate every account request twice, which on the account-token
+  // credential is a second database round trip for nothing. It carries its own
+  // `SYNC_FEEDBACK` terminator, so with the feature off the whole
+  // `/v1/admin/feedback` subtree is the ordinary unknown-path 404 even for an
+  // authenticated administrator. See `server/admin-feedback-routes.ts`.
   app.use(
     ADMIN_API_PREFIX,
     createAdminAuthMiddleware({
       adminToken: options.admin.token,
       authContext: options.authContext,
+      logger: options.logger,
+    }),
+    createAdminFeedbackRoutes({
+      surface: feedback === null ? null : { reports: feedback.review, images: feedback.images },
       logger: options.logger,
     }),
     createAdminRoutes({

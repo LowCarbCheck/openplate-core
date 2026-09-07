@@ -177,6 +177,30 @@ S3 client here and no object-storage secret to hold: storage sits behind a
 `FeedbackImageStore` interface with `put`, `get` and `delete`, so a later move is
 one adapter and no change anywhere else.
 
+**Reading a report, and what that leaves behind.** The queue is
+`GET /v1/admin/feedback` behind your admin credential, one report is
+`GET /v1/admin/feedback/<id>`, the photograph is
+`GET /v1/admin/feedback/<id>/image`, and `DELETE /v1/admin/feedback/<id>` removes
+a report and its image now. The openplate app renders all of this at `/admin`.
+Every read of an IMAGE writes one line to this service's log naming who opened
+which report and when. That line is for you as much as for the person whose meal
+it is: it is what turns "the operator can see everything" into something that can
+be checked afterwards. Opening the figures is not logged, because a line per row
+scanned would bury the one that matters.
+
+**Thirty days, and it is not a setting.** A report and its photograph are deleted
+thirty days after they arrive, by a sweep inside the service, on every instance
+with the feature on. No cron entry, no operator action, nothing to remember. The
+number is `FEEDBACK_RETENTION_DAYS`, it is the same number the app shows a person
+in the consent step, and there is deliberately no variable to raise it: that
+would extend a promise somebody else made on your behalf. Deleting sooner is
+always yours to do.
+
+**Erasing an account erases their reports and their photographs**, in the same
+statement as everything else. `DELETE /v1/admin/accounts/<id>` is the DSAR path,
+and `tests/integration/account-erasure-feedback.test.ts` proves it by asking the
+image store for the bytes afterwards rather than by trusting the cascade.
+
 Leave `SYNC_FEEDBACK` unset and none of this exists. The whole `/v1/feedback`
 subtree answers the same `404` any unknown path does, to everybody, with or
 without a valid token.
@@ -396,6 +420,7 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
 | `src/db/`             | Drizzle schema and the two store implementations.                             |
 | `src/admin/`          | The admin metadata read contract, deliberately not part of `AccountStore`.    |
 | `src/ai/`             | The completion proxy, its quota store, the minute limiter and the scrubber.  |
+| `src/feedback/`       | Reported estimates: submit, the operator's read side, image storage, retention. |
 | `src/mail/`           | The two letters, their strings, and the HTTP mailer that sends them.          |
 | `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                 |
 | `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only: it imports no database code.        |

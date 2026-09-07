@@ -153,14 +153,14 @@ function toStatsView(stats: AdminStats): AdminStatsView {
  * parameter yields its first occurrence, which is the same answer as picking
  * one out of an array and needs no branch.
  */
-function queryValue(req: Request, name: string): string | null {
+export function queryValue(req: Request, name: string): string | null {
   return new URL(req.originalUrl, 'http://placeholder.invalid').searchParams.get(name);
 }
 
-type PagingParameter = { ok: true; value: number } | { ok: false };
+export type PagingParameter = { ok: true; value: number } | { ok: false };
 
 /** A non-negative integer in range, or a rejection. An out-of-range value is a `400`, never a silent clamp. */
-function parseBoundedInteger(raw: string | null, fallback: number, max: number): PagingParameter {
+export function parseBoundedInteger(raw: string | null, fallback: number, max: number): PagingParameter {
   if (raw === null || raw === '') return { ok: true, value: fallback };
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > max) return { ok: false };

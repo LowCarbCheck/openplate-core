@@ -34,7 +34,9 @@ import { generateFamilyId, generatePasswordResetToken, generateToken } from './l
 import { createMailer } from './mail/mailer.js';
 import { createDrizzleAiQuotaStore } from './ai/quota-store.js';
 import { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
+import { createDrizzleFeedbackAdminStore } from './feedback/feedback-admin-store.js';
 import { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
+import { FEEDBACK_RETENTION_DAYS, startFeedbackRetention } from './feedback/feedback-retention.js';
 import { createApp } from './server/create-app.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
@@ -157,6 +159,7 @@ async function main(): Promise<void> {
   const feedback = config.feedbackEnabled
     ? {
         reports: createDrizzleFeedbackStore(database.db),
+        review: createDrizzleFeedbackAdminStore(database.db),
         images: createDrizzleFeedbackImageStore(database.db),
         dailyLimit: config.feedbackDailyLimit,
         maxRequestBytes: config.feedbackMaxRequestBytes,
@@ -197,6 +200,24 @@ async function main(): Promise<void> {
     });
   });
 
+  // RETENTION, RUNNING ON ITS OWN, on every instance that holds photographs.
+  // The consent wording a person read names a number of days and this is what
+  // makes that sentence true without an operator remembering anything. `null`
+  // when the feature is off, because there is nothing to sweep and an interval
+  // that always finds nothing is still a timer somebody has to explain.
+  const feedbackRetention =
+    feedback === null
+      ? null
+      : startFeedbackRetention({
+          reports: feedback.review,
+          images: feedback.images,
+          logger,
+          now: () => new Date(),
+        });
+  if (feedbackRetention !== null) {
+    logger.info('Feedback retention sweep started', { retentionDays: FEEDBACK_RETENTION_DAYS });
+  }
+
   const accountStore = authContext.store;
   const sweeper = setInterval(() => {
     void (async () => {
@@ -216,6 +237,7 @@ async function main(): Promise<void> {
   async function shutdown(signal: string): Promise<void> {
     logger.info('Shutting down', { signal });
     clearInterval(sweeper);
+    feedbackRetention?.stop();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await database.close();
     process.exit(0);

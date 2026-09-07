@@ -19,6 +19,15 @@
  * perfectly well-formed bearer token, which is what a "did we forget to mount
  * the gate" bug sails through.
  *
+ * THE OPERATOR'S SIDE IS GATED TWICE, AND THIS FILE SEPARATES THE TWO GATES.
+ * `/v1/admin/feedback*` is behind the admin credential AND behind
+ * `SYNC_FEEDBACK`. A dark instance with no `ADMIN_TOKEN` would 404 those paths
+ * for the admin middleware's own reason, which proves nothing about the feature
+ * flag, so the admin cases below boot an instance that HAS a break-glass
+ * credential and present it. What is being asserted there is that a caller who
+ * is unquestionably an administrator still finds nothing, because the operator
+ * has not turned the feature on.
+ *
  * AND THE DOOR IS PROVEN TO OPEN. The last test boots the same app with the
  * feature ON and shows the same path answering something other than 404.
  * Without it, this file would pass unchanged if the route were deleted,
@@ -55,8 +64,24 @@ const FEEDBACK_ROUTES: readonly { method: string; path: string; body?: FeedbackR
   { method: 'GET', path: '/v1/feedback/anything-else' },
 ];
 
+/**
+ * Every operator path the feedback family would occupy if it were mounted, plus
+ * the subtree around it.
+ */
+const ADMIN_FEEDBACK_ROUTES: readonly { method: string; path: string }[] = [
+  { method: 'GET', path: '/v1/admin/feedback' },
+  { method: 'GET', path: '/v1/admin/feedback?limit=10' },
+  { method: 'GET', path: '/v1/admin/feedback/1' },
+  { method: 'GET', path: '/v1/admin/feedback/1/image' },
+  { method: 'DELETE', path: '/v1/admin/feedback/1' },
+  { method: 'GET', path: '/v1/admin/feedback/anything-else' },
+];
+
 /** A syntactically perfect credential. It must buy nothing, because there is nothing to buy. */
 const VALID_LOOKING_TOKEN = 'a'.repeat(48);
+
+/** The break-glass credential the admin-gated cases present. Long enough to be the real thing. */
+const ADMIN_TOKEN = 'admin-token-that-is-long-enough-to-be-real';
 
 function sampleReport(): FeedbackRequestBody {
   return {
@@ -138,6 +163,58 @@ test('the same paths stop being 404 once the operator turns the feature on', asy
     // is what shows the mount is one route and not a whole subtree of them.
     const neighbour = await lit.request({ method: 'GET', path: '/v1/feedback/1/image', token: VALID_LOOKING_TOKEN });
     assert.equal(neighbour.status, 404, 'spec 06 owns the read side; it does not exist yet');
+  } finally {
+    await lit.close();
+  }
+});
+
+test('an administrator with a real credential still finds nothing on a dark instance', async () => {
+  // THE POINT OF THE `adminToken` HERE. Without one, `/v1/admin/*` answers 404
+  // for the admin middleware's own reason and this test would pass on a service
+  // where the feature gate was never written. With one, every 404 below is
+  // `SYNC_FEEDBACK` and nothing else: the same credential reaches `/v1/admin/stats`
+  // on this very instance, asserted at the end.
+  const guarded = await startFeedbackHarness({ enabled: false, adminToken: ADMIN_TOKEN });
+  try {
+    const unknown = await guarded.request({ method: 'GET', path: '/definitely-not-a-route' });
+    const unknownBody = await unknown.text();
+
+    for (const route of ADMIN_FEEDBACK_ROUTES) {
+      const response = await guarded.request({ ...route, token: ADMIN_TOKEN });
+      assert.equal(response.status, 404, `${route.method} ${route.path} must be 404 for an admin on a dark instance`);
+      assert.equal(await response.text(), unknownBody, `${route.path} body must be the ordinary unknown-path body`);
+    }
+
+    const stats = await guarded.request({ method: 'GET', path: '/v1/admin/stats', token: ADMIN_TOKEN });
+    assert.equal(stats.status, 200, 'the same credential must work elsewhere, or the 404s above prove nothing');
+  } finally {
+    await guarded.close();
+  }
+});
+
+test('the operator paths stop being 404 once the operator turns the feature on', async () => {
+  // THE ANTI-VACUITY HALF for the admin surface. Everything above asserts an
+  // absence, and an absence is what a feature nobody wrote also looks like.
+  const lit = await startFeedbackHarness({ enabled: true, adminToken: ADMIN_TOKEN });
+  try {
+    const listed = await lit.request({ method: 'GET', path: '/v1/admin/feedback', token: ADMIN_TOKEN });
+    assert.equal(listed.status, 200, 'the queue exists on an instance that opted in');
+    assert.deepEqual(await listed.json(), { reports: [], total: 0, limit: 50, offset: 0 });
+
+    // A report id nobody stored is a 404 here too, but a DIFFERENT one: the
+    // feature answers "no such report" where the dark instance answers the
+    // ordinary unknown-path body. Compared as bodies, so a status code alone
+    // cannot make the two look alike.
+    const missing = await lit.request({ method: 'GET', path: '/v1/admin/feedback/1', token: ADMIN_TOKEN });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: 'no such report' });
+
+    // And a caller who is not an administrator gets nothing, feature on or not.
+    const notAnAdmin = await lit.request({ method: 'GET', path: '/v1/admin/feedback', token: VALID_LOOKING_TOKEN });
+    assert.equal(notAnAdmin.status, 401, 'the admin gate stands in front of the feature gate, not beside it');
+
+    const anonymous = await lit.request({ method: 'GET', path: '/v1/admin/feedback/1/image' });
+    assert.equal(anonymous.status, 401, 'an anonymous caller never reaches a photograph');
   } finally {
     await lit.close();
   }

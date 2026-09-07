@@ -27,8 +27,9 @@ import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
 import { createDrizzleResearchStore } from '../../src/db/research-store.js';
 import { createDrizzleAiQuotaStore } from '../../src/ai/quota-store.js';
 import { createDrizzleFeedbackStore } from '../../src/feedback/feedback-store.js';
+import { createDrizzleFeedbackAdminStore } from '../../src/feedback/feedback-admin-store.js';
 import { createDrizzleFeedbackImageStore } from '../../src/feedback/feedback-image-store.js';
-import { createSilentLogger } from '../../src/logger.js';
+import { createSilentLogger, type Logger } from '../../src/logger.js';
 import { createThrottleStore, type ThrottleConfig } from '../../src/lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
@@ -186,6 +187,15 @@ export interface StartServiceOptions {
    * ones deliberately.
    */
   feedback?: { dailyLimit?: number; maxRequestBytes?: number } | null;
+  /**
+   * Absent means the silent logger, which is what every suite that is not
+   * ABOUT a log line wants. `admin-feedback.test.ts` passes a recording one:
+   * the audit line for a read of somebody's photograph is a REQUIREMENT, and a
+   * requirement that is only ever asserted by reading stdout by hand is not
+   * tested. It is the real `Logger` interface, so what the test sees is what
+   * production writes.
+   */
+  logger?: Logger;
 }
 
 export async function startService(options: StartServiceOptions): Promise<ServiceHarness> {
@@ -229,6 +239,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ? null
       : {
           reports: createDrizzleFeedbackStore(options.db),
+          review: createDrizzleFeedbackAdminStore(options.db),
           images: createDrizzleFeedbackImageStore(options.db),
           dailyLimit: options.feedback.dailyLimit ?? 10_000,
           maxRequestBytes: options.feedback.maxRequestBytes ?? DEFAULT_FEEDBACK_MAX_REQUEST_BYTES,
@@ -239,7 +250,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     storage: createDrizzleStorageAdapter(options.db),
     rotation: createDrizzleRotationStore(options.db),
     throttle: createThrottleStore(options.throttleConfig ?? PERMISSIVE_THROTTLE),
-    logger: createSilentLogger(),
+    logger: options.logger ?? createSilentLogger(),
     trustProxy: false,
     mailer,
     now: () => new Date(clock),
