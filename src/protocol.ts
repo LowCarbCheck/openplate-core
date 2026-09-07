@@ -181,6 +181,35 @@ export interface InstanceInfo {
   mail: boolean;
   /** The AI proxy this instance offers, or `null` when it has no upstream key. Wired by spec 03. */
   ai: InstanceAi | null;
+  /**
+   * What this instance does with a reported photograph, or ABSENT when it
+   * accepts no reports, see {@link InstanceFeedback}.
+   *
+   * OPTIONAL, AND NOT NULLABLE, which is the opposite of the choice `ai`
+   * makes above, on purpose. `ai: null` is a statement ("no AI here") that
+   * every instance makes. This field is a PROMISE, and an instance with
+   * `SYNC_FEEDBACK` unset has none to make: it omits the key entirely, so it
+   * stays indistinguishable from an instance built before the field existed,
+   * exactly as its `/v1/feedback` subtree stays indistinguishable from one
+   * where the feature was never written.
+   */
+  feedback?: InstanceFeedback;
+}
+
+/**
+ * What an instance promises about a reported photograph. One number, because
+ * `/health` is the container's own healthcheck path and is polled forever.
+ *
+ * THE CLIENT SHOWS THIS NUMBER TO A PERSON, in the consent step they read
+ * before they hand over a photograph of their food. It is therefore the number
+ * the service's own retention sweep deletes on
+ * (`feedback/feedback-retention.ts`), read across rather than written out
+ * again: two copies is one wrong sentence shown to somebody at the moment they
+ * are deciding.
+ */
+export interface InstanceFeedback {
+  /** How many days a report and its image are kept before the sweep deletes them. */
+  retentionDays: number;
 }
 
 /** The two languages the invite and reset mails exist in. */

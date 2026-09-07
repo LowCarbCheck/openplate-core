@@ -36,7 +36,11 @@ import { createDrizzleAiQuotaStore } from './ai/quota-store.js';
 import { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
 import { createDrizzleFeedbackAdminStore } from './feedback/feedback-admin-store.js';
 import { createDrizzleFeedbackImageStore } from './feedback/feedback-image-store.js';
-import { FEEDBACK_RETENTION_DAYS, startFeedbackRetention } from './feedback/feedback-retention.js';
+import {
+  FEEDBACK_RETENTION_DAYS,
+  feedbackRetentionAdvertisement,
+  startFeedbackRetention,
+} from './feedback/feedback-retention.js';
 import { createApp } from './server/create-app.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
@@ -165,6 +169,20 @@ async function main(): Promise<void> {
         maxRequestBytes: config.feedbackMaxRequestBytes,
       }
     : null;
+
+  // THE RETENTION WINDOW, ADVERTISED, AND ONLY WHEN THERE IS ONE TO KEEP.
+  //
+  // The app has to tell a person how long a photograph of their food is kept
+  // BEFORE they hand it over, and it is a separate deployable that cannot
+  // import this constant. So the promise is published here, from the same
+  // binding the sweep above deletes on: change the number and both move.
+  //
+  // ABSENT, NOT NULL, when the feature is off. An instance with SYNC_FEEDBACK
+  // unset has no promise to make and adds no key to the handshake, so it stays
+  // indistinguishable from one built before this field existed, exactly as its
+  // 404 keeps its `/v1/feedback` tree indistinguishable from one where the
+  // feature was never written. A client that finds no window offers no report.
+  if (feedback !== null) instance.feedback = feedbackRetentionAdvertisement();
 
   const app = createApp({
     authContext,

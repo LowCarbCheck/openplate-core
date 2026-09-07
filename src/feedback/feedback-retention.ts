@@ -30,6 +30,7 @@
  *
  * See `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
  */
+import type { InstanceFeedback } from '../protocol.js';
 import type { Logger } from '../logger.js';
 import type { FeedbackAdminStore } from './feedback-admin-store.js';
 import type { FeedbackImageStore } from './feedback-image-store.js';
@@ -41,10 +42,15 @@ import type { FeedbackImageStore } from './feedback-image-store.js';
  * ONE PLACE, ON PURPOSE. The client's consent dialog tells a person how long
  * their photograph is kept, and this constant decides when it is actually
  * deleted. Two copies of that number is one wrong sentence shown to somebody
- * who then hands over a photograph on the strength of it, so the client reads
- * this name (exported from the package barrel, `src/index.ts`) rather than
- * writing thirty into a locale bundle. If you change it here, the wording moves
- * with it; if you cannot change it here, it is not the retention window.
+ * who then hands over a photograph on the strength of it.
+ *
+ * THE CLIENT IS ANOTHER REPOSITORY, so it cannot import this name and must not
+ * copy it. It reads the number off `GET /health`, which publishes exactly
+ * {@link feedbackRetentionAdvertisement}, the same binding the sweep deletes
+ * on. An app that finds no window advertised offers no report at all, rather
+ * than printing a number nobody promised. If you change it here, the sentence
+ * a person reads moves with it; if you cannot change it here, it is not the
+ * retention window.
  *
  * Thirty days is long enough that a reviewer who is away for a fortnight still
  * finds the queue useful, and short enough to state in one sentence a person
@@ -72,6 +78,24 @@ export const FEEDBACK_RETENTION_INTERVAL_MS = 60 * 60 * 1000;
  * is taken by the next tick an hour later, oldest first.
  */
 export const FEEDBACK_RETENTION_BATCH_LIMIT = 200;
+
+/**
+ * What `GET /health` advertises about this window, for the client that has to
+ * state it to a person before they hand over a photograph.
+ *
+ * A FUNCTION RATHER THAN A LITERAL AT THE WIRING SITE. `main.ts` publishes
+ * whatever this returns, so the advertised number and the number
+ * {@link feedbackRetentionCutoff} deletes on are the same binding and cannot
+ * be edited apart. The client is not allowed a default of its own: an app that
+ * printed "30 days" from a local constant would be making a promise this
+ * service never made.
+ *
+ * Called only on an instance that HAS the feature on. An instance without it
+ * advertises nothing at all, see {@link InstanceFeedback}.
+ */
+export function feedbackRetentionAdvertisement(): InstanceFeedback {
+  return { retentionDays: FEEDBACK_RETENTION_DAYS };
+}
 
 /** The instant before which a report is over age. Pure, so a test names "now" instead of waiting a month. */
 export function feedbackRetentionCutoff(now: Date): Date {

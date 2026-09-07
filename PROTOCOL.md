@@ -440,6 +440,23 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 
 It is **descriptive, never authoritative**. `mail: true` does not promise a letter arrives, and `ai` reports what the operator configured rather than granting anything; an account with `dailyAiLimit: 0` gets a `403` whatever this says.
 
+`instance.feedback` is the one field here that is a **promise rather than a description**, and it is the exception to the paragraph above. An instance that accepts reported estimates keeps a photograph of somebody's food, and it publishes how long for:
+
+```json
+{
+  "protocolVersion": 2,
+  "envelopeVersion": 1,
+  "serviceVersion": "0.6.0",
+  "instance": { "name": "openplate", "language": "en", "mail": true, "ai": null, "feedback": { "retentionDays": 30 } }
+}
+```
+
+`retentionDays` is the number the service's own retention sweep deletes on, published from the same binding, so the sentence a client shows a person before they hand over a photograph and the deletion that follows cannot drift apart.
+
+The field is **absent, never `null`**, on an instance that accepts no reports. `ai: null` is a statement every instance makes; this is a promise, and an instance with the feature off has none to make, so it adds no key at all and stays indistinguishable from one built before the field existed, exactly as its `/v1/feedback` tree stays indistinguishable from one where the feature was never written.
+
+A client that finds no window advertised **MUST NOT state one**. It offers no report, or wording that names no period; printing a number from a local default publishes a promise the service never made, to a person deciding whether to send a photograph.
+
 `signupMode` is **gone** in protocol 2, along with the setting it described: signup is invite-only on every instance, always (§5.8). A service that still publishes it is speaking version 1.
 
 `notice` is the operator's message to every client, and it is **optional** in exactly the same sense as `instance`: an instance with nothing to say omits the field, and a client that has never heard of it ignores it.

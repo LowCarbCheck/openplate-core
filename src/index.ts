@@ -50,13 +50,15 @@ export type {
   FeedbackReportDetail,
   FeedbackReportSummary,
 } from './feedback/feedback-admin-store.js';
-// THE RETENTION WINDOW IS EXPORTED FOR THE CLIENT'S CONSENT WORDING. It is the
-// number a person is shown before they hand over a photograph, and the number
-// the sweep deletes on. One name, so the sentence and the behaviour cannot
-// drift apart. See `feedback/feedback-retention.ts`.
+// THE RETENTION WINDOW, AND THE THING /health ADVERTISES. It is the number a
+// person is shown before they hand over a photograph, and the number the sweep
+// deletes on. The client lives in another repository and reads it off the
+// handshake, so `feedbackRetentionAdvertisement` is the one place the promise
+// is minted. See `feedback/feedback-retention.ts`.
 export {
   FEEDBACK_RETENTION_DAYS,
   FEEDBACK_RETENTION_MS,
+  feedbackRetentionAdvertisement,
   feedbackRetentionCutoff,
   purgeExpiredFeedback,
   startFeedbackRetention,

@@ -167,3 +167,12 @@ These are prohibitions on the design, not defaults to be relaxed later.
 5. **Retention drift.** An image kept "until deleted" with nothing that deletes
    is an image kept forever. The retention job and the erasure hook are the
    other half of this decision and ship with the admin surface.
+6. **A window that drifts from the sentence a person read.** The app states the
+   number of days before somebody hands over a photograph, and it is a
+   separately deployed artifact that cannot import this service's constant. It
+   held a matching literal of its own, which is the same defect one level up:
+   the promise and the deletion could be edited apart, and nothing would fail.
+   So the window is published on `GET /health`
+   (`instance.feedback.retentionDays`, PROTOCOL.md §5.6) from the same binding
+   the sweep deletes on, absent entirely on an instance with the feature off,
+   and a client that finds none offers no report rather than naming a period.
