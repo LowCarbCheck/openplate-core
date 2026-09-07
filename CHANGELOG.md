@@ -5,6 +5,39 @@ All notable changes to `openplate-sync` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.8.0] - 2026-09-08
+
+### Added
+
+- **An operator can see who is actually using the instance.** `last_seen_at`
+  now reaches the admin account view, and `GET /v1/admin/accounts/:id/activity`
+  returns a bounded, zero-filled strip of daily photo counts. Both facts were
+  already in the database and read by nothing, so this is a read path and not a
+  new collection: no migration, no new write, and nothing about a person that
+  was not already recorded. The blobs stay end to end encrypted and no endpoint
+  added here exposes any diary content.
+
+  The window is zero filled on purpose. A day with no activity and a day
+  outside the window must not look the same to whoever reads the strip, because
+  "they stopped" is exactly the question the strip is for.
+
+### Changed
+
+- **`ai_usage_days` now expires at ninety days.** Nothing pruned it before, and
+  the schema said so. A per-day activity log kept for the life of a deployment
+  is health-revealing on its own, so the retention limit landed together with
+  the screen that reads it rather than after it. `AI_USAGE_RETENTION_DAYS` is
+  one definition, shared by the prune and by the longest activity window the API
+  will draw, so a pruned row can never be served as a quiet day.
+
+- **The usage sweep runs on every instance, not only where AI is configured.**
+  It used to sit behind `config.ai`, which left exactly the wrong case
+  unswept: an instance that had an upstream key once and none today kept those
+  rows forever.
+
+- `last_seen_at`'s comment no longer claims the AI proxy is its only writer.
+  A login writes it too, and the comment had been wrong since login was added.
+
 ## [0.7.0] - 2026-09-07
 
 ### Added
