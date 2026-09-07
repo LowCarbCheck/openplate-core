@@ -5,6 +5,15 @@ All notable changes to `openplate-sync` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.6.2] - 2026-09-07
+
+- `PROTOCOL.md` now carries a sequence diagram of one session. It shows the
+  version handshake, a sign-in, and a push, including the conflict path where
+  the client fetches, merges and pushes again. The handshake is drawn failing
+  closed.
+- The README and the protocol were reworded to drop every em dash and en dash.
+  No obligation changed, and every code span is byte for byte what it was.
+
 ## [0.6.1] - 2026-09-05
 
 - The README now lists the published documentation (`PROTOCOL.md`) in a
