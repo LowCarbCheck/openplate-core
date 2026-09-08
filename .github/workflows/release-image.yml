@@ -4,7 +4,7 @@ name: Release Image
 # (moving `latest`) and on version tags (`v*`, e.g. `v0.1.0`).
 #
 # The package stays PRIVATE until this repo is flipped to public visibility.
-# The workflow needs no change when that happens — it already publishes to the
+# The workflow needs no change when that happens, it already publishes to the
 # right place under the right name; only the package's visibility setting has
 # to move.
 on:
