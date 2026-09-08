@@ -5,6 +5,30 @@ All notable changes to `openplate-sync` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.9.0] - 2026-09-08
+
+### Added
+
+- **One activity read for a whole page of accounts.** `GET /v1/admin/activity`
+  returns the same daily photo counts as the single account endpoint, for every
+  account on a page, in the order `GET /v1/admin/accounts` returns them. The
+  console draws a strip beside every row of its people list, and the only way
+  to do that before was one request per person. It pages exactly like the
+  accounts list, same defaults, same bounds, same refusal, so a caller reads
+  the two in lockstep. The store beneath it reads the whole page in one query
+  rather than moving the N+1 down a layer.
+
+  Every account on the page is in the answer, including one that has never made
+  a request, whose strip is zeroes. Leaving it out would make "this person did
+  nothing" and "this person was not in the answer" the same fact, which is the
+  distinction the zero fill exists to keep.
+
+### Changed
+
+- The paging refusal that `GET /v1/admin/accounts`, `GET /v1/admin/activity`
+  and the feedback list all answer with is now one sentence in one place. It
+  also drops an en dash for a hyphen.
+
 ## [0.8.0] - 2026-09-08
 
 ### Added
