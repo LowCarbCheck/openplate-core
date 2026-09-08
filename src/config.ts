@@ -56,6 +56,22 @@ const NOTICE_URL_SCHEMES = ['https:', 'http:'];
 
 export interface ServiceConfig {
   port: number;
+  /**
+   * The address the listener binds to, or `null` for every interface. `HOST`,
+   * unset by default.
+   *
+   * `null` IS THE PRODUCTION DEFAULT AND HAS TO STAY ONE. This process runs in
+   * a container behind Traefik, and the only route in is the address the
+   * container network hands it. A loopback bind here would make the service
+   * unreachable from the proxy, so do not "harden" this default. See
+   * `main.ts`, which also explains why the value is not `0.0.0.0`.
+   *
+   * IT IS THE DEVELOPMENT MACHINE THAT NEEDS IT SET. A dev instance binding
+   * every interface publishes a seeded database, an admin token and the whole
+   * `/v1/admin` tree to every machine on the operator's LAN. `HOST=127.0.0.1`
+   * is what a laptop wants.
+   */
+  host: string | null;
   databaseUrl: string;
   databaseSsl: boolean;
   /** Root secret; `lib/server-secrets.ts` derives the domain-separated subkeys from it. Never used directly. */
@@ -227,6 +243,23 @@ function parseAdminToken(env: NodeJS.ProcessEnv): string | null {
       `ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters — generate it, do not choose it (see .env.example)`,
     );
   }
+  return raw;
+}
+
+/**
+ * `HOST`, the address the listener binds to. Unset, empty or whitespace-only
+ * all mean `null`, which binds every interface: the behaviour this service has
+ * always had, and the one its container needs.
+ *
+ * DELIBERATELY NOT VALIDATED BEYOND THE TRIM. The legal set is every IPv4
+ * address, every IPv6 address and every name this box resolves, so a pattern
+ * here would reject a working value more often than it would catch a typo.
+ * Node refuses an address it cannot bind, at listen time, with a message that
+ * names it.
+ */
+function parseOptionalHost(env: NodeJS.ProcessEnv): string | null {
+  const raw = env.HOST?.trim();
+  if (raw === undefined || raw === '') return null;
   return raw;
 }
 
@@ -568,6 +601,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
 
   return {
     port: parsePositiveInteger(env, 'PORT', 3000),
+    host: parseOptionalHost(env),
     databaseUrl: required(env, 'DATABASE_URL'),
     databaseSsl: parseBoolean(env, 'DATABASE_SSL', false),
     serverSecret,

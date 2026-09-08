@@ -95,6 +95,35 @@ test('TRUST_PROXY accepts a hop count as well as a boolean', () => {
   assert.throws(() => parseConfig(baseEnv({ TRUST_PROXY: 'maybe' })), /TRUST_PROXY/);
 });
 
+test('HOST is unset by default, and unset means every interface', () => {
+  // THE PRODUCTION DEFAULT, FROZEN. This service runs in a container behind
+  // Traefik and the only route in is the container network address, so a
+  // future "hardening" that made this loopback would take production down.
+  assert.equal(parseConfig(baseEnv()).host, null);
+});
+
+test('an empty or whitespace-only HOST is null, never a bind to the empty string', () => {
+  // A commented-out `HOST=` left in an env file, or one with a stray space
+  // after it, must mean exactly what an absent one means. The empty string is
+  // not an address, and passing it on would be an operator who thinks they
+  // switched something off getting something else.
+  assert.equal(parseConfig(baseEnv({ HOST: '' })).host, null);
+  assert.equal(parseConfig(baseEnv({ HOST: '   ' })).host, null);
+  assert.equal(parseConfig(baseEnv({ HOST: '\t\n' })).host, null);
+});
+
+test('HOST is carried through trimmed, for IPv4, IPv6 and a tailnet address', () => {
+  // The three shapes a developer actually types. None of them is validated
+  // here on purpose: Node refuses an address it cannot bind, at listen time,
+  // and a pattern in this file would reject working values.
+  assert.equal(parseConfig(baseEnv({ HOST: '127.0.0.1' })).host, '127.0.0.1');
+  assert.equal(parseConfig(baseEnv({ HOST: '::1' })).host, '::1');
+  assert.equal(parseConfig(baseEnv({ HOST: '100.64.0.3' })).host, '100.64.0.3');
+  // Surrounding whitespace is stripped, so a value pasted with a trailing
+  // space still binds rather than failing with EADDRNOTAVAIL on " 127.0.0.1".
+  assert.equal(parseConfig(baseEnv({ HOST: '  127.0.0.1  ' })).host, '127.0.0.1');
+});
+
 test('an invalid PORT or LOG_LEVEL is fatal', () => {
   assert.throws(() => parseConfig(baseEnv({ PORT: '0' })), /PORT/);
   assert.throws(() => parseConfig(baseEnv({ PORT: 'http' })), /PORT/);

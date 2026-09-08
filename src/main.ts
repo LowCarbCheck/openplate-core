@@ -210,9 +210,22 @@ async function main(): Promise<void> {
     feedback,
   });
 
-  const server = app.listen(config.port, () => {
+  // NO HOST MEANS EVERY INTERFACE, and that is the production default on
+  // purpose: this process runs in a container behind Traefik, whose only route
+  // in is the container network address. A loopback bind here would leave the
+  // proxy unable to reach the service, so nobody should "harden" this. `HOST`
+  // is the opt-in, and it is the development machine that wants it: a dev
+  // instance with a seeded database and an admin token, bound to everything, is
+  // reachable from every machine on the operator's LAN.
+  //
+  // NOT DEFAULTED TO `0.0.0.0`. That string is IPv4 only, while the no-host
+  // form of `listen` takes IPv6 as well, so writing it out would quietly narrow
+  // what production binds today.
+  const server = app.listen({ port: config.port, host: config.host ?? undefined }, () => {
     logger.info('openplate-sync listening', {
       port: config.port,
+      // The bound address, honestly: `null` is not "no host", it is every one.
+      host: config.host ?? 'all interfaces',
       serviceVersion: SERVICE_VERSION,
       instanceName: config.instanceName,
       instanceLanguage: config.instanceLanguage,
