@@ -18,8 +18,74 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-push:
+  # ── Resolve the ref to the COMMIT it points at ─────────────────
+  # The build job below serialises on the commit, so it needs a value that is
+  # the same for the `main` push and for the `v*` tag push of one release.
+  # `github.sha` is NOT that value. For an ANNOTATED tag the ref points at a tag
+  # OBJECT with its own SHA, so the two runs would key on different values, land
+  # in different groups, and race exactly as they do today, while the workflow
+  # file still looked correct and every static check still passed.
+  #
+  # This is not hypothetical. Both repositories have shipped annotated tags
+  # recently: openplate v0.15.0 and v0.14.0, openplate-sync v0.8.0, v0.7.0,
+  # v0.6.2 and v0.6.1. There is no rule anywhere that says which style to use.
+  # Rather than making the fix depend on a habit, this job removes the variable.
+  #
+  # `actions/checkout` puts the target COMMIT at HEAD for a branch, a
+  # lightweight tag and an annotated tag alike, so `git rev-parse HEAD` is the
+  # one value all three agree on.
+  resolve-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve the ref to its commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    needs: resolve-commit
+    runs-on: ubuntu-latest
+
+    # ── Why this job queues ─────────────────────────────────────
+    # A coordinated release pushes `main` and then the `v*` tag seconds later.
+    # Both refs point at the SAME commit, so both start this job. On 2026-09-08
+    # the second one to start missed the first one's not yet exported buildx
+    # cache and rebuilt linux/arm64 under QEMU from nothing: openplate v0.17.0
+    # sat 42 minutes and never finished, openplate-sync v0.9.0 sat 26 minutes.
+    # A warm run of this step takes under 3 minutes.
+    #
+    # The group is keyed on the COMMIT, resolved by the job above rather than
+    # taken from `github.sha`. Not on the ref, because the branch push and the
+    # tag push carry different refs and must land in ONE group. Not on the
+    # repository, because that is wider than the problem: it would queue every
+    # ordinary push to `main` behind every other one, and GitHub keeps
+    # only ONE run waiting per group. A newer arrival evicts an older waiting
+    # run even when cancel-in-progress is false, so a wide key could DROP a
+    # release build rather than delay it. Keying on the commit bounds this
+    # queue at two, the branch run and the tag run, so nothing is ever evicted.
+    #
+    # cancel-in-progress MUST stay false. Cancelling a release run is the
+    # failure this block exists to prevent; see the dispatch-website note below.
+    #
+    # EXPECT a release to take about twice one build now, roughly 5 to 8 minutes
+    # end to end, because the tag run starts only after the branch run finishes.
+    # A job held here reads "Queued" in the Actions UI. Queued is not hung. Do
+    # not cancel it.
+    concurrency:
+      group: release-image-${{ needs.resolve-commit.outputs.sha }}
+      cancel-in-progress: false
+
+    # Ordering the two runs cannot stop a stall from a GHCR outage or a poisoned
+    # cache, and a stuck job now holds the group instead of only hurting itself.
+    # GitHub's own default would let it sit for six hours. 45 clears the slowest
+    # real cold arm64 build on record (42 minutes) and still fails a genuine
+    # hang inside the hour.
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
