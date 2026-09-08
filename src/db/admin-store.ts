@@ -38,7 +38,7 @@ import type {
   AdminStats,
   ListAccountsInput,
 } from '../admin/admin-store.js';
-import type { ActivityDay } from '../admin/account-activity.js';
+import type { AccountActivityCount, ActivityDay } from '../admin/account-activity.js';
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { Database } from './client.js';
 import { utcDayKey } from '../lib/utc-day.js';
@@ -207,6 +207,38 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         .orderBy(aiUsageDays.day);
 
       return rows.map((row) => ({ day: row.day, count: row.count }));
+    },
+
+    async activityForAccounts(input: {
+      accountIds: readonly number[];
+      fromDay: string;
+      toDay: string;
+    }): Promise<AccountActivityCount[]> {
+      // An empty `IN ()` is not valid SQL, and a page with no accounts has
+      // nothing to ask about anyway.
+      if (input.accountIds.length === 0) return [];
+
+      // ONE QUERY FOR THE WHOLE PAGE, the same `IN (...)` shape the per-account
+      // fan-out above uses (see the module header), widened from one day to a
+      // day range. One statement per account would turn a fifty-row people
+      // list into fifty round trips.
+      //
+      // NO `GROUP BY`: `(account_id, day)` is the composite primary key of
+      // `ai_usage_days` (`db/schema.ts`), so there is at most one row per pair
+      // already and an aggregate would only re-derive a value the table holds.
+      const rows = await db
+        .select({ accountId: aiUsageDays.accountId, day: aiUsageDays.day, count: aiUsageDays.count })
+        .from(aiUsageDays)
+        .where(
+          and(
+            inArray(aiUsageDays.accountId, [...input.accountIds]),
+            gte(aiUsageDays.day, input.fromDay),
+            lte(aiUsageDays.day, input.toDay),
+          ),
+        )
+        .orderBy(aiUsageDays.accountId, aiUsageDays.day);
+
+      return rows.map((row) => ({ accountId: row.accountId, day: row.day, count: row.count }));
     },
 
     async stats(input: { now: Date }): Promise<AdminStats> {

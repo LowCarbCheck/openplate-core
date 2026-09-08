@@ -27,7 +27,7 @@
  * See `server/admin-routes.ts`.
  */
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
-import type { ActivityDay } from './account-activity.js';
+import type { AccountActivityCount, ActivityDay } from './account-activity.js';
 
 /**
  * What the admin surface knows about an account. Everything else about it is
@@ -135,6 +135,31 @@ export interface AdminMetadataStore {
    * mistyped query parameter away from a full-table read.
    */
   accountActivity(input: { accountId: number; fromDay: string; toDay: string }): Promise<ActivityDay[]>;
+
+  /**
+   * The same counters for MANY accounts at once, across one inclusive day
+   * range, for the pairs that HAVE a row.
+   *
+   * IT EXISTS BECAUSE THE PEOPLE LIST DRAWS A STRIP PER ROW. Asking
+   * `accountActivity` once per account is N+1: a page of fifty is fifty round
+   * trips for a screen an operator opens in one go. One call, one query.
+   *
+   * IT RETURNS ROWS, NOT STRIPS, for exactly the reason `accountActivity`
+   * above gives, and the flat row carries its `accountId` so the pure grouper
+   * (`admin/account-activity.ts`) can decide the order rather than inheriting
+   * whatever order the rows arrived in.
+   *
+   * The ids and the range are the caller's, both already capped by the server
+   * (a page is at most `MAX_ADMIN_PAGE_LIMIT` accounts, the window at most
+   * `AI_USAGE_RETENTION_DAYS` days), for the same reason `accountActivity` is
+   * bounded: an unbounded read here is one mistyped query parameter away from
+   * the whole table.
+   */
+  activityForAccounts(input: {
+    accountIds: readonly number[];
+    fromDay: string;
+    toDay: string;
+  }): Promise<AccountActivityCount[]>;
   /** `now` is injected for the same reason every clock in this repo is: `pendingInvites` and `aiRequestsToday` both key on it. */
   stats(input: { now: Date }): Promise<AdminStats>;
 }

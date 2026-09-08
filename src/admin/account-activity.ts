@@ -1,8 +1,8 @@
 /**
  * The bounded, zero-filled activity strip behind
- * `GET /v1/admin/accounts/:id/activity`, the pure half, so the shape of what
- * an operator sees is decided by a function a test can call without a database
- * or an HTTP client.
+ * `GET /v1/admin/accounts/:id/activity` and `GET /v1/admin/activity`, the pure
+ * half, so the shape of what an operator sees is decided by a function a test
+ * can call without a database or an HTTP client.
  *
  * WHY ZERO-FILL RATHER THAN RETURN THE ROWS. `ai_usage_days` holds a row only
  * for a day an account actually spent something on, so a raw list of rows makes
@@ -19,6 +19,14 @@
  * zero-fill above and would show an operator a person who stopped using the app
  * in March, when what actually happened is that the counters expired. A metadata
  * window that cannot say anything true is not one a caller may widen.
+ *
+ * THE MANY-ACCOUNT ANSWER ZERO-FILLS THE ACCOUNTS TOO, for the same reason it
+ * zero-fills the days. The people list draws one strip per row, and an account
+ * that has never spent anything has no usage row at all, so an answer that
+ * simply left it out would make "this person did nothing" and "this person was
+ * not in the answer" identical one level up from where the argument above
+ * makes them different. Every account the caller named is in the result, in
+ * the order it named them.
  *
  * A CLAMP, WHERE THE PAGING PARAMETERS NEXT DOOR ARE A `400`. Those refuse an
  * out-of-range `limit` because a silently narrowed page is a caller that
@@ -88,4 +96,50 @@ export function zeroFillActivityDays(input: {
     strip.push({ day, count: counts.get(day) ?? 0 });
   }
   return strip;
+}
+
+/**
+ * One flat usage row for one account on one day, as a store returns them: only
+ * the pairs that HAVE a row, never a strip. See `admin/admin-store.ts`.
+ */
+export interface AccountActivityCount extends ActivityDay {
+  accountId: number;
+}
+
+/** One account's strip, zero filled across the whole window. */
+export interface AccountActivityStrip {
+  accountId: number;
+  days: ActivityDay[];
+}
+
+/**
+ * A strip per account, in the order the accounts were named, each one zero
+ * filled across the same window.
+ *
+ * THE ORDER IS THE CALLER'S, NOT THE DATABASE'S. The caller is paging the
+ * accounts list, and the point of this function is that strip `n` belongs to
+ * row `n` of that page. Sorting here, or letting the row order decide, would
+ * hand a screen a strip to draw beside the wrong person.
+ *
+ * A ROW FOR AN UNNAMED ACCOUNT IS DROPPED, and a row outside the window is
+ * dropped by {@link zeroFillActivityDays}, which walks the window rather than
+ * the rows. So the size of the answer is decided by the two capped inputs
+ * before the first row is read.
+ */
+export function zeroFillActivityStrips(input: {
+  window: ActivityWindow;
+  accountIds: readonly number[];
+  counted: readonly AccountActivityCount[];
+}): AccountActivityStrip[] {
+  const perAccount = new Map<number, ActivityDay[]>();
+  for (const row of input.counted) {
+    const existing = perAccount.get(row.accountId) ?? [];
+    existing.push({ day: row.day, count: row.count });
+    perAccount.set(row.accountId, existing);
+  }
+
+  return input.accountIds.map((accountId) => ({
+    accountId,
+    days: zeroFillActivityDays({ window: input.window, counted: perAccount.get(accountId) ?? [] }),
+  }));
 }

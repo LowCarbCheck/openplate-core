@@ -1032,6 +1032,7 @@ locked.
 | `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
 | `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
+| `GET /v1/admin/activity`                 | The same day-by-day strip for a whole PAGE of accounts, in the list's order |
 | `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `suspended`, `displayName`. At least one required |
 | `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
 | `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
@@ -1085,6 +1086,36 @@ service already stores and collects nothing new.
   deleted.
 - An unknown id is the same `404` as every other account route, and the whole
   tree is behind the credentials above.
+
+**`GET /v1/admin/activity` answers that same question for a whole page at
+once**, because a people list draws a strip beside every row and asking once
+per row is N+1.
+
+```json
+{
+  "window": { "days": 7, "fromDay": "2026-09-02", "toDay": "2026-09-08" },
+  "accounts": [{ "accountId": 2, "days": [{ "day": "2026-09-02", "count": 0 }] }],
+  "total": 4
+}
+```
+
+- `?limit=` and `?offset=` behave **exactly** as they do on
+  `GET /v1/admin/accounts`: same defaults, same ceiling, same `400` with the
+  same sentence. That is the contract, not a coincidence: a caller pages the
+  two endpoints in lockstep and draws strip `n` beside person `n`, so
+  `accounts` here is in the order that list returns for the same page, and
+  `total` is that list's `total`.
+- `?days=N` is the window of the endpoint above, clamped the same way: an
+  integer of at least 1 or a `400`, more than 90 answered with 90, and
+  `window` reports what was drawn.
+- **Every account on the page appears**, including one that has never made a
+  request, whose `days` is a strip of zeroes. An omitted account would make
+  "this person did nothing" and "this person was not in the answer" the same
+  fact, which is the mistake the per-day zero-fill exists to prevent, one
+  level up.
+- Each entry is `accountId` and `days` and nothing else. The address, the
+  name and the allowance belong to `GET /v1/admin/accounts`, which the caller
+  is already reading.
 
 **Retention: usage counters are kept for 90 days.** `ai_usage_days` holds one
 integer per account per UTC day (§9.2). An hourly sweep inside the service

@@ -65,8 +65,18 @@ export {
 } from './feedback/feedback-retention.js';
 export type { FeedbackRetentionSweep } from './feedback/feedback-retention.js';
 export type * from './admin/admin-store.js';
-export { activityWindow, clampActivityWindowDays, zeroFillActivityDays } from './admin/account-activity.js';
-export type { ActivityDay, ActivityWindow } from './admin/account-activity.js';
+export {
+  activityWindow,
+  clampActivityWindowDays,
+  zeroFillActivityDays,
+  zeroFillActivityStrips,
+} from './admin/account-activity.js';
+export type {
+  AccountActivityCount,
+  AccountActivityStrip,
+  ActivityDay,
+  ActivityWindow,
+} from './admin/account-activity.js';
 // THE OTHER RETENTION WINDOW, and the one that is not advertised because
 // nothing outside the operator's console reads it. It is the number the sweep
 // prunes `ai_usage_days` at AND the longest activity strip an operator can ask

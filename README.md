@@ -296,6 +296,7 @@ If they forget the passphrase, "forgot password" mails them a link and their dia
 
 There is an operator API at `/v1/admin`: list accounts and invitations, read
 one account's metadata, read one account's activity over the last 90 days,
+read the same activity for a whole page of accounts in one request,
 aggregate storage counts, change what an account may do
 (`role`, its AI allowance, its display name), suspend and reactivate it, send it
 a password-reset letter, resend an invitation, and **delete an account with
@@ -312,6 +313,15 @@ because there is none to show: the blobs are encrypted and this service holds no
 key. Every day in the window is returned, so a day with no activity is a zero
 rather than a hole, and the window never runs past the 90 days of counters the
 service keeps.
+
+**The same view comes in bulk, because a list of people needs a strip each.**
+`GET /v1/admin/activity` returns one strip per account on a page of the account
+list, in that list's order and paged with the same `limit` and `offset`, so a
+console draws fifty rows with one request instead of fifty. Every account on
+the page is in the answer, including one that has never used AI, whose strip is
+zeroes: leaving it out would turn "this person did nothing" into "this person
+was not in the answer", which are different facts and the whole reason the days
+are zero-filled.
 
 **Suspending revokes every session in the same act.** A `suspended_at` on its own
 would leave the phone in somebody's pocket syncing for another quarter of an

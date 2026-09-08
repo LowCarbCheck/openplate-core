@@ -17,7 +17,7 @@ import type {
   ListAccountsInput,
 } from '../../src/admin/admin-store.js';
 import type { AccountRole, SyncKeyRecordKind } from '../../src/protocol.js';
-import type { ActivityDay } from '../../src/admin/account-activity.js';
+import type { AccountActivityCount, ActivityDay } from '../../src/admin/account-activity.js';
 
 /**
  * The material an account really has in the database and which the admin API
@@ -116,6 +116,24 @@ export function createFakeAdminStore(): FakeAdminStore {
         .filter(([day]) => day >= input.fromDay && day <= input.toDay)
         .map(([day, count]) => ({ day, count }))
         .toSorted((left, right) => left.day.localeCompare(right.day));
+    },
+
+    async activityForAccounts(input: {
+      accountIds: readonly number[];
+      fromDay: string;
+      toDay: string;
+    }): Promise<AccountActivityCount[]> {
+      // FLAT ROWS, sparse by day, exactly as the real query returns them, and
+      // deliberately in the REVERSE of the order the caller asked in: a fake
+      // that handed the ids back in the caller's order would let a grouper
+      // that never imposed one pass.
+      const rows: AccountActivityCount[] = [];
+      for (const accountId of [...input.accountIds].toReversed()) {
+        for (const [day, count] of Object.entries(activity.get(accountId) ?? {})) {
+          if (day >= input.fromDay && day <= input.toDay) rows.push({ accountId, day, count });
+        }
+      }
+      return rows;
     },
 
     async stats(): Promise<AdminStats> {

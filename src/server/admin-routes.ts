@@ -74,6 +74,8 @@ import {
   activityWindow,
   clampActivityWindowDays,
   zeroFillActivityDays,
+  zeroFillActivityStrips,
+  type AccountActivityStrip,
   type ActivityDay,
 } from '../admin/account-activity.js';
 import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
@@ -91,6 +93,13 @@ export const DEFAULT_ADMIN_PAGE_LIMIT = 50;
  * operator's curiosity into a full-table read with a per-row fan-out.
  */
 export const MAX_ADMIN_PAGE_LIMIT = 200;
+
+/**
+ * The one sentence every paged endpoint here refuses with. Named once so the
+ * three of them cannot drift into three different explanations of the same
+ * rule.
+ */
+const PAGING_REFUSAL = `limit must be 0–${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer`;
 
 /**
  * The wire shape of one account. Every field is named here; nothing is spread
@@ -130,6 +139,21 @@ interface AdminAccountActivityView {
   lastSeenAt: string | null;
   window: { days: number; fromDay: string; toDay: string };
   days: ActivityDay[];
+}
+
+/**
+ * The wire shape of a page of strips.
+ *
+ * `accounts` is one entry per account on the page, in the order
+ * `GET /v1/admin/accounts` returns them for the same `limit` and `offset`, so
+ * a caller pages the two endpoints in lockstep and draws strip `n` beside
+ * person `n`. `total` is the same total that list reports, so it can page at
+ * all.
+ */
+interface AdminActivityPageView {
+  window: { days: number; fromDay: string; toDay: string };
+  accounts: AccountActivityStrip[];
+  total: number;
 }
 
 interface AdminStatsView {
@@ -479,7 +503,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       const limit = parseBoundedInteger(queryValue(req, 'limit'), DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT);
       const offset = parseBoundedInteger(queryValue(req, 'offset'), 0, Number.MAX_SAFE_INTEGER);
       if (!limit.ok || !offset.ok) {
-        res.status(400).json({ error: `limit must be 0–${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer` });
+        res.status(400).json({ error: PAGING_REFUSAL });
         return;
       }
 
@@ -557,6 +581,64 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         // Zero-filled, so a day with no activity and a day outside the answer
         // cannot look the same to whoever reads it.
         days: zeroFillActivityDays({ window, counted }),
+      };
+      res.status(200).json(view);
+    }),
+  );
+
+  /**
+   * The same strip for a whole page of accounts, so a people list does not
+   * fetch one per row.
+   *
+   * IT PAGES LIKE `GET /accounts`, on purpose: same defaults, same bounds, same
+   * `400`. A caller holding page two of the accounts list asks for page two
+   * here and the two answers line up row by row, because both orders come from
+   * the same `listAccounts` call underneath.
+   *
+   * EVERY ACCOUNT ON THE PAGE IS IN THE ANSWER, even one that has never made a
+   * request. Omitting it would make "this person did nothing" and "this person
+   * was not in the answer" the same fact, which is the mistake the zero-fill
+   * exists to prevent, one level up. See `admin/account-activity.ts`.
+   */
+  router.get(
+    '/activity',
+    asyncHandler(async (req, res) => {
+      const limit = parseBoundedInteger(queryValue(req, 'limit'), DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT);
+      const offset = parseBoundedInteger(queryValue(req, 'offset'), 0, Number.MAX_SAFE_INTEGER);
+      if (!limit.ok || !offset.ok) {
+        res.status(400).json({ error: PAGING_REFUSAL });
+        return;
+      }
+
+      const days = parseActivityWindowDays(queryValue(req, 'days'));
+      if (!days.ok) {
+        res.status(400).json({ error: 'days must be an integer of at least 1' });
+        return;
+      }
+
+      const now = options.now();
+      // THE ACCOUNTS COME FIRST, and their order is the answer's order: this
+      // endpoint reports on the page that list returns, so it must ask that
+      // list rather than assemble a page of its own.
+      const page = await metadata.listAccounts({
+        limit: limit.value,
+        offset: offset.value,
+        day: utcDayKey(now),
+      });
+      const accountIds = page.accounts.map((summary) => summary.id);
+
+      const window = activityWindow({ now, days: days.value });
+      // ONE call for the whole page, never one per account.
+      const counted = await metadata.activityForAccounts({
+        accountIds,
+        fromDay: window.fromDay,
+        toDay: window.toDay,
+      });
+
+      const view: AdminActivityPageView = {
+        window: { days: window.days, fromDay: window.fromDay, toDay: window.toDay },
+        accounts: zeroFillActivityStrips({ window, accountIds, counted }),
+        total: page.total,
       };
       res.status(200).json(view);
     }),
@@ -820,7 +902,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       const limit = parseBoundedInteger(queryValue(req, 'limit'), DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT);
       const offset = parseBoundedInteger(queryValue(req, 'offset'), 0, Number.MAX_SAFE_INTEGER);
       if (!limit.ok || !offset.ok) {
-        res.status(400).json({ error: `limit must be 0–${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer` });
+        res.status(400).json({ error: PAGING_REFUSAL });
         return;
       }
 
