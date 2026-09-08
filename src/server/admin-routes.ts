@@ -96,10 +96,10 @@ export const MAX_ADMIN_PAGE_LIMIT = 200;
 
 /**
  * The one sentence every paged endpoint here refuses with. Named once so the
- * three of them cannot drift into three different explanations of the same
+ * four of them cannot drift into four different explanations of the same
  * rule.
  */
-const PAGING_REFUSAL = `limit must be 0–${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer`;
+export const PAGING_REFUSAL = `limit must be 0-${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer`;
 
 /**
  * The wire shape of one account. Every field is named here; nothing is spread

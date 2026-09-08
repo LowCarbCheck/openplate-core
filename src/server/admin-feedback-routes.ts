@@ -41,7 +41,13 @@ import type { Request, Response, Router } from 'express';
 import { asyncHandler } from './async-handler.js';
 import { getAdminPrincipal } from './admin-auth.js';
 import { handleNotFound } from './error-middleware.js';
-import { DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT, parseBoundedInteger, queryValue } from './admin-routes.js';
+import {
+  DEFAULT_ADMIN_PAGE_LIMIT,
+  MAX_ADMIN_PAGE_LIMIT,
+  PAGING_REFUSAL,
+  parseBoundedInteger,
+  queryValue,
+} from './admin-routes.js';
 import type {
   FeedbackAdminStore,
   FeedbackReportDetail,
@@ -169,7 +175,7 @@ export function createAdminFeedbackRoutes(options: AdminFeedbackRoutesOptions): 
       const limit = parseBoundedInteger(queryValue(req, 'limit'), DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT);
       const offset = parseBoundedInteger(queryValue(req, 'offset'), 0, Number.MAX_SAFE_INTEGER);
       if (!limit.ok || !offset.ok) {
-        res.status(400).json({ error: `limit must be 0-${MAX_ADMIN_PAGE_LIMIT} and offset a non-negative integer` });
+        res.status(400).json({ error: PAGING_REFUSAL });
         return;
       }
 
