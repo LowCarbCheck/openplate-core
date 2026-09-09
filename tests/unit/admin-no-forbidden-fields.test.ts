@@ -84,6 +84,7 @@ before(async () => {
     role: 'member',
     dailyAiLimit: 0,
     expiresAt: new Date('2027-01-01T00:00:00.000Z'),
+    invitedByAccountId: null,
     now: new Date('2026-08-31T12:00:00.000Z'),
   });
   if (!minted.ok) throw new Error('expected the fake store to mint an invite');
@@ -161,6 +162,7 @@ test('the account body carries exactly the documented metadata fields and nothin
     'displayName',
     'email',
     'id',
+    'invitesLeft',
     'keyRecordKinds',
     'lastSeenAt',
     'role',

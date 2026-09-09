@@ -63,7 +63,15 @@ import type { Request, Response, Router } from 'express';
 import { asyncHandler } from './async-handler.js';
 import type { AccountStore } from '../accounts/account-store.js';
 import type { AdminAccountSummary, AdminMetadataStore, AdminStats } from '../admin/admin-store.js';
-import { inviteStatus, type InviteStatus, type InviteStore, type InviteSummary } from '../admin/invite-store.js';
+import {
+  DEFAULT_INVITE_TTL_MS,
+  MAX_DAILY_AI_LIMIT,
+  inviteStatus,
+  type InviteStatus,
+  type InviteStore,
+  type InviteSummary,
+} from '../admin/invite-store.js';
+import { invitesLeft } from '../accounts/member-invites.js';
 import { isAccountRole, type AccountRole, type AccountView, type SyncKeyRecordKind } from '../protocol.js';
 import type { Logger } from '../logger.js';
 import type { Mailer } from '../mail/mailer.js';
@@ -178,8 +186,17 @@ interface AdminStatsView {
   aiInstanceDailyLimit: number | null;
 }
 
-/** The ONLY function that turns an account into a response body. See the module header. */
-function toAccountView(summary: AdminAccountSummary): AdminAccountView {
+/**
+ * The ONLY function that turns an account into a response body. See the module
+ * header.
+ *
+ * `memberInvites` is whether THIS INSTANCE lets members invite people, not
+ * anything about this account: it is what turns `invitesMinted` into
+ * `invitesLeft`, through the same function the caller's own account view uses
+ * (`accounts/member-invites.ts`), so an operator's console can never show a
+ * number the route does not enforce.
+ */
+function toAccountView(summary: AdminAccountSummary, memberInvites: boolean): AdminAccountView {
   return {
     id: summary.id,
     email: summary.email,
@@ -189,6 +206,7 @@ function toAccountView(summary: AdminAccountSummary): AdminAccountView {
     aiUsedToday: summary.aiUsedToday,
     allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
+    invitesLeft: invitesLeft({ role: summary.role, minted: summary.invitesMinted, enabled: memberInvites }),
     createdAt: summary.createdAt.toISOString(),
     lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
     blob:
@@ -287,14 +305,6 @@ function parseInviteTtl(value: JsonValue | undefined): { ok: true; value: number
 }
 
 /**
- * Default invite lifetime: one week. Long enough to survive a holiday, short
- * enough that a letter forgotten in an inbox is not a live capability next
- * month. It came down from fourteen days in M192, because an invite now names
- * a person and lives in their mailbox rather than in the operator's notes.
- */
-export const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
  * A ceiling on `expiresInDays`, so a typo cannot mint a capability that
  * outlives the operator's memory of it. Thirty days rather than M166's year,
  * for the same reason the default shortened.
@@ -303,9 +313,6 @@ export const MAX_INVITE_TTL_DAYS = 30;
 
 /** Default daily AI allowance for an invite that does not name one: none. */
 export const DEFAULT_INVITE_DAILY_AI_LIMIT = 0;
-
-/** A ceiling on `dailyAiLimit`, so a mistyped allowance cannot become an unbounded bill. */
-export const MAX_DAILY_AI_LIMIT = 10_000;
 
 /**
  * The wire shape of one invite. Every field is named here, and `tokenHash` is
@@ -515,6 +522,17 @@ export interface AdminRoutesOptions {
    * predicate cannot be two different numbers.
    */
   aiInstanceDailyLimit: number | null;
+  /**
+   * Whether this instance lets ordinary members invite people (M212), which is
+   * what turns each account's `invitesMinted` count into the `invitesLeft` the
+   * account view reports.
+   *
+   * IT IS NOT CONFIGURED HERE, for the reason `aiInstanceDailyLimit` above is
+   * not: `create-app.ts` derives it from the same surface
+   * `POST /v1/auth/invites` is mounted on, so the console cannot report a cap
+   * that no route enforces.
+   */
+  memberInvites: boolean;
   /** Mints the `sr_` token `POST /accounts/:id/reset-mail` writes. Injected so a test can name it. */
   mintResetToken(): GeneratedToken;
   /** Injected, like every clock in this repo, so a test can pin "today" and an invite's status. */
@@ -574,7 +592,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         day: utcDayKey(options.now()),
       });
       res.status(200).json({
-        accounts: page.accounts.map(toAccountView),
+        accounts: page.accounts.map((summary) => toAccountView(summary, options.memberInvites)),
         total: page.total,
         limit: limit.value,
         offset: offset.value,
@@ -596,7 +614,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         sendNotFound(res);
         return;
       }
-      res.status(200).json({ account: toAccountView(summary) });
+      res.status(200).json({ account: toAccountView(summary, options.memberInvites) });
     }),
   );
 
@@ -785,7 +803,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       // The account id, never the values: a display name is personal data and a
       // role change is already legible from the row.
       logger.info('Account changed by admin', { accountId });
-      res.status(200).json({ account: toAccountView(summary) });
+      res.status(200).json({ account: toAccountView(summary, options.memberInvites) });
     }),
   );
 
@@ -932,6 +950,11 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         dailyAiLimit: limit,
         expiresAt: new Date(now.getTime() + ttl.value),
         now,
+        // `null` IS THE OPERATOR, and it is what makes this door exempt from
+        // the member cap and from the re-invite rule (M212). An operator
+        // re-inviting somebody who left and came back is the case the
+        // exemption exists for.
+        invitedByAccountId: null,
       });
       if (!minted.ok) {
         // The one place this service confirms that an address holds an account,

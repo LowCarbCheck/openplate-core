@@ -54,9 +54,36 @@ export interface ResetStrings {
   help: string;
 }
 
+/**
+ * The note somebody gets when a member invited an address that ALREADY has an
+ * account (M212).
+ *
+ * IT CARRIES NO LINK, and it is the only letter here that does not. The
+ * inviter gets an indistinguishable `202` whatever is true, so this message
+ * exists to make the invitation ARRIVE as something honest for the reader
+ * rather than vanish; handing them a join link would mint a second account for
+ * a person who has one, and handing them a reset link would be a password
+ * reset nobody asked for.
+ *
+ * IT NAMES NOBODY. It does not say who typed the address, because the person
+ * who typed it must not learn that the account exists and the reader has no
+ * use for the name.
+ */
+export interface AccountNoticeStrings {
+  subject: string;
+  greeting: string;
+  /** Why this letter arrived: somebody invited this address and it already has an account. */
+  invited: string;
+  /** What the reader does next: sign in. */
+  signIn: string;
+  /** The one thing that can be wrong for them, and where they fix it. */
+  forgotten: string;
+}
+
 export interface MailStrings {
   invite: InviteStrings;
   reset: ResetStrings;
+  accountNotice: AccountNoticeStrings;
 }
 
 export const MAIL_STRINGS = {
@@ -80,6 +107,14 @@ export const MAIL_STRINGS = {
       ignore: 'If you did not ask for this, you can ignore this mail. Your password stays as it is.',
       help: 'If the link no longer works, ask for a new one on the sign-in page.',
     },
+    accountNotice: {
+      subject: 'You already have an openplate account',
+      greeting: 'Hello,',
+      invited:
+        'Someone invited you to openplate using this email address. You already have an account, so no invitation was sent.',
+      signIn: 'Sign in with this email address and your password.',
+      forgotten: 'If you forgot your password, request a new one on the sign-in page.',
+    },
   },
   de: {
     invite: {
@@ -102,6 +137,14 @@ export const MAIL_STRINGS = {
       ignore:
         'Wenn du das nicht angefordert hast, kannst du diese E-Mail ignorieren. Dein Passwort bleibt unverändert.',
       help: 'Wenn der Link nicht mehr funktioniert, fordere auf der Anmeldeseite einen neuen an.',
+    },
+    accountNotice: {
+      subject: 'Du hast bereits ein openplate-Konto',
+      greeting: 'Hallo,',
+      invited:
+        'Jemand hat dich mit dieser E-Mail-Adresse zu openplate eingeladen. Da du bereits ein Konto hast, wurde keine Einladung verschickt.',
+      signIn: 'Melde dich mit dieser E-Mail-Adresse und deinem Passwort an.',
+      forgotten: 'Falls du dein Passwort vergessen hast, kannst du auf der Anmeldeseite ein neues anfordern.',
     },
   },
   // `satisfies` rather than an annotation: the check that both languages carry

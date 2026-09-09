@@ -296,6 +296,47 @@ test('AI_INSTANCE_DAILY_LIMIT is optional, and zero is a boot failure that says 
   assert.throws(() => parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: 'lots' })), /AI_INSTANCE_DAILY_LIMIT/);
 });
 
+test('the two member-invite settings are all-or-nothing, and the allowance has a ceiling', () => {
+  // THE CONTROL FIRST: both set parse into the policy whole, so the refusals
+  // below cannot pass by the parser rejecting everything.
+  assert.deepEqual(
+    parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '30' })).memberInvites,
+    { dailyAiLimit: 50, allowanceDays: 30 },
+  );
+  // Neither set is the default: members cannot invite anybody, and
+  // `POST /v1/auth/invites` answers 404.
+  assert.equal(parseConfig(baseEnv()).memberInvites, null);
+  assert.equal(parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '  ' })).memberInvites, null);
+
+  // HALF THE PAIR IS A BOOT FAILURE THAT NAMES THE MISSING ONE. An allowance
+  // with no end date is a trial that never ends, and an end date with no
+  // allowance is a letter that grants nothing.
+  assert.throws(
+    () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50' })),
+    /MEMBER_INVITE_ALLOWANCE_DAYS/,
+  );
+  assert.throws(
+    () => parseConfig(baseEnv({ MEMBER_INVITE_ALLOWANCE_DAYS: '30' })),
+    /MEMBER_INVITE_DAILY_AI_LIMIT/,
+  );
+
+  // ONE MISTYPED DIGIT IS THE LARGEST BILL THIS FILE CAN WRITE: the allowance
+  // is multiplied by every member times five invitations.
+  assert.throws(
+    () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '500000', MEMBER_INVITE_ALLOWANCE_DAYS: '30' })),
+    /MEMBER_INVITE_DAILY_AI_LIMIT/,
+  );
+  // And zero is refused for either, rather than read as "off".
+  assert.throws(
+    () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '0', MEMBER_INVITE_ALLOWANCE_DAYS: '30' })),
+    /MEMBER_INVITE_DAILY_AI_LIMIT/,
+  );
+  assert.throws(
+    () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '0' })),
+    /MEMBER_INVITE_ALLOWANCE_DAYS/,
+  );
+});
+
 test('an instance with nothing to say publishes no notice at all', () => {
   // ABSENCE IS THE DEFAULT AND IT IS A SHAPE, not just a value: `null` here is
   // what keeps the field off the /health body entirely, so a client older than

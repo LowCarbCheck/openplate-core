@@ -73,6 +73,17 @@ export interface MintInviteInput {
   expiresAt: Date;
   /** Stamped on the pending invite this mint supersedes, if there is one. Injected, like every instant in this repo. */
   now: Date;
+  /**
+   * The account that caused this letter, or `null` for an operator mint
+   * (M212).
+   *
+   * REQUIRED AND NULLABLE, rather than optional. Two rules read this value out
+   * of the table afterwards, the lifetime cap and the re-invite rule, so
+   * every call site has to say which kind of mint it is performing, and an
+   * omission has to be a compile error rather than a silently uncounted
+   * invitation.
+   */
+  invitedByAccountId: number | null;
 }
 
 export interface ReissueInviteInput {
@@ -83,6 +94,29 @@ export interface ReissueInviteInput {
 
 /** `email-taken` is the ONLY expected failure: an address that already has an account cannot be invited again. */
 export type MintInviteResult = { ok: true; minted: MintedInvite } | { ok: false; reason: 'email-taken' };
+
+/**
+ * Default invite lifetime: one week. Long enough to survive a holiday, short
+ * enough that a letter forgotten in an inbox is not a live capability next
+ * month. It came down from fourteen days in M192, because an invite now names
+ * a person and lives in their mailbox rather than in the operator's notes.
+ *
+ * IT LIVES WITH THE CONTRACT RATHER THAN WITH THE ADMIN ROUTER, since M212:
+ * the member mint (`POST /v1/auth/invites`) has no `expiresInDays` field at
+ * all and takes this value, so both doors have to read one constant.
+ */
+export const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * A ceiling on any `dailyAiLimit` this service writes, so a mistyped allowance
+ * cannot become an unbounded bill. It bounds the admin mint body, the admin
+ * account PATCH, and `MEMBER_INVITE_DAILY_AI_LIMIT` at boot.
+ *
+ * IT LIVES HERE, NOT ON THE ADMIN ROUTER, because `src/config.ts` validates
+ * the member-invite allowance against it and must not import an Express
+ * router to do so.
+ */
+export const MAX_DAILY_AI_LIMIT = 10_000;
 
 export interface InviteStore {
   /**
@@ -119,6 +153,34 @@ export interface InviteStore {
    * say.
    */
   revoke(input: { inviteId: number; revokedAt: Date }): Promise<boolean>;
+  /**
+   * How many invites this account has ever caused, counted as ROWS carrying
+   * its id (M212). The lifetime cap (`accounts/member-invites.ts`'s
+   * `MEMBER_INVITE_LIFETIME_CAP`) is compared against this number.
+   *
+   * ROWS, NOT A COUNTER ON THE ACCOUNT. A counter column drifts: withdraw an
+   * invitation, delete a row, restore from a backup, and it lies. Counting the
+   * evidence makes the cap a property of what actually happened.
+   *
+   * REVOKED, EXPIRED AND REDEEMED ROWS ALL COUNT. The cap is on how many
+   * letters an account caused, not on how many worked, so a member cannot
+   * recycle their five by asking an operator to withdraw one.
+   */
+  countMintedBy(input: { accountId: number }): Promise<number>;
+  /**
+   * Whether this address has already REDEEMED an invite that some member
+   * caused (M212). `true` means it gets no second member invitation.
+   *
+   * IT SURVIVES THE ACCOUNT, and that is the whole point. `redeemed_account_id`
+   * and `invited_by_account_id` are both `ON DELETE SET NULL`, and the row
+   * keeps its `email` and its `redeemed_at`, so a self-delete followed by a
+   * friend's re-invite is not a fresh allowance.
+   *
+   * AN OPERATOR MINT IS NOT ONE. A row with a `NULL` inviter answers `false`
+   * here, so somebody who joined through the admin door and left can be
+   * invited by a member later, and an operator can always re-invite anybody.
+   */
+  hasRedeemedMemberInvite(input: { email: string }): Promise<boolean>;
 }
 
 /** Derives an invite's status from its three lifecycle columns. The ONE place that decides. */

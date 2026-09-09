@@ -82,6 +82,9 @@ async function mintInvite(email: string): Promise<string> {
     dailyAiLimit: 0,
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     now: new Date(),
+    // An operator mint, which is what every fixture outside the member-invite
+    // suite wants.
+    invitedByAccountId: null,
   });
   if (!minted.ok) throw new Error(`could not mint an invite for ${email}: ${minted.reason}`);
   return minted.minted.token;

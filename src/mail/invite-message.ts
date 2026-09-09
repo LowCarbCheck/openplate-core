@@ -112,14 +112,24 @@ export function renderHtml(input: {
   language: InstanceLanguage;
   before: string[];
   after: string[];
-  link: string;
+  /**
+   * `null` for the ONE letter that carries no link
+   * (`account-notice-message.ts`). The anchor paragraph is then omitted
+   * entirely rather than rendered empty, so a reader is never shown a
+   * clickable nothing where every other letter has its URL.
+   */
+  link: string | null;
 }): string {
   const paragraph = (value: string): string => `<p>${escapeHtml(value)}</p>`;
+  const anchor =
+    input.link === null
+      ? []
+      : [`<p style="word-break:break-all"><a href="${escapeHtml(input.link)}">${escapeHtml(input.link)}</a></p>`];
   return [
     '<!doctype html>',
     `<html lang="${input.language}"><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">`,
     ...input.before.map(paragraph),
-    `<p style="word-break:break-all"><a href="${escapeHtml(input.link)}">${escapeHtml(input.link)}</a></p>`,
+    ...anchor,
     ...input.after.map(paragraph),
     '</body></html>',
   ].join('\n');

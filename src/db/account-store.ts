@@ -43,6 +43,9 @@ import { isUniqueViolation } from '../lib/storage-conflict.js';
 import type { Database } from './client.js';
 import { accountTokens, accounts, aiUsageDays, passwordResets, signupInvites, syncKeyRecords } from './schema.js';
 
+/** One day in milliseconds, for the one place this module does date arithmetic. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 /**
  * Internal control signal for `redeemInviteAndCreateAccount`, never thrown out
  * of this module. A rollback can only be expressed as a throw, so the
@@ -307,6 +310,23 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
           // indistinguishably.
           if (!claimed) return { ok: false, reason: 'invite-invalid' };
 
+          // THE ROW DECIDES, NOT THE CONFIG (M212). A member-caused invite
+          // carries an inviting account, and its redemption is what starts the
+          // allowance clock: `redeemedAt + MEMBER_INVITE_ALLOWANCE_DAYS`,
+          // computed off the SAME injected instant the claim above was stamped
+          // with, so the two can never be a millisecond apart. An operator's
+          // invite has a NULL inviter and gets no expiry at all, because a
+          // standing grant is what an operator means unless they set a date
+          // through `PATCH /v1/admin/accounts/:id`.
+          //
+          // An instance that has since turned member invites off redeems an
+          // outstanding member invite with no expiry, which is the honest
+          // reading of "this instance no longer runs trials".
+          const allowanceExpiresAt =
+            claimed.invitedByAccountId !== null && input.memberInviteAllowanceDays !== null
+              ? new Date(input.now.getTime() + input.memberInviteAllowanceDays * MS_PER_DAY)
+              : null;
+
           let account: AccountRow | undefined;
           try {
             [account] = await tx
@@ -319,6 +339,7 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
                 displayName: input.account.displayName,
                 role: claimed.role,
                 dailyAiLimit: claimed.dailyAiLimit,
+                allowanceExpiresAt,
                 verifier: input.account.verifier,
                 recoveryVerifier: input.account.recoveryVerifier,
                 kdfDescriptor: input.account.kdfDescriptor,

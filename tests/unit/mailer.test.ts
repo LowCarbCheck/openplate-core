@@ -171,6 +171,40 @@ test('a reset send posts the reset letter, in the configured language', async ()
   assert.ok(payload.text.includes('/reset#server='), 'the reset link, not the join link');
 });
 
+test('an account-notice send posts the third letter, and posts no link with it', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+
+  await mailerFor(api.url, captured.logger).sendAccountNotice({ email: 'anna@example.org' });
+
+  assert.equal(api.received.length, 1);
+  // SAFETY: as above, our own adapter posted this body.
+  const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  assert.deepEqual(payload.to, ['anna@example.org']);
+  assert.equal(payload.subject, 'You already have an openplate account');
+  // THE PROPERTY THIS LETTER EXISTS FOR: it hands over nothing. Asserted on
+  // the posted payload rather than on the builder, because the adapter is what
+  // a mail provider actually receives.
+  assert.ok(!payload.text.includes('http'), 'the note must carry no url in its text part');
+  assert.ok(!payload.html.includes('href'), 'the note must carry no link in its html part');
+});
+
+test('the same adapter DOES post a link for an invitation, so the assertion above is about the note', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+
+  await mailerFor(api.url, captured.logger).sendInvite({
+    email: 'anna@example.org',
+    displayName: null,
+    inviteToken: 'si_a-token',
+    expiresAt: '2026-09-11T10:00:00.000Z',
+  });
+
+  // SAFETY: as above.
+  const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  assert.ok(payload.html.includes('href'), 'an invitation must carry its link');
+});
+
 // ── What it refuses to know ────────────────────────────────────────────────
 
 test('a failing send throws the status code and NOTHING the provider echoed back', async () => {
@@ -272,10 +306,11 @@ test('createMailer answers the no-op when mail or the link bases are absent', as
   assert.deepEqual(captured.lines, []);
 });
 
-test('the no-op mailer accepts both letters and sends neither', async () => {
+test('the no-op mailer accepts all three letters and sends none', async () => {
   const mailer = createNoopMailer();
   await mailer.sendInvite({ email: 'a@b.test', displayName: null, inviteToken: 'si_x', expiresAt: 'x' });
   await mailer.sendReset({ email: 'a@b.test', resetToken: 'sr_x', expiresAt: 'x' });
+  await mailer.sendAccountNotice({ email: 'a@b.test' });
   // Nothing to assert but the absence of a throw: an instance without mail must
   // not fail the request that would have sent one.
   assert.ok(true);

@@ -1,0 +1,3 @@
+ALTER TABLE "signup_invites" ADD COLUMN "invited_by_account_id" integer;--> statement-breakpoint
+ALTER TABLE "signup_invites" ADD CONSTRAINT "signup_invites_invited_by_account_id_accounts_id_fk" FOREIGN KEY ("invited_by_account_id") REFERENCES "public"."accounts"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "signup_invites_inviter_idx" ON "signup_invites" USING btree ("invited_by_account_id");

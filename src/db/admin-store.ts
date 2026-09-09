@@ -145,11 +145,44 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
     return kinds;
   }
 
+  /**
+   * How many invitations each of these accounts CAUSED, for the given ids
+   * (M212).
+   *
+   * ONE GROUPED QUERY FOR THE WHOLE PAGE, the shape every other helper here
+   * uses: a count per account would turn a fifty-row people list into fifty
+   * round trips. An account with no rows is absent from the result and reads
+   * `0` at the call site, which is the honest value rather than a missing key.
+   *
+   * NO LIFECYCLE PREDICATE, exactly as `InviteStore.countMintedBy` has none:
+   * the cap is on letters caused, so revoked and expired rows count too, and
+   * an operator's console must show the same number the route enforces.
+   */
+  async function invitesMinted(accountIds: number[]): Promise<Map<number, number>> {
+    const minted = new Map<number, number>();
+    if (accountIds.length === 0) return minted;
+
+    const rows = await db
+      .select({ accountId: signupInvites.invitedByAccountId, total: count() })
+      .from(signupInvites)
+      .where(inArray(signupInvites.invitedByAccountId, accountIds))
+      .groupBy(signupInvites.invitedByAccountId);
+
+    for (const row of rows) {
+      // `invited_by_account_id` is nullable, so drizzle types it as such even
+      // though the `IN (...)` above cannot match a NULL.
+      if (row.accountId === null) continue;
+      minted.set(row.accountId, row.total);
+    }
+    return minted;
+  }
+
   async function summarize(identities: AccountIdentityRow[], day: string): Promise<AdminAccountSummary[]> {
     const ids = identities.map((identity) => identity.id);
     const blobs = await blobSummaries(ids);
     const kinds = await keyRecordKinds(ids);
     const usage = await aiUsage(ids, day);
+    const minted = await invitesMinted(ids);
 
     return identities.map((identity) => ({
       id: identity.id,
@@ -164,6 +197,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       lastSeenAt: identity.lastSeenAt,
       blob: blobs.get(identity.id) ?? null,
       keyRecordKinds: (kinds.get(identity.id) ?? []).toSorted(),
+      invitesMinted: minted.get(identity.id) ?? 0,
     }));
   }
 

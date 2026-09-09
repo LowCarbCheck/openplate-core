@@ -603,10 +603,15 @@ test('GET /account reports the whole AccountView, including today’s AI spend',
     'displayName',
     'email',
     'id',
+    'invitesLeft',
     'role',
     'suspendedAt',
   ]);
   assert.equal(outcome.body.account.aiUsedToday, 3);
+  // `null` on this fixture because the instance has member invites off, which
+  // is what every deployment runs until an operator sets both settings. The
+  // counting-down case is `member-invites.test.ts`.
+  assert.equal(outcome.body.account.invitesLeft, null);
 });
 
 test('PATCH /account sets and clears the display name, and refuses a missing key', async () => {

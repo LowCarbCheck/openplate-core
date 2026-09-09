@@ -2,11 +2,21 @@
  * The mail PORT — what this service needs from a mailer, and nothing about how
  * one is built.
  *
- * TWO LETTERS, EVER. An invitation, and a password reset. That bound is the
- * design: a service that can send arbitrary mail grows a notification system,
- * and a notification system needs an address for people who did not ask for
- * one. These two go to an address an operator typed (the invite) or to an
- * address that is already the account's own identity (the reset).
+ * THREE LETTERS, EVER. An invitation, a password reset, and the note that
+ * says an invited address already has an account. That bound is the design: a
+ * service that can send arbitrary mail grows a notification system, and a
+ * notification system needs an address for people who did not ask for one.
+ * All three go to an address somebody typed into an invitation (the invite and
+ * the note) or to an address that is already the account's own identity (the
+ * reset).
+ *
+ * THE THIRD ONE IS THE PRICE OF AN INDISTINGUISHABLE `202` (M212).
+ * `POST /v1/auth/invites` answers the same thing whatever is true about the
+ * address, so a member never learns that a colleague is already here. Without
+ * a letter on that branch the invitation would simply vanish and both people
+ * would wait for it. It carries NO LINK, which is what keeps it from being a
+ * second account or an unrequested password reset, see
+ * `account-notice-message.ts`.
  *
  * WHY AN INTERFACE AND NOT AN HTTP CLIENT. Everything upstream of the
  * transport has to be testable without one: the admin invite route has real
@@ -24,6 +34,7 @@
  */
 import type { InstanceLanguage, IsoTimestamp } from '../protocol.js';
 import type { Logger } from '../logger.js';
+import { buildAccountNoticeMessage } from './account-notice-message.js';
 import { buildInviteMessage } from './invite-message.js';
 import { buildResetMessage } from './reset-message.js';
 
@@ -37,6 +48,17 @@ export interface SendInviteInput {
   expiresAt: IsoTimestamp;
 }
 
+/**
+ * The note for an address that already holds an account. It carries the
+ * address and nothing else: no token, no link, and above all not the member
+ * who typed it, who must not be named to the reader and must not learn that
+ * this letter went at all.
+ */
+export interface SendAccountNoticeInput {
+  /** The account's own address, read off the account row rather than from a request body. */
+  email: string;
+}
+
 export interface SendResetInput {
   /** The account's own address. */
   email: string;
@@ -48,6 +70,8 @@ export interface SendResetInput {
 export interface Mailer {
   sendInvite(input: SendInviteInput): Promise<void>;
   sendReset(input: SendResetInput): Promise<void>;
+  /** The M212 note. See `SendAccountNoticeInput` above and the module header. */
+  sendAccountNotice(input: SendAccountNoticeInput): Promise<void>;
 }
 
 /**
@@ -68,6 +92,12 @@ export function createNoopMailer(): Mailer {
     },
     async sendReset(): Promise<void> {
       // Deliberately nothing. See the doc above.
+    },
+    async sendAccountNotice(): Promise<void> {
+      // Deliberately nothing. See the doc above. An instance with no mail
+      // hands nobody this note either, and there is no link to fall back on:
+      // the member's `202` is unchanged, which is exactly the property the
+      // route promises.
     },
   };
 }
@@ -210,6 +240,17 @@ export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
         outgoing: { to: input.email, subject: message.subject, text: message.text, html: message.html },
       });
       logger.info('Password reset mailed');
+    },
+
+    async sendAccountNotice(input: SendAccountNoticeInput): Promise<void> {
+      const message = buildAccountNoticeMessage({ language });
+      await postMail({
+        mail,
+        timeoutMs,
+        outgoing: { to: input.email, subject: message.subject, text: message.text, html: message.html },
+      });
+      // No address, and nothing that says which member's mint caused it.
+      logger.info('Account notice mailed');
     },
   };
 }

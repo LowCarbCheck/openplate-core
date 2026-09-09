@@ -17,7 +17,7 @@
  * record that a letter went out and was taken back, which a missing row cannot
  * say.
  */
-import { and, count, desc, eq, isNull } from 'drizzle-orm';
+import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import type {
   InviteStore,
   InviteSummary,
@@ -88,6 +88,9 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
             role: input.role,
             dailyAiLimit: input.dailyAiLimit,
             expiresAt: input.expiresAt,
+            // `null` for an operator mint, which is what makes the admin door
+            // exempt from the cap and from the re-invite rule (M212).
+            invitedByAccountId: input.invitedByAccountId,
           })
           .returning(SUMMARY_COLUMNS);
         if (!row) throw new Error('Failed to insert invite');
@@ -138,6 +141,43 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
         )
         .returning({ id: signupInvites.id });
       return revoked.length > 0;
+    },
+
+    async countMintedBy(input: { accountId: number }): Promise<number> {
+      // EVERY row this account caused, with no lifecycle predicate at all:
+      // revoked, expired and redeemed invitations count, because the cap is on
+      // how many letters an account caused and not on how many worked. Adding
+      // `isNull(revokedAt)` here would let a member recycle their five by
+      // asking an operator to withdraw one.
+      const [totals] = await db
+        .select({ total: count() })
+        .from(signupInvites)
+        .where(eq(signupInvites.invitedByAccountId, input.accountId));
+      return totals?.total ?? 0;
+    },
+
+    async hasRedeemedMemberInvite(input: { email: string }): Promise<boolean> {
+      // REDEEMED AND MEMBER-CAUSED, both. A pending or revoked row says
+      // nothing about whether this address ever had an allowance, and a row
+      // with a NULL inviter is an operator's mint, which this rule never
+      // withdraws.
+      //
+      // The account it produced may be long gone: both foreign keys on this
+      // table are `ON DELETE SET NULL` and the row keeps its `email` and its
+      // `redeemed_at`, so a self-delete plus a friend's re-invite is still
+      // answered `true` here.
+      const found = await db
+        .select({ id: signupInvites.id })
+        .from(signupInvites)
+        .where(
+          and(
+            eq(signupInvites.email, input.email),
+            isNotNull(signupInvites.redeemedAt),
+            isNotNull(signupInvites.invitedByAccountId),
+          ),
+        )
+        .limit(1);
+      return found.length > 0;
     },
   };
 }

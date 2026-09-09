@@ -81,6 +81,11 @@ async function main(): Promise<void> {
     logger,
   });
 
+  // BUILT BEFORE THE AUTH CONTEXT, because the member mint is on the auth
+  // router and needs the same store the admin tree mints through, see
+  // `AuthContext.memberInvites`.
+  const invites = createDrizzleInviteStore(database.db);
+
   const authContext: AuthContext = {
     store: createDrizzleAccountStore(database.db),
     pepper: secrets.verifierPepper,
@@ -92,6 +97,10 @@ async function main(): Promise<void> {
     mintResetToken: generatePasswordResetToken,
     mintFamilyId: generateFamilyId,
     logger,
+    // `null` unless BOTH member-invite settings are configured, which leaves
+    // `POST /v1/auth/invites` answering the ordinary unknown-path 404, see
+    // `accounts/register-auth-routes.ts`.
+    memberInvites: config.memberInvites === null ? null : { invites, policy: config.memberInvites },
   };
 
   // ALWAYS PRESENT, because signup is invite-only and the invite store is the
@@ -101,7 +110,7 @@ async function main(): Promise<void> {
   const admin = {
     token: config.adminToken,
     metadata: createDrizzleAdminStore(database.db),
-    invites: createDrizzleInviteStore(database.db),
+    invites,
     // The same pair the mailer builds its links from, so an admin response and
     // a letter can never disagree about where a link points.
     links,
@@ -147,6 +156,11 @@ async function main(): Promise<void> {
     // `mail: false` knows to show the operator a link instead of promising a
     // letter, and one that sees `ai: null` knows not to offer a scan.
     mail: config.mail !== null,
+    // DESCRIPTIVE, NEVER A GRANT, like every other field here: it says whether
+    // a client should draw an invite card, and the cap, the re-invite rule and
+    // the throttle stay on the server whatever it says. Built from the SAME
+    // config binding that decides whether the route exists at all.
+    memberInvites: config.memberInvites !== null,
     // DESCRIPTIVE, NEVER A GRANT. It says an upstream is configured, not that
     // the caller may use it: an account with `dailyAiLimit: 0` gets a 403
     // whatever this says. The model name is advertising copy the operator
@@ -247,6 +261,7 @@ async function main(): Promise<void> {
       sharing: shares !== null,
       research: research !== null,
       feedback: feedback !== null,
+      memberInvites: config.memberInvites !== null,
     });
   });
 

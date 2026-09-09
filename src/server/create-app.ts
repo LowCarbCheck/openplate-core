@@ -468,6 +468,11 @@ export function createApp(options: CreateAppOptions): Express {
       // `POST /v1/chat/completions` does not exist on it, so no ceiling
       // applies whatever the environment says.
       aiInstanceDailyLimit: ai?.instanceDailyLimit ?? null,
+      // The SAME surface `POST /v1/auth/invites` is mounted on, read off the
+      // auth context rather than configured again here (M212), so the
+      // `invitesLeft` an operator reads in the console is the cap the route
+      // enforces.
+      memberInvites: options.authContext.memberInvites != null,
       // The SAME minter the auth handlers use, so an operator-sent reset and a
       // self-service one produce tokens of the same shape.
       mintResetToken: options.authContext.mintResetToken,

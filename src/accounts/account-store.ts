@@ -106,6 +106,23 @@ export interface RedeemInviteAndCreateAccountInput {
   /** The caller's clock, injected. Expiry is judged against this, never the database's `now()` — see the method's doc. */
   now: Date;
   account: CreateAccountInput;
+  /**
+   * How many days after redemption a MEMBER-caused invite's allowance ends
+   * (`MEMBER_INVITE_ALLOWANCE_DAYS`), or `null` on an instance where members
+   * cannot invite anybody (M212).
+   *
+   * IT DECIDES NOTHING ON ITS OWN. The row does: an invite whose
+   * `invited_by_account_id` is `NULL` was minted by the operator and gets no
+   * expiry whatever this says, because an operator granting an allowance is
+   * granting a standing one unless they set a date themselves. So the expiry
+   * is written for exactly the invitations a member caused.
+   *
+   * INJECTED RATHER THAN READ, like every other instance setting that reaches
+   * a store: this module knows no environment, and the arithmetic is
+   * `redeemedAt + days` against the SAME injected instant the redemption is
+   * stamped with, so the date a test asserts is the date the row carries.
+   */
+  memberInviteAllowanceDays: number | null;
 }
 
 /**

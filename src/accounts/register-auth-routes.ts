@@ -4,7 +4,7 @@
  * status code and wires the per-IP throttle, which is the one concern that
  * genuinely needs the request object (`req.ip`).
  *
- * `express.json()` is applied to the `/v1/auth` PREFIX only, with a small
+ * The JSON body parser is applied to the `/v1/auth` PREFIX only, with a small
  * limit. Other routers mount their own, far larger ones
  * (`server/register-routes.ts`, `ai/register-ai-route.ts`) — a multi-megabyte
  * body limit has no business anywhere near a login endpoint.
@@ -13,7 +13,7 @@
  * until M192/03. This router is mounted with `app.use(router)` — at the ROOT,
  * with no path — so a `router.use(parser)` with no path of its own ran the
  * 64 KB parser on EVERY request to EVERY path in the service, before routing.
- * `express.json()` marks a request as parsed, so the second parser on the
+ * A JSON parser marks a request as parsed, so the second parser on the
  * blob, share, research and AI routers found the work already done and their
  * own declared limits were unreachable. The observable effect: a blob push
  * over 64 KB answered `413` even though `MAX_BLOB_BYTES` is 2 MiB, and every
@@ -36,12 +36,15 @@
  *    one mail send on the known branch), and a residual timing signal that
  *    small only emerges from many samples per address. It is also what a
  *    caller would use to fill somebody's mailbox.
- *  - **signup**, **kdf**, **invite-lookup** and **reset/open** — keyed by IP
- *    ALONE, and every attempt counts, successful or not. These are volume
- *    controls (account-farming, bulk address probing, token guessing), not
- *    credential guards, and keying them by a submitted value would let an
+ *  - **signup**, **kdf**, **invite-lookup**, **invites** and **reset/open**,
+ *    keyed by IP ALONE, and every attempt counts, successful or not. These are
+ *    volume controls (account-farming, bulk address probing, token guessing),
+ *    not credential guards, and keying them by a submitted value would let an
  *    attacker evade them by simply rotating it — which is precisely the
- *    attack, in the `kdf` case.
+ *    attack, in the `kdf` case. The member mint is on this list even though it
+ *    is authenticated: VOLUME is the attack there too, because every accepted
+ *    call sends a letter to an address the caller chose, and a bucket keyed by
+ *    that address would hand out a fresh allowance per mailbox.
  *
  * `kdf` is throttled for two reasons that are easy to miss because its
  * RESPONSE already gives nothing away (unknown addresses get a real-shaped
@@ -66,6 +69,7 @@ import {
   handleInviteLookup,
   handleLogin,
   handleLogout,
+  handleMintMemberInvite,
   handleRecover,
   handleRecoverRotate,
   handleRefresh,
@@ -74,6 +78,7 @@ import {
   handleSignup,
   handleUpdateAccount,
 } from './auth-handlers.js';
+import { handleNotFound } from '../server/error-middleware.js';
 import { getRequestSession } from '../server/bearer-auth.js';
 import { throttleKey, type ThrottleStore } from '../lib/throttle.js';
 import { asFields } from './auth-input.js';
@@ -373,6 +378,48 @@ export function registerAuthRoutes(app: Express, options: AuthRoutesOptions): vo
       next(error);
     }
   });
+
+  // THE MEMBER MINT, OR NOTHING THAT ADMITS TO BEING ONE (M212).
+  //
+  // `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS` are
+  // unset on every deployment whose operator has not decided to let members
+  // invite people. The member mint then answers the ordinary unknown-path
+  // 404 on its path, to everybody, signed in or not, which is the same
+  // bargain the admin, share, research, feedback and AI surfaces make, for the
+  // same reason: this service auto-deploys on push, so the commit that adds a
+  // route is the commit that puts it in production.
+  //
+  // The terminator sits in the SAME position the real route would occupy, so
+  // it is reached before the fallthrough and cannot be turned into a 401 by
+  // anything mounted later. It is mounted on the path rather than wrapped
+  // around a registered-but-refusing handler, so a second verb added here
+  // later is dark by default.
+  if (ctx.memberInvites != null) {
+    router.post(`${AUTH_API_PREFIX}/invites`, requireAuth, async (req, res, next) => {
+      try {
+        const session = getRequestSession(req);
+        if (session === null) {
+          res.status(401).json({ error: 'authentication required' });
+          return;
+        }
+        // By IP alone, and every attempt counts, see the module header. It is
+        // checked BEFORE the handler, so a caller who is already locked out
+        // costs no database read and, more importantly, causes no letter.
+        const key = throttleKey({ namespace: 'member-invite', ip: clientIp(req) });
+        const decision = throttle.check(key);
+        if (decision.locked) {
+          sendThrottled(res, decision.retryAfterMs);
+          return;
+        }
+        throttle.recordFailure(key);
+        sendOutcome(res, await handleMintMemberInvite({ accountId: session.accountId, body: req.body }, ctx));
+      } catch (error) {
+        next(error);
+      }
+    });
+  } else {
+    router.use(`${AUTH_API_PREFIX}/invites`, handleNotFound);
+  }
 
   router.post(`${AUTH_API_PREFIX}/delete`, requireAuth, async (req, res, next) => {
     try {

@@ -15,6 +15,8 @@ import { isLogLevel, type LogLevel } from './logger.js';
 import { INSTANCE_LANGUAGES, isInstanceLanguage, type InstanceLanguage, type OperatorNotice } from './protocol.js';
 import type { HttpMailConfig } from './mail/mailer.js';
 import type { AiUpstreamConfig } from './ai/proxy.js';
+import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
+import { MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 
 /**
  * Minimum accepted `SERVER_SECRET` length. 32 characters is the shortest
@@ -142,6 +144,29 @@ export interface ServiceConfig {
    * ZERO IS A BOOT FAILURE, not "off". See `parseAiInstanceDailyLimit`.
    */
   aiInstanceDailyLimit: number | null;
+  /**
+   * What an invitation a MEMBER causes is worth, or `null` for an instance
+   * where members cannot invite anybody, which is the default and what every existing
+   * deployment and every self-hoster keeps.
+   *
+   * BOTH SETTINGS OR NEITHER (`MEMBER_INVITE_DAILY_AI_LIMIT` and
+   * `MEMBER_INVITE_ALLOWANCE_DAYS`), and half of the pair is a boot failure
+   * naming the missing one, exactly as the mail block is. An allowance with no
+   * end date is a trial that never ends, and an end date with no allowance is a
+   * letter that grants nothing; both are far more likely a typo than an
+   * intention.
+   *
+   * `null` IS NOT "MOUNTED BUT REFUSING". `POST /v1/auth/invites` answers the
+   * ordinary unknown-path 404 there, to every signed-in caller, for the same
+   * reason the admin, share, research and feedback trees do
+   * (`server/create-app.ts`). `InstanceInfo.memberInvites` reports it
+   * descriptively so a client knows whether to draw the card.
+   *
+   * NEITHER VALUE IS READABLE OR WRITABLE BY THE CALLER. The member mint takes
+   * an address and nothing else: the terms are the instance's, and that is the
+   * one thing separating this route from the operator's.
+   */
+  memberInvites: MemberInvitePolicy | null;
   /**
    * The largest request body the proxy route accepts, in bytes.
    * `AI_MAX_REQUEST_BYTES`, default 8 MB.
@@ -569,6 +594,56 @@ function parseAiInstanceDailyLimit(env: NodeJS.ProcessEnv): number | null {
   return parsed;
 }
 
+/** The two names that make up the member-invite block. Listed once so every message below can name both. */
+const MEMBER_INVITE_VARIABLES = ['MEMBER_INVITE_DAILY_AI_LIMIT', 'MEMBER_INVITE_ALLOWANCE_DAYS'] as const;
+
+/**
+ * `MEMBER_INVITE_DAILY_AI_LIMIT` + `MEMBER_INVITE_ALLOWANCE_DAYS`, both or
+ * neither. Unset is `null`, which is the default and takes the route away
+ * entirely.
+ *
+ * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
+ * for the reason `parseMail` gives one variable up: the alternative is an
+ * operator who believes their members can invite people, on an instance where
+ * the route answers 404, or one who has opened the growth door and set no end
+ * date on what it hands out.
+ *
+ * AN ALLOWANCE ABOVE THE CEILING IS A BOOT FAILURE TOO. This one number is
+ * multiplied by every member on the instance times
+ * {@link MEMBER_INVITE_LIFETIME_CAP} invitations, so a mistyped extra digit
+ * here is the largest bill any single variable in this file can write.
+ *
+ * ZERO IS REFUSED FOR EITHER, and it is the value that reads most like "off".
+ * A zero allowance mints letters that grant no AI at all, and a zero-day
+ * window mints an allowance that has already ended when the person opens it.
+ * Somebody who wants members not to invite unsets both.
+ */
+function parseMemberInvites(env: NodeJS.ProcessEnv): MemberInvitePolicy | null {
+  const present = MEMBER_INVITE_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = MEMBER_INVITE_VARIABLES.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete member-invite configuration: ${missing.join(', ')} is not set. ` +
+        `${MEMBER_INVITE_VARIABLES.join(' and ')} are all-or-nothing: set both to let members invite people, ` +
+        'or neither and mint every invitation yourself.',
+    );
+  }
+
+  // The fallback is unreachable: both names are non-empty by the check above.
+  // `parsePositiveInteger` is what refuses a zero, a fraction and a word.
+  const dailyAiLimit = parsePositiveInteger(env, 'MEMBER_INVITE_DAILY_AI_LIMIT', 0);
+  if (dailyAiLimit > MAX_DAILY_AI_LIMIT) {
+    throw new Error(
+      `MEMBER_INVITE_DAILY_AI_LIMIT must be at most ${MAX_DAILY_AI_LIMIT} (got ${dailyAiLimit}): ` +
+        `every member may cause ${MEMBER_INVITE_LIFETIME_CAP} invitations, so this number is multiplied ` +
+        'by the whole instance before it reaches your provider bill.',
+    );
+  }
+  return { dailyAiLimit, allowanceDays: parsePositiveInteger(env, 'MEMBER_INVITE_ALLOWANCE_DAYS', 0) };
+}
+
 function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {
   const raw = env.LOG_LEVEL?.trim().toLowerCase() ?? 'info';
   if (!isLogLevel(raw)) throw new Error(`Invalid LOG_LEVEL: expected debug/info/warn/error, got "${raw}"`);
@@ -663,6 +738,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),
     aiInstanceDailyLimit: parseAiInstanceDailyLimit(env),
+    memberInvites: parseMemberInvites(env),
     aiMaxRequestBytes: parsePositiveInteger(env, 'AI_MAX_REQUEST_BYTES', DEFAULT_AI_MAX_REQUEST_BYTES),
     trustProxy: parseTrustProxy(env),
     adminToken: parseAdminToken(env),

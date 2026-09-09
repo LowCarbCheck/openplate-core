@@ -354,6 +354,24 @@ export const signupInvites = pgTable(
      * explains itself.
      */
     redeemedAccountId: integer('redeemed_account_id').references(() => accounts.id, { onDelete: 'set null' }),
+    /**
+     * The account that CAUSED this letter, or `NULL` when the operator minted
+     * it (M212).
+     *
+     * `set null`, NOT `cascade`, for exactly the reason `redeemedAccountId`
+     * above gives: deleting the inviter must not erase the evidence that a
+     * letter went out. It matters more here than there, because two rules read
+     * this column. The lifetime cap of five is counted as the rows that carry
+     * an account, so a cascade would refund an invite every time somebody
+     * deleted their account; and the re-invite rule asks "did this address
+     * already redeem a MEMBER invite", which a cascade would answer wrongly the
+     * moment the inviter left.
+     *
+     * `NULL` IS THE OPERATOR, and that is the whole of the admin exemption:
+     * `POST /v1/admin/invites` writes no account here, so an admin mint is
+     * counted against nobody's five and skips the re-invite rule.
+     */
+    invitedByAccountId: integer('invited_by_account_id').references(() => accounts.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
@@ -367,6 +385,9 @@ export const signupInvites = pgTable(
     // asks in order to supersede one. NOT unique: an address may legitimately
     // have several rows over time — one redeemed, one revoked, one live.
     index('signup_invites_email_idx').on(table.email),
+    // Supports the lifetime cap, which is counted as "how many rows carry this
+    // account" on every member mint. NOT unique, obviously: five is the point.
+    index('signup_invites_inviter_idx').on(table.invitedByAccountId),
   ],
 );
 

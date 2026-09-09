@@ -81,6 +81,21 @@ export interface AdminAccountSummary {
    * is a real support answer; the wrapped DEK behind either of them is not.
    */
   keyRecordKinds: SyncKeyRecordKind[];
+  /**
+   * How many invitations this account has CAUSED: rows in `signup_invites`
+   * carrying its id (M212).
+   *
+   * A COUNT AND NOT `invitesLeft`, deliberately. Whether five minus this
+   * number is what the person may still send depends on their role and on
+   * whether the instance has member invites on at all, and both of those
+   * belong to `accounts/member-invites.ts` rather than to a store. The store
+   * reports what the table holds.
+   *
+   * REVOKED, EXPIRED AND REDEEMED ROWS ALL COUNT, because the cap is on how
+   * many letters the account caused and not on how many worked. An
+   * operator-minted invite carries no account and is counted against nobody.
+   */
+  invitesMinted: number;
 }
 
 export interface AdminBlobSummary {

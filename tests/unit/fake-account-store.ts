@@ -51,6 +51,8 @@ interface FakeInviteRow {
   expiresAt: Date;
   redeemedAt: Date | null;
   revokedAt: Date | null;
+  /** The account that caused this invite, or `null` for an operator mint (M212). */
+  invitedByAccountId: number | null;
 }
 
 interface FakeResetRow {
@@ -69,6 +71,12 @@ export interface SeedInviteInput {
   role?: AccountRole;
   dailyAiLimit?: number;
   revokedAt?: Date | null;
+  /**
+   * Who caused it. Absent means the OPERATOR minted it, which is the default
+   * every existing fixture wants: an operator's invite carries no allowance
+   * expiry at redemption, exactly as it does in Postgres.
+   */
+  invitedByAccountId?: number | null;
 }
 
 export interface FakeAccountStore extends AccountStore {
@@ -248,11 +256,18 @@ export function createFakeAccountStore(): FakeAccountStore {
         displayName: input.account.displayName,
         role: invite.role,
         dailyAiLimit: invite.dailyAiLimit,
-        // AN INVITE CARRIES NO EXPIRY, exactly as it does in Postgres: the
-        // column has no default beyond `NULL`, and an operator sets the date
-        // afterwards through `updateStanding`. A fixture that seeded one here
-        // would let a test set up a state the service cannot reach.
-        allowanceExpiresAt: null,
+        // AN OPERATOR'S INVITE CARRIES NO EXPIRY, exactly as it does in
+        // Postgres: the column has no default beyond `NULL`, and an operator
+        // sets the date afterwards through `updateStanding`.
+        //
+        // A MEMBER-CAUSED ONE DOES (M212), and the ROW decides, not the
+        // caller: `redeemedAt + memberInviteAllowanceDays`, computed off the
+        // same injected instant the redemption is stamped with. The real store
+        // does the same arithmetic in `db/account-store.ts`.
+        allowanceExpiresAt:
+          invite.invitedByAccountId !== null && input.memberInviteAllowanceDays !== null
+            ? new Date(input.now.getTime() + input.memberInviteAllowanceDays * 24 * 60 * 60 * 1000)
+            : null,
         suspendedAt: null,
         verifier: input.account.verifier,
         recoveryVerifier: input.account.recoveryVerifier,
@@ -289,6 +304,7 @@ export function createFakeAccountStore(): FakeAccountStore {
         expiresAt: input.expiresAt,
         redeemedAt: null,
         revokedAt: input.revokedAt ?? null,
+        invitedByAccountId: input.invitedByAccountId ?? null,
       });
     },
 
@@ -345,6 +361,10 @@ export function createFakeAccountStore(): FakeAccountStore {
       const created = await this.redeemInviteAndCreateAccount({
         inviteTokenHash: tokenHash,
         now,
+        // The seeded invite carries no inviter, so this value is never read.
+        // Named anyway, because the contract requires it and a fixture that
+        // omitted a required field would only compile by accident.
+        memberInviteAllowanceDays: null,
         account: {
           displayName: input.displayName ?? null,
           verifier: input.verifier ?? `seeded-verifier-${input.email}`,

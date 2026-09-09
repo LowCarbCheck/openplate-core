@@ -16,26 +16,33 @@
 import { createSilentLogger } from '../../src/logger.js';
 import { hashToken, type GeneratedToken } from '../../src/lib/tokens.js';
 import type { AuthContext } from '../../src/accounts/auth-handlers.js';
-import type { Mailer, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
+import type { Mailer, SendAccountNoticeInput, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
 import { createFakeAccountStore, type FakeAccountStore } from './fake-account-store.js';
 
 /** Every letter the handlers asked for, in order. */
 export interface RecordingMailer extends Mailer {
   invites: SendInviteInput[];
   resets: SendResetInput[];
+  /** The M212 "you already have an account" notes, so a test can assert one went INSTEAD of an invitation. */
+  accountNotices: SendAccountNoticeInput[];
 }
 
 export function createRecordingMailer(): RecordingMailer {
   const invites: SendInviteInput[] = [];
   const resets: SendResetInput[] = [];
+  const accountNotices: SendAccountNoticeInput[] = [];
   return {
     invites,
     resets,
+    accountNotices,
     async sendInvite(input: SendInviteInput): Promise<void> {
       invites.push(input);
     },
     async sendReset(input: SendResetInput): Promise<void> {
       resets.push(input);
+    },
+    async sendAccountNotice(input: SendAccountNoticeInput): Promise<void> {
+      accountNotices.push(input);
     },
   };
 }

@@ -46,6 +46,13 @@ import {
 } from '../lib/tokens.js';
 import type { Logger } from '../logger.js';
 import type { Mailer } from '../mail/mailer.js';
+import { DEFAULT_INVITE_TTL_MS, type InviteStore } from '../admin/invite-store.js';
+import {
+  MEMBER_INVITE_CAP_REACHED,
+  MEMBER_INVITE_LIFETIME_CAP,
+  invitesLeft,
+  type MemberInvitePolicy,
+} from './member-invites.js';
 import {
   asFields,
   parseAuthHashField,
@@ -86,6 +93,31 @@ export interface AuthContext {
   mintResetToken(): GeneratedToken;
   mintFamilyId(): string;
   logger: Logger;
+  /**
+   * The member-invite surface, or `null`/absent on an instance where members
+   * cannot invite anybody, which is the default and what every existing deployment
+   * keeps (M212).
+   *
+   * `null` IS NOT "MOUNTED BUT REFUSING". `POST /v1/auth/invites` is not
+   * registered at all then, and the path answers the ordinary unknown-path
+   * 404, exactly as the admin, share, research and feedback trees do when
+   * their flag is unset. Both handlers below still check it, which is
+   * defence in depth rather than the mechanism.
+   *
+   * THE STORE IS THE OPERATOR'S `InviteStore`, deliberately the same one, and
+   * this is the one place a user request may reach it. `admin/invite-store.ts`
+   * argues at length that a minting method must not be one autocomplete away
+   * from every auth handler; what M212 changes is that ONE handler mints, on
+   * terms it takes from {@link MemberInvitePolicy} and never from the caller,
+   * and no other handler in this file is given the surface.
+   */
+  memberInvites?: MemberInviteSurface | null;
+}
+
+/** What `POST /v1/auth/invites` needs to exist: the invite table, and what an invitation is worth. */
+export interface MemberInviteSurface {
+  invites: InviteStore;
+  policy: MemberInvitePolicy;
 }
 
 export interface SessionTokens {
@@ -188,6 +220,16 @@ function suspended<T>(): AuthOutcome<T> {
  */
 async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<AccountView> {
   const aiUsedToday = await ctx.store.aiUsageOn({ accountId: account.id, day: utcDayKey(ctx.now()) });
+  const memberInvites = ctx.memberInvites ?? null;
+  // COUNTED ONLY WHERE THE COUNT MEANS SOMETHING. An admin and an instance
+  // with the feature off both report `null` (see `member-invites.ts` for why
+  // that is not `0`), and neither needs a query to say so: this is a third
+  // read on the account screen, and one that would always be answered with
+  // `null` is a round trip bought for nothing.
+  const minted =
+    memberInvites === null || account.role === 'admin'
+      ? 0
+      : await memberInvites.invites.countMintedBy({ accountId: account.id });
   return {
     id: account.id,
     email: account.email,
@@ -197,6 +239,7 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
     aiUsedToday,
     allowanceExpiresAt: account.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: account.suspendedAt?.toISOString() ?? null,
+    invitesLeft: invitesLeft({ role: account.role, minted, enabled: memberInvites !== null }),
     createdAt: account.createdAt.toISOString(),
   };
 }
@@ -459,6 +502,10 @@ export async function handleSignup(
   const created: RedeemInviteResult = await ctx.store.redeemInviteAndCreateAccount({
     inviteTokenHash: hashToken(submission.inviteToken),
     now: ctx.now(),
+    // The instance's own number, never the caller's, and it is applied only to
+    // an invite a MEMBER caused, and the store decides that from the row. See
+    // `AccountStore.redeemInviteAndCreateAccount`.
+    memberInviteAllowanceDays: ctx.memberInvites?.policy.allowanceDays ?? null,
     account: {
       displayName: submission.displayName,
       verifier: computeVerifier({ authHash: submission.authHash, pepper: ctx.pepper }),
@@ -1053,6 +1100,166 @@ export async function handleUpdateAccount(
   });
   if (updated === null) return { status: 'unauthorized', reason: 'account no longer exists' };
   return { status: 'ok', body: { account: await toAccountView(updated, ctx) } };
+}
+
+// ---------------------------------------------------------------------------
+// Member invites (M212)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ONE response `POST /v1/auth/invites` gives when it accepts the request,
+ * and every accepting branch returns THIS value.
+ *
+ * ONE CONSTANT RATHER THAN THREE `{ status: 'accepted', body: {} }` LITERALS.
+ * The property the endpoint promises is that a new address, an address with a
+ * pending invitation and an address that already holds an account are
+ * indistinguishable in the response. Three literals would satisfy that today
+ * and drift the first time somebody added a helpful field to one of them; one
+ * frozen constant makes them the same bytes by construction.
+ */
+const MEMBER_INVITE_ACCEPTED: AuthOutcome<Record<string, never>> = { status: 'accepted', body: {} };
+
+/**
+ * `POST /v1/auth/invites`, the route a member invites somebody through.
+ *
+ * IT IS THE ONLY ROUTE IN THIS SERVICE WHERE AN ORDINARY MEMBER CAUSES THE
+ * OPERATOR TO SPEND MONEY. Three properties follow, and none of them is
+ * negotiable.
+ *
+ * THE TERMS ARE THE INSTANCE'S, NEVER THE CALLER'S. The admin mint takes
+ * `role`, `dailyAiLimit` and `expiresInDays` from its body. This one takes an
+ * address and nothing else: the role is `member`, the allowance is
+ * `MEMBER_INVITE_DAILY_AI_LIMIT`, the lifetime is the shared default, and the
+ * redeemed account's expiry is redemption plus `MEMBER_INVITE_ALLOWANCE_DAYS`.
+ * A `dailyAiLimit` in the body is not rejected, it is simply not read, which
+ * is the same answer for a client sending a stale shape and for one probing.
+ *
+ * THE RESPONSE IS THE SAME WHATEVER IS TRUE. `202` with
+ * {@link MEMBER_INVITE_ACCEPTED} for a new address, for one that already has a
+ * pending invitation, and for one that already holds an account. A member who
+ * types their colleague's address must not be able to learn from a status
+ * code or a body that the colleague is already here. `POST
+ * /v1/admin/invites` answers `409` for that case and is exempt because it is
+ * behind the operator's own credential, which its own comment says.
+ *
+ * IT CARRIES NO TOKEN AND NO LINK, unlike the admin mint. The caller is not
+ * the operator: handing them the capability would let a member create the
+ * account themselves, or keep a live invitation for an address they typed by
+ * mistake.
+ *
+ * THE ONE THING IT MAY SAY ABOUT THE CALLER is that their own five are spent,
+ * which is a fact about their account and not about anybody else's.
+ */
+export async function handleMintMemberInvite(
+  input: { accountId: number; body: JsonValue | undefined },
+  ctx: AuthContext,
+): Promise<AuthOutcome<Record<string, never>>> {
+  const surface = ctx.memberInvites ?? null;
+  // DEFENCE IN DEPTH, NOT THE MECHANISM. `register-auth-routes.ts` does not
+  // register this route at all on an instance with the feature off, and the
+  // path answers the ordinary unknown-path 404 there.
+  if (surface === null) return { status: 'not-found', reason: 'not found' };
+
+  const fields = asFields(input.body);
+  const email = parseEmail(fields.email);
+  // A `400` HERE IS NOT AN ORACLE, unlike the one `POST
+  // /v1/auth/reset/request` refuses to give. That endpoint is
+  // unauthenticated and its refusal would describe the SHAPE of addresses
+  // this instance holds; this one is behind a session and the only thing it
+  // reports is that the string the caller typed is not an address, which
+  // their own client could have told them.
+  if (!email.ok) return invalid(email.reason);
+
+  const account = await ctx.store.findAccountById(input.accountId);
+  if (account === null) return { status: 'unauthorized', reason: 'account no longer exists' };
+
+  // AN ADMIN IS EXEMPT FROM BOTH RULES, WHICHEVER DOOR THEY USE, and that is
+  // what `AccountView.invitesLeft: null` means for them. Re-inviting somebody
+  // who left and came back is the case the exemption exists for, and an
+  // operator who had it on one route and not the other would have a cap that
+  // depends on which screen they were looking at.
+  if (account.role !== 'admin') {
+    const minted = await surface.invites.countMintedBy({ accountId: account.id });
+    if (minted >= MEMBER_INVITE_LIFETIME_CAP) {
+      return { status: 'forbidden', reason: MEMBER_INVITE_CAP_REACHED };
+    }
+
+    // THE RE-INVITE RULE, AND IT STANDS ON `ON DELETE SET NULL`. An address
+    // that already redeemed a member-caused invitation gets no second one, so
+    // a self-delete followed by a friend's re-invite is not a fresh trial. The
+    // caller is told nothing: this is a `202` like every other branch.
+    if (await surface.invites.hasRedeemedMemberInvite({ email: email.value })) {
+      // The caller's account id, never the address they typed.
+      ctx.logger.info('Member invite withheld: that address already spent one', { accountId: account.id });
+      return MEMBER_INVITE_ACCEPTED;
+    }
+  }
+
+  const now = ctx.now();
+  const minted = await surface.invites.mint({
+    email: email.value,
+    // NOTHING THE CALLER TYPED BUT THE ADDRESS. An operator names the person
+    // because they know them; a member naming their colleague would put a
+    // string of their choosing into somebody else's account row.
+    displayName: null,
+    // ALWAYS `member`. A member cannot mint an administrator, and the literal
+    // is here rather than defaulted so that reading this call answers it.
+    role: 'member',
+    dailyAiLimit: surface.policy.dailyAiLimit,
+    expiresAt: new Date(now.getTime() + DEFAULT_INVITE_TTL_MS),
+    now,
+    // What makes this invitation count against the caller's five, and what
+    // the re-invite rule reads afterwards.
+    invitedByAccountId: account.id,
+  });
+
+  if (!minted.ok) {
+    // THE ADDRESS ALREADY HOLDS AN ACCOUNT, AND THE CALLER NEVER LEARNS IT.
+    // The store's refusal is typed, so this branch cannot leak by accident;
+    // what it does instead is mail THAT PERSON a note with no link in it, so
+    // an invitation to somebody already here does not silently vanish for
+    // both of them. See `mail/account-notice-message.ts`.
+    await trySend(ctx, { accountId: account.id, send: () => ctx.mailer.sendAccountNotice({ email: email.value }) });
+    ctx.logger.info('Member invite answered with the account notice', { accountId: account.id });
+    return MEMBER_INVITE_ACCEPTED;
+  }
+
+  await trySend(ctx, {
+    accountId: account.id,
+    send: () =>
+      ctx.mailer.sendInvite({
+        email: email.value,
+        displayName: null,
+        inviteToken: minted.minted.token,
+        expiresAt: minted.minted.invite.expiresAt.toISOString(),
+      }),
+  });
+  // The caller's id and the invite's id. Never the address, and never the
+  // token, which this handler holds for exactly as long as one send takes.
+  ctx.logger.info('Member invite minted', { accountId: account.id, inviteId: minted.minted.invite.id });
+  return MEMBER_INVITE_ACCEPTED;
+}
+
+/**
+ * Sends one letter and swallows a transport failure.
+ *
+ * THE STATUS CODE MUST NOT DEPEND ON THE SEND. `createHttpMailer` throws when
+ * the mail API answers badly, and an unguarded `await` would turn this route's
+ * fixed `202` into a `500`, for the existing-account branch and the new
+ * branch alike, which makes the failure rate of a third party into exactly the
+ * oracle the fixed body exists to close.
+ *
+ * THE ERROR IS NOT LOGGED, only the fact and the caller's account id. Both
+ * Resend and pigeon echo the request back inside an error body, so the
+ * exception in scope here may carry the recipient's address and, on the invite
+ * branch, the link that contains the token.
+ */
+async function trySend(ctx: AuthContext, input: { accountId: number; send: () => Promise<void> }): Promise<void> {
+  try {
+    await input.send();
+  } catch {
+    ctx.logger.warn('A member-invite letter could not be sent', { accountId: input.accountId });
+  }
 }
 
 // ---------------------------------------------------------------------------

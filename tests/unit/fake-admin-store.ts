@@ -81,6 +81,9 @@ export function createFakeAdminStore(): FakeAdminStore {
             ? null
             : { sizeBytes: input.blobSizeBytes, updatedAt: new Date('2026-08-03T09:00:00.000Z') },
         keyRecordKinds: kinds,
+        // This fake holds no invites, so nobody has caused one. `0` is what
+        // the real store answers for an account with no rows.
+        invitesMinted: 0,
       });
 
       const seeded: AdminSeedSecrets = {

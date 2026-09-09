@@ -25,6 +25,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { eq } from 'drizzle-orm';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
+import type { JsonObject } from '../../src/lib/json.js';
 import { createDrizzleInviteStore } from '../../src/db/invite-store.js';
 import { generateSignupInviteToken } from '../../src/lib/tokens.js';
 import { accounts, signupInvites, syncKeyRecords } from '../../src/db/schema.js';
@@ -81,7 +82,11 @@ function signupBody(inviteToken?: string): SignupRequest {
 }
 
 /** Mints one live invite straight through the store — the admin API is tested separately. */
-async function mintInvite(email: string, expiresAt = new Date(Date.now() + 60 * 60 * 1000)): Promise<string> {
+async function mintInvite(
+  email: string,
+  expiresAt = new Date(Date.now() + 60 * 60 * 1000),
+  invitedByAccountId: number | null = null,
+): Promise<string> {
   const store = createDrizzleInviteStore(database.db);
   const minted = await store.mint({
     email,
@@ -90,6 +95,9 @@ async function mintInvite(email: string, expiresAt = new Date(Date.now() + 60 * 
     dailyAiLimit: 0,
     expiresAt,
     now: new Date(),
+    // An operator mint by default: it is exempt from the member cap and from
+    // the re-invite rule, and it writes no allowance expiry at redemption.
+    invitedByAccountId,
   });
   if (!minted.ok) throw new Error(`could not mint an invite for ${email}: ${minted.reason}`);
   return minted.minted.token;
@@ -235,6 +243,7 @@ test('invite-lookup shows the addressee, and every bad token is one 404', async 
       dailyAiLimit: 0,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       now: new Date(),
+      invitedByAccountId: null,
     });
     if (!minted.ok) throw new Error('expected a minted invite');
 
@@ -272,6 +281,322 @@ test('the handshake reports protocol version 2 and carries no signupMode', async
     assert.equal(response.body.protocolVersion, 2);
     // The field went with the setting it described.
     assert.equal(response.body.signupMode, undefined);
+  } finally {
+    await service.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The member mint (M212)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /v1/auth/invites` against real Postgres. Three of its properties exist
+ * ONLY in the database and cannot be reached from `tests/unit/member-invites.test.ts`:
+ *
+ *  - the lifetime cap is counted over ROWS, including revoked ones, so it is a
+ *    property of the evidence rather than of a counter;
+ *  - the re-invite rule survives a deleted account, which is the `ON DELETE SET
+ *    NULL` on both foreign keys doing its job;
+ *  - redemption writes the allowance expiry, which is one statement inside the
+ *    signup transaction.
+ */
+const MEMBER_INVITE_POLICY = { dailyAiLimit: 25, allowanceDays: 14 };
+
+/** The admin credential the control cases present. Long enough to be the real thing. */
+const MEMBER_SUITE_ADMIN_TOKEN = 'integration-admin-token-0123456789abcdef';
+
+async function startWithMemberInvites(): Promise<ServiceHarness> {
+  return startService({
+    db: database.db,
+    memberInvites: MEMBER_INVITE_POLICY,
+    adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+  });
+}
+
+/** Mints one member invitation for `email`, as the signed-in caller. */
+async function memberMint(
+  service: ServiceHarness,
+  input: { accessToken: string; email: string; body?: JsonObject },
+): Promise<{ status: number; body: unknown }> {
+  const response = await service.request<unknown>({
+    method: 'POST',
+    path: '/v1/auth/invites',
+    accessToken: input.accessToken,
+    body: { email: input.email, ...input.body },
+  });
+  return { status: response.status, body: response.body };
+}
+
+test('five member invitations succeed, the sixth is refused, and a revoked row still counts', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    const accessToken = member.tokens.accessToken;
+
+    for (let index = 0; index < 5; index += 1) {
+      const accepted = await memberMint(service, { accessToken, email: `friend-${index}@example.org` });
+      assert.equal(accepted.status, 202, `invitation ${index + 1} must be accepted`);
+    }
+
+    const sixth = await memberMint(service, { accessToken, email: 'one-too-many@example.org' });
+    assert.equal(sixth.status, 403);
+    assert.deepEqual(sixth.body, { error: 'member-invite-cap-reached' });
+
+    // Five rows carry the account and each carries the instance's allowance.
+    const caused = await database.db
+      .select()
+      .from(signupInvites)
+      .where(eq(signupInvites.invitedByAccountId, member.account.id));
+    assert.equal(caused.length, 5);
+    for (const row of caused) {
+      assert.equal(row.dailyAiLimit, MEMBER_INVITE_POLICY.dailyAiLimit);
+      assert.equal(row.role, 'member');
+    }
+
+    // A WITHDRAWN INVITATION DOES NOT GIVE THE ALLOWANCE BACK. The cap is on
+    // letters caused, not on letters that worked, so this is the move a member
+    // would make to recycle their five.
+    const withdrawn = caused[0];
+    assert.ok(withdrawn);
+    await database.db
+      .update(signupInvites)
+      .set({ revokedAt: new Date() })
+      .where(eq(signupInvites.id, withdrawn.id));
+    const afterRevoke = await memberMint(service, { accessToken, email: 'one-too-many@example.org' });
+    assert.equal(afterRevoke.status, 403, 'a revoked row must still count towards the cap');
+
+    // THE CONTROL: another member's first invitation is accepted, so the
+    // refusals above are the cap and not a broken route.
+    const other = await service.signupThroughInvite({ email: 'clara@example.org' });
+    const accepted = await memberMint(service, {
+      accessToken: other.tokens.accessToken,
+      email: 'somebody@example.org',
+    });
+    assert.equal(accepted.status, 202);
+  } finally {
+    await service.close();
+  }
+});
+
+test('a new address, a pending invitation and an existing account get the same response, and the admin mint is the control that does not', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    const accessToken = member.tokens.accessToken;
+    // A person who is already here. The member is about to type their address
+    // and must not learn that from the answer.
+    await service.signupThroughInvite({ email: 'boris@example.org' });
+
+    const fresh = await memberMint(service, { accessToken, email: 'nobody@example.org' });
+    const pending = await memberMint(service, { accessToken, email: 'nobody@example.org' });
+    const taken = await memberMint(service, { accessToken, email: 'boris@example.org' });
+
+    // INDISTINGUISHABLE: the same status and the same bytes for all three. A
+    // status-only assertion would pass a body that named the difference.
+    for (const outcome of [fresh, pending, taken]) {
+      assert.equal(outcome.status, 202);
+    }
+    assert.equal(JSON.stringify(fresh.body), JSON.stringify(pending.body));
+    assert.equal(JSON.stringify(fresh.body), JSON.stringify(taken.body));
+    assert.deepEqual(fresh.body, {});
+
+    // THE CONTROL, AND IT IS THE POINT OF THIS TEST. The operator's own door
+    // DOES confirm that the address holds an account, because it is behind
+    // their credential. If this 409 stopped happening, the three-way match
+    // above would be satisfied by a service that answered 202 to everything
+    // and never checked anything.
+    const asOperator = await service.request<{ error: string }>({
+      method: 'POST',
+      path: '/v1/admin/invites',
+      adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+      body: { email: 'boris@example.org' },
+    });
+    assert.equal(asOperator.status, 409);
+    assert.match(asOperator.body.error, /already exists/);
+
+    // And the member's own letter went to the right person on each branch: two
+    // invitations for the new address, one note for the address that has an
+    // account, and no invitation for it.
+    assert.equal(service.mailer.invites.length, 2);
+    assert.deepEqual(
+      service.mailer.accountNotices.map((notice) => notice.email),
+      ['boris@example.org'],
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test('a re-invite after a self-delete is not a fresh allowance, while an admin mint for that address still is', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    assert.equal((await memberMint(service, { accessToken: member.tokens.accessToken, email: 'boris@example.org' })).status, 202);
+
+    // The friend redeems it, then deletes their own account. The invite row
+    // survives with its address and its redemption instant, because both
+    // foreign keys on it are `ON DELETE SET NULL`.
+    const inviteToken = service.mailer.invites.at(-1)?.inviteToken ?? '';
+    const friend = await service.request<{ tokens: { accessToken: string } }>({
+      method: 'POST',
+      path: '/v1/auth/signup',
+      body: signupBody(inviteToken),
+    });
+    assert.equal(friend.status, 201);
+    const deleted = await service.request({
+      method: 'POST',
+      path: '/v1/auth/delete',
+      accessToken: friend.body.tokens.accessToken,
+      body: { authHash: sampleAuthHash(11) },
+    });
+    assert.equal(deleted.status, 204);
+
+    const surviving = await database.db.select().from(signupInvites).where(eq(signupInvites.email, 'boris@example.org'));
+    assert.equal(surviving.length, 1);
+    assert.notEqual(surviving[0]?.redeemedAt, null, 'the redemption instant must survive the account');
+
+    // A DIFFERENT member now invites the same address. No second member invite
+    // is minted and no letter goes out, and the caller is told nothing.
+    const friendOfAFriend = await service.signupThroughInvite({ email: 'clara@example.org' });
+    const lettersBefore = service.mailer.invites.length;
+    const withheld = await memberMint(service, {
+      accessToken: friendOfAFriend.tokens.accessToken,
+      email: 'boris@example.org',
+    });
+    assert.equal(withheld.status, 202, 'the caller must not learn that the address is spent');
+    assert.equal(service.mailer.invites.length, lettersBefore, 'no second letter may go out');
+    assert.equal(
+      (await database.db.select().from(signupInvites).where(eq(signupInvites.email, 'boris@example.org'))).length,
+      1,
+      'no second member invite may exist for that address',
+    );
+
+    // THE CONTROL: the operator is exempt, so their mint for the same address
+    // does produce a row. Without it this test would pass against a service
+    // that had simply stopped minting anything.
+    const asOperator = await service.request({
+      method: 'POST',
+      path: '/v1/admin/invites',
+      adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+      body: { email: 'boris@example.org' },
+    });
+    assert.equal(asOperator.status, 201);
+    assert.equal(
+      (await database.db.select().from(signupInvites).where(eq(signupInvites.email, 'boris@example.org'))).length,
+      2,
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test('a redeemed member invitation writes allowanceExpiresAt as redemption plus the instance days', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    await memberMint(service, { accessToken: member.tokens.accessToken, email: 'boris@example.org' });
+
+    const inviteToken = service.mailer.invites.at(-1)?.inviteToken ?? '';
+    const friend = await service.request<{ account: { id: number; allowanceExpiresAt: string | null } }>({
+      method: 'POST',
+      path: '/v1/auth/signup',
+      body: signupBody(inviteToken),
+    });
+    assert.equal(friend.status, 201);
+
+    // AS A DATE, not merely as non-null. `redeemedAt` is the instant the
+    // redemption stamped on the invite row, and the account's expiry has to be
+    // exactly that instant plus the instance's days: a bug that used the
+    // invite's own `expiresAt`, or the wrong unit, would still be non-null.
+    const [row] = await database.db.select().from(signupInvites).where(eq(signupInvites.email, 'boris@example.org'));
+    assert.ok(row?.redeemedAt);
+    const expected = new Date(row.redeemedAt.getTime() + MEMBER_INVITE_POLICY.allowanceDays * 24 * 60 * 60 * 1000);
+    assert.equal(friend.body.account.allowanceExpiresAt, expected.toISOString());
+
+    // And the row in the database says the same thing the response did.
+    const [account] = await database.db.select().from(accounts).where(eq(accounts.id, friend.body.account.id));
+    assert.equal(account?.allowanceExpiresAt?.toISOString(), expected.toISOString());
+
+    // THE CONTROL: an OPERATOR'S invite writes no expiry at all, so the value
+    // above is the member-invite rule and not something every signup gets.
+    const operatorSignup = await service.signupThroughInvite({ email: 'clara@example.org' });
+    assert.equal(operatorSignup.account.allowanceExpiresAt, null);
+  } finally {
+    await service.close();
+  }
+});
+
+test('a dailyAiLimit in the member mint body is ignored, so the allowance is not the caller’s to choose', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    // Posted WITH the three fields the ADMIN mint reads off its body. They are
+    // not refused, they are simply not read, which is the same answer a stale
+    // client gets and a prober gets.
+    const minted = await memberMint(service, {
+      accessToken: member.tokens.accessToken,
+      email: 'boris@example.org',
+      body: { dailyAiLimit: 9_999, role: 'admin', expiresInDays: 30, displayName: 'Chosen By The Inviter' },
+    });
+    assert.equal(minted.status, 202);
+
+    const inviteToken = service.mailer.invites.at(-1)?.inviteToken ?? '';
+    const friend = await service.request<{ account: { role: string; dailyAiLimit: number; displayName: string | null } }>({
+      method: 'POST',
+      path: '/v1/auth/signup',
+      body: signupBody(inviteToken),
+    });
+    assert.equal(friend.status, 201);
+    assert.equal(friend.body.account.dailyAiLimit, MEMBER_INVITE_POLICY.dailyAiLimit);
+    assert.equal(friend.body.account.role, 'member', 'a member cannot mint an administrator');
+
+    // THE CONTROL: the operator's door DOES read those fields, so the equality
+    // above is this route ignoring them rather than the whole service doing so.
+    const asOperator = await service.request<{ invite: { dailyAiLimit: number; role: string } }>({
+      method: 'POST',
+      path: '/v1/admin/invites',
+      adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+      body: { email: 'clara@example.org', dailyAiLimit: 200, role: 'admin' },
+    });
+    assert.equal(asOperator.status, 201);
+    assert.equal(asOperator.body.invite.dailyAiLimit, 200);
+    assert.equal(asOperator.body.invite.role, 'admin');
+  } finally {
+    await service.close();
+  }
+});
+
+test('invitesLeft counts down on the caller’s own account view, and the operator sees the same number', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    const accessToken = member.tokens.accessToken;
+    assert.equal(member.account.invitesLeft, 5);
+
+    await memberMint(service, { accessToken, email: 'boris@example.org' });
+    const own = await service.request<{ account: { invitesLeft: number | null } }>({
+      method: 'GET',
+      path: '/v1/auth/account',
+      accessToken,
+    });
+    assert.equal(own.body.account.invitesLeft, 4);
+
+    // THE OPERATOR'S CONSOLE READS THE SAME NUMBER, through a different store
+    // and a different query. Two counts that could disagree would be an
+    // operator acting on a figure the route does not enforce.
+    const asOperator = await service.request<{ account: { invitesLeft: number | null } }>({
+      method: 'GET',
+      path: `/v1/admin/accounts/${member.account.id}`,
+      adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+    });
+    assert.equal(asOperator.status, 200);
+    assert.equal(asOperator.body.account.invitesLeft, 4);
+
+    // AND `null` FOR AN ADMINISTRATOR, never `0`: they have used none, because
+    // their own door is exempt from the cap.
+    const operatorAccount = await service.signupThroughInvite({ email: 'operator@example.org', role: 'admin' });
+    assert.equal(operatorAccount.account.invitesLeft, null);
   } finally {
     await service.close();
   }

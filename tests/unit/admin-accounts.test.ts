@@ -134,6 +134,7 @@ test('PATCH changes a role, an allowance and a name, and returns the AccountView
     'displayName',
     'email',
     'id',
+    'invitesLeft',
     'keyRecordKinds',
     'lastSeenAt',
     'role',

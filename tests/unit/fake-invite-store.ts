@@ -23,6 +23,8 @@ import { generateSignupInviteToken } from '../../src/lib/tokens.js';
 
 interface FakeInviteRow extends InviteSummary {
   tokenHash: string;
+  /** The account that caused this row, or `null` for an operator mint (M212). */
+  invitedByAccountId: number | null;
 }
 
 export interface FakeInviteStore extends InviteStore {
@@ -84,6 +86,7 @@ export function createFakeInviteStore(): FakeInviteStore {
         revokedAt: null,
         redeemedAccountId: null,
         tokenHash: token.hash,
+        invitedByAccountId: input.invitedByAccountId,
       };
       rows.push(row);
       return { ok: true, minted: { invite: summarize(row), token: token.raw } };
@@ -113,6 +116,20 @@ export function createFakeInviteStore(): FakeInviteStore {
       if (!row) return false;
       row.revokedAt = input.revokedAt;
       return true;
+    },
+
+    async countMintedBy(input: { accountId: number }): Promise<number> {
+      // EVERY row carrying the account, with no lifecycle predicate, exactly
+      // as the real store counts: revoked and expired invitations count too.
+      return rows.filter((row) => row.invitedByAccountId === input.accountId).length;
+    },
+
+    async hasRedeemedMemberInvite(input: { email: string }): Promise<boolean> {
+      // Redeemed AND member-caused, both, as in Postgres. A row with a `null`
+      // inviter is an operator's mint and this rule never withdraws one.
+      return rows.some(
+        (row) => row.email === input.email && row.redeemedAt !== null && row.invitedByAccountId !== null,
+      );
     },
 
     digestOf(inviteId: number): string | undefined {

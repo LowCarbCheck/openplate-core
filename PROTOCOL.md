@@ -436,7 +436,9 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), and `ai` is `null` when no upstream key is configured.
+
+`memberInvites` is **descriptive, never a grant**, like everything else in this block. A client reads it to decide whether to draw an invite card at all; it never reads it to decide whether it may mint. `false` means `POST /v1/auth/invites` answers the ordinary unknown-path `404`, and `true` still leaves the lifetime cap, the re-invite rule and the throttle to the service.
 
 It is **descriptive, never authoritative**. `mail: true` does not promise a letter arrives, and `ai` reports what the operator configured rather than granting anything; an account with `dailyAiLimit: 0` gets a `403` whatever this says.
 
@@ -555,6 +557,8 @@ An invite is a single-use, expiring capability **addressed to one person**. It c
 **An invite token begins with `si_`, and the service refuses anything that does not.** The prefix binds the token to this service and to this endpoint. A person is handed an invite in a mail, beside a password-reset token that begins with `sr_`; without the prefixes the two are interchangeable strings and one can be posted to the wrong endpoint. The check is a **shape gate before the lookup**, refused with the same status and the same body as every other bad invite, so the gate adds no oracle. Session tokens carry no prefix and are unchanged.
 
 Minting is `POST /v1/admin/invites`. An older PENDING invite for the same address is revoked by a new one, so there is never more than one live capability per address; an address that already has an account cannot be invited at all (`409`).
+
+An instance may also let an ordinary member mint one, on the instance's terms and with none of the disclosure this paragraph's `409` makes. That is `POST /v1/auth/invites`, §5.21.
 
 #### 5.8.2 `POST /v1/auth/invite-lookup`
 
@@ -687,11 +691,14 @@ All three bearer.
   "aiUsedToday": 3,
   "allowanceExpiresAt": null,
   "suspendedAt": null,
+  "invitesLeft": 5,
   "createdAt": "2026-09-04T10:11:12.000Z"
 }
 ```
 
 Nothing secret is in it and nothing can be: no verifier, no KDF descriptor, no wrapped DEK, no escrow, no token. Every field is either the person's own information or the standing an operator granted them. `aiUsedToday` counts against `dailyAiLimit` on the current UTC day; `suspendedAt` is non-`null` while every authenticated call answers `403 account-suspended`.
+
+`invitesLeft` is how many invitations this account may still send through `POST /v1/auth/invites` (§5.21), or `null` when that cap is not about it. **`null`, never `0`, for an administrator**: `0` reads as "you have used them all", and an administrator has used none, because they mint through the admin API, which is exempt from the cap and from the re-invite rule. An instance with `instance.memberInvites: false` sends `null` for the same reason: there is no cap there, because there is no route, and a `0` would announce a spent allowance that never existed. A client may render it and MUST NOT authorize on it; the service refuses a sixth mint whatever a client believes.
 
 `allowanceExpiresAt` is an ISO instant or `null`, and `null` means the AI allowance has no end date, which is what a self-hosted instance keeps. From that instant on, the proxy of §5.19 answers `403 allowance-expired`. **It gates AI and nothing else**: sync keeps working past the date, because the diary belongs to the account and a new device must be able to pull it. A client may render the date and must not authorize on it; the proxy is where the rule lives.
 
@@ -1169,13 +1176,38 @@ through `ON DELETE CASCADE`. Ninety is one number in one place: it is what the
 sweep prunes at and the longest window the endpoint above can answer.
 
 `AccountView` is the same shape the account's own `GET /v1/auth/account`
-returns (§5.15) plus `aiUsedToday`, and on the admin surface plus `lastSeenAt`,
+returns (§5.15), `invitesLeft` included and computed the same way, plus
+`aiUsedToday`, and on the admin surface plus `lastSeenAt`,
 `blob` and `keyRecordKinds`. It carries **no verifier, no KDF
 descriptor, no escrow and no ciphertext**. A blob is reported as a byte count
 and a timestamp. The reasoning is
 `docs/adr/0001-an-admin-api-for-a-zero-knowledge-service.md`, whose
 prohibitions 1, 2, 3, 5 and 8 ADR-0005 supersedes and whose prohibition on
 secrets in a response it does not.
+
+### 5.21 `POST /v1/auth/invites`: a member invites somebody
+
+Bearer, throttled per source address with **every attempt counted**. Present only when the deployment sets both `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`; without them this path answers the ordinary unknown-path `404` to every caller, signed in or not, and `instance.memberInvites` is `false` (§5.6).
+
+Request: `{"email": "boris@example.org"}`, and nothing else.
+
+```json
+{}
+```
+
+→ `202` with that body, empty and fixed.
+
+**The terms are the instance's, never the caller's.** The invited account gets `role: "member"`, `dailyAiLimit` from `MEMBER_INVITE_DAILY_AI_LIMIT`, the same invite lifetime the admin mint defaults to, and an `allowanceExpiresAt` of redemption plus `MEMBER_INVITE_ALLOWANCE_DAYS` written at signup. A `dailyAiLimit`, a `role` or an `expiresInDays` in the body is not refused, it is simply not read. Those three ARE body fields on `POST /v1/admin/invites` (§5.20), which is the difference between a member and an operator.
+
+**The response MUST NOT vary with what is true about the address.** A new address, an address that already holds a pending invitation and an address that already holds an account are one `202` with one body. This is the anti-enumeration property of §5.7 and §5.12 applied to the one endpoint a member points at somebody else's mailbox: a person who types their colleague's address must not learn from a status code, a body or a header that the colleague is already here. The admin mint's `409 {"error":"an account already exists for this email"}` is exempt, and only because it is behind the operator's own credential.
+
+When the address already holds an account, the service mails **that person** a short note instead of an invitation. It carries no link: a join link would mint a second account for somebody who has one, and a reset link would be a password reset nobody asked for. Without the letter the invitation would silently vanish and both people would wait for it.
+
+**An address that has already redeemed a member-caused invitation gets no second one**, and the caller is still told `202`. The evidence outlives the account: the invite row keeps its address and its redemption instant when either account is deleted, so a self-delete followed by a friend's re-invite is not a fresh allowance. An operator's mint is not a member-caused invitation and is never withheld by this rule.
+
+**The lifetime cap is five per account, ever, counted as rows.** Withdrawn and expired invitations count: the cap is on how many letters an account caused, not on how many worked. Exceeding it is `403 {"error":"member-invite-cap-reached"}`, and it is the one thing this endpoint says about the caller's own account, which is a fact about them and about nobody else. An administrator is exempt, on this route and on the admin one, which is what `invitesLeft: null` means (§5.15).
+
+`202` also carries **no token and no link**, unlike the admin mint. The caller is not the operator and must not hold a capability that creates an account.
 
 ## 6. Version handshake: required, and required to fail closed
 
@@ -1278,6 +1310,7 @@ Additionally, a server that also implements the **account** endpoints of §5.7 t
 10. Answer `202` to every `reset/request` after identical work, and make `reset/open` write nothing to the account (§5.12). A reset that replaces a verifier is the account-takeover path this protocol deleted, whatever it is called.
 11. Refuse a suspended account at login, at refresh and on every bearer route, with `403 {"error":"account-suspended"}`, that exact string.
 12. Cascade account deletion to blobs, key records, reset tokens and usage rows.
+13. Answer §5.21's member mint with ONE response for a new address, an address holding a pending invitation and an address holding an account, if it implements that endpoint at all. A server that answers `409` for the third case has handed every member an oracle for who else is on the instance, and a server that answers `500` when its mail relay is down has handed them a slower one. A server that does not implement member invites answers the ordinary unknown-path `404` on the path and reports `instance.memberInvites: false`.
 
 A conforming server needs **none** of: the crypto in §3, JSON parsing of any payload, or knowledge of what a food log is.
 

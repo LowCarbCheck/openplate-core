@@ -174,6 +174,25 @@ export interface AccountView {
   allowanceExpiresAt: IsoTimestamp | null;
   /** Non-`null` while the account is suspended; every authenticated call then answers `403 account-suspended`. */
   suspendedAt: IsoTimestamp | null;
+  /**
+   * How many invitations this account may still cause through
+   * `POST /v1/auth/invites`, or `null` when that cap is not about it.
+   *
+   * `null` RATHER THAN `0`, AND THIS IS THE FIELD'S WHOLE SUBTLETY. `0` reads
+   * to a client as "you have used them all". An administrator has used none:
+   * they mint through the admin API, which is exempt from the cap and from the
+   * re-invite rule, so `0` would be the exact opposite of the truth. `null`
+   * means "this cap does not apply to you", and a client draws no invite card
+   * for it. An instance where the feature is off sends `null` for the same
+   * reason: there is no cap there, because there is no route, and a `0` would
+   * announce a spent allowance that never existed.
+   *
+   * A CLIENT MAY RENDER IT AND MUST NOT AUTHORIZE ON IT. The count is a
+   * property of the `signup_invites` rows the account caused, read at the
+   * moment this view was built; the server refuses the sixth mint whatever a
+   * client believes.
+   */
+  invitesLeft: number | null;
   createdAt: IsoTimestamp;
 }
 
@@ -198,6 +217,18 @@ export interface InstanceInfo {
   language: InstanceLanguage;
   /** Whether this instance can send mail at all. `false` means invites and resets are printed as links instead. */
   mail: boolean;
+  /**
+   * Whether an ordinary member may invite people on this instance
+   * (`MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`, both
+   * or neither).
+   *
+   * DESCRIPTIVE, NEVER A GRANT, like every other field here. A client reads it
+   * to decide whether to draw an invite card at all, and never to decide
+   * whether it may mint: `false` means `POST /v1/auth/invites` answers the
+   * ordinary unknown-path 404, and `true` still leaves the cap, the re-invite
+   * rule and the throttle to the server.
+   */
+  memberInvites: boolean;
   /** The AI proxy this instance offers, or `null` when it has no upstream key. Wired by spec 03. */
   ai: InstanceAi | null;
   /**

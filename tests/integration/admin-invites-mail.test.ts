@@ -41,6 +41,10 @@ import {
 
 const ADMIN_TOKEN = 'integration-admin-token-0123456789abcdef';
 const CLIENT_BASE_URL = 'https://openplate.de';
+/** `MEMBER_INVITE_DAILY_AI_LIMIT` for this instance. Named so an assertion can compare against the setting. */
+const MEMBER_INVITE_DAILY_AI_LIMIT = 25;
+/** `MEMBER_INVITE_ALLOWANCE_DAYS` for this instance. */
+const MEMBER_INVITE_ALLOWANCE_DAYS = 14;
 const SERVER_PUBLIC_URL = 'https://sync.openplate.de';
 
 interface ReceivedMail {
@@ -115,6 +119,13 @@ before(async () => {
     mintResetToken: generatePasswordResetToken,
     mintFamilyId: generateFamilyId,
     logger,
+    // MEMBER INVITES ON, so the M212 letters travel this same real transport.
+    // The two numbers are the instance's own and are asserted below on the
+    // account a member's invitation creates.
+    memberInvites: {
+      invites: createDrizzleInviteStore(database.db),
+      policy: { dailyAiLimit: MEMBER_INVITE_DAILY_AI_LIMIT, allowanceDays: MEMBER_INVITE_ALLOWANCE_DAYS },
+    },
   };
 
   const app = createApp({
@@ -126,7 +137,7 @@ before(async () => {
     trustProxy: false,
     mailer,
     mailConfigured: true,
-    instance: { name: 'openplate', language: 'en', mail: true, ai: null },
+    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null },
     admin: {
       token: ADMIN_TOKEN,
       metadata: createDrizzleAdminStore(database.db),
@@ -294,6 +305,92 @@ test('a resend mails a NEW token and the old link stops working', async () => {
     body: signupBody(tokenFromLink(secondLink)),
   });
   assert.equal(withNew.status, 201);
+});
+
+/**
+ * Signs one member in through the operator's door, and hands back their access
+ * token. It is the only way to reach `POST /v1/auth/invites`, which is the
+ * point: a member exists because an operator invited them.
+ */
+async function signInAsMember(email: string): Promise<string> {
+  await request({ method: 'POST', path: '/v1/admin/invites', token: ADMIN_TOKEN, body: { email } });
+  const link = received.at(-1)?.text.split('\n').find((line) => line.startsWith(CLIENT_BASE_URL)) ?? '';
+  const signedUp = await request<{ tokens: { accessToken: string } }>({
+    method: 'POST',
+    path: '/v1/auth/signup',
+    body: signupBody(tokenFromLink(link)),
+  });
+  assert.equal(signedUp.status, 201, `could not sign in as ${email}`);
+  received.length = 0;
+  return signedUp.body.tokens.accessToken;
+}
+
+test('a member invitation reaches the mail API with a join link, and its terms are the instance\'s', async () => {
+  const accessToken = await signInAsMember('anna@example.org');
+
+  const minted = await request({
+    method: 'POST',
+    path: '/v1/auth/invites',
+    token: accessToken,
+    // Posted WITH the fields the ADMIN mint accepts. They are ignored: the
+    // terms are the instance's and not the caller's, which is asserted on the
+    // account the letter creates, below.
+    body: { email: 'boris@example.org', dailyAiLimit: 9_999, role: 'admin' },
+  });
+  assert.equal(minted.status, 202);
+  assert.deepEqual(minted.body, {});
+
+  // EXACTLY ONE POST, to the invited person, with the join link in the text
+  // part built from CLIENT_BASE_URL.
+  assert.equal(received.length, 1);
+  const mail = received[0];
+  assert.ok(mail);
+  assert.deepEqual(mail.to, ['boris@example.org']);
+  assert.equal(mail.subject, 'Your openplate invitation');
+  assert.ok(mail.text.includes(`${CLIENT_BASE_URL}/join#server=`), mail.text);
+
+  // THE TOKEN IN THE DELIVERED LETTER IS THE ONE THAT CREATES THE ACCOUNT, and
+  // the account it creates carries the INSTANCE'S allowance rather than the
+  // 9999 the caller asked for.
+  const link = mail.text.split('\n').find((line) => line.startsWith(CLIENT_BASE_URL)) ?? '';
+  const signedUp = await request<{ account: { email: string; role: string; dailyAiLimit: number } }>({
+    method: 'POST',
+    path: '/v1/auth/signup',
+    body: signupBody(tokenFromLink(link)),
+  });
+  assert.equal(signedUp.status, 201);
+  assert.equal(signedUp.body.account.email, 'boris@example.org');
+  assert.equal(signedUp.body.account.role, 'member', 'a member cannot mint an administrator');
+  assert.equal(signedUp.body.account.dailyAiLimit, MEMBER_INVITE_DAILY_AI_LIMIT);
+});
+
+test('an invited address that already holds an account gets the note instead, with no link in it', async () => {
+  const accessToken = await signInAsMember('anna@example.org');
+  // A second account exists, minted by the operator. The member is about to
+  // invite it and must not learn that it is there.
+  await signInAsMember('boris@example.org');
+
+  const minted = await request({
+    method: 'POST',
+    path: '/v1/auth/invites',
+    token: accessToken,
+    body: { email: 'boris@example.org' },
+  });
+  // The SAME answer a new address gets. `signup-invites.test.ts` compares the
+  // three bodies; here the point is which letter travelled.
+  assert.equal(minted.status, 202);
+  assert.deepEqual(minted.body, {});
+
+  assert.equal(received.length, 1, 'exactly one letter, to the person who already has an account');
+  const mail = received[0];
+  assert.ok(mail);
+  assert.deepEqual(mail.to, ['boris@example.org']);
+  assert.equal(mail.subject, 'You already have an openplate account');
+  // NOT AN INVITATION, and no capability at all: a join link would mint a
+  // second account for somebody who has one.
+  assert.ok(!mail.text.includes('/join#'), 'the note must carry no join link');
+  assert.ok(!mail.text.includes('si_'), 'the note must carry no invite token');
+  assert.ok(!mail.html.includes('href'), 'the note must carry no link in its html part');
 });
 
 test('an admin reset-mail sends the reset letter and withholds the link', async () => {

@@ -107,6 +107,6 @@ test('an instance block is published whole, and omitted entirely when there is n
   // older than protocol 2 must parse the body exactly as it always did.
   assert.ok(!('instance' in withNone), 'an unconfigured instance must not add a field to the healthcheck body');
 
-  const body = await readHandshake(null, { name: 'Praxis Nord', language: 'de', mail: false, ai: null });
-  assert.deepEqual(body.instance, { name: 'Praxis Nord', language: 'de', mail: false, ai: null });
+  const body = await readHandshake(null, { name: 'Praxis Nord', language: 'de', mail: false, memberInvites: false, ai: null });
+  assert.deepEqual(body.instance, { name: 'Praxis Nord', language: 'de', mail: false, memberInvites: false, ai: null });
 });

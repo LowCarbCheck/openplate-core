@@ -34,7 +34,7 @@ import { createThrottleStore, type ThrottleConfig } from '../../src/lib/throttle
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import type { AuthContext, SessionResponse } from '../../src/accounts/auth-handlers.js';
-import type { Mailer, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
+import type { Mailer, SendAccountNoticeInput, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
 import type { SyncKeyRecordKind } from '../../src/protocol.js';
 import type { Database } from '../../src/db/client.js';
 import { SHARE_WRAPPED_DEK_BYTES } from '../../src/server/share-routes.js';
@@ -59,19 +59,26 @@ export interface HttpRequestInput {
 export interface RecordingMailer extends Mailer {
   invites: SendInviteInput[];
   resets: SendResetInput[];
+  /** The M212 notes, so a suite can assert that an invited address which already has an account got one INSTEAD. */
+  accountNotices: SendAccountNoticeInput[];
 }
 
 function createRecordingMailer(): RecordingMailer {
   const invites: SendInviteInput[] = [];
   const resets: SendResetInput[] = [];
+  const accountNotices: SendAccountNoticeInput[] = [];
   return {
     invites,
     resets,
+    accountNotices,
     async sendInvite(input: SendInviteInput): Promise<void> {
       invites.push(input);
     },
     async sendReset(input: SendResetInput): Promise<void> {
       resets.push(input);
+    },
+    async sendAccountNotice(input: SendAccountNoticeInput): Promise<void> {
+      accountNotices.push(input);
     },
   };
 }
@@ -79,6 +86,12 @@ function createRecordingMailer(): RecordingMailer {
 /** What a test asks for when it needs an account. Everything but the address has a default. */
 export interface SignupThroughInviteInput {
   email: string;
+  /**
+   * The account that CAUSED this invitation, or absent for an operator mint,
+   * which is what every fixture that is not about member invites wants (M212):
+   * an operator's invite writes no allowance expiry at redemption.
+   */
+  invitedByAccountId?: number | null;
   displayName?: string | null;
   role?: 'admin' | 'member';
   dailyAiLimit?: number;
@@ -204,6 +217,18 @@ export interface StartServiceOptions {
    * production writes.
    */
   logger?: Logger;
+  /**
+   * Absent (the default) boots the service the way every deployment boots
+   * today: neither `MEMBER_INVITE_DAILY_AI_LIMIT` nor
+   * `MEMBER_INVITE_ALLOWANCE_DAYS` set, and `POST /v1/auth/invites` answering
+   * the ordinary unknown-path 404 to every signed-in caller.
+   * `signup-invites.test.ts` opts in.
+   *
+   * Both numbers are small on purpose: the cap is what the suite is about, and
+   * an allowance window a test can assert as a DATE has to be a number the
+   * test names.
+   */
+  memberInvites?: { dailyAiLimit?: number; allowanceDays?: number } | null;
 }
 
 export async function startService(options: StartServiceOptions): Promise<ServiceHarness> {
@@ -211,6 +236,17 @@ export async function startService(options: StartServiceOptions): Promise<Servic
   const secrets = deriveServerSecrets('integration-test-root-secret-long-enough');
   const mailer = createRecordingMailer();
   const inviteStore = createInviteStore(options.db);
+
+  const memberInviteSurface =
+    options.memberInvites == null
+      ? null
+      : {
+          invites: inviteStore,
+          policy: {
+            dailyAiLimit: options.memberInvites.dailyAiLimit ?? 25,
+            allowanceDays: options.memberInvites.allowanceDays ?? 14,
+          },
+        };
 
   const authContext: AuthContext = {
     store: createDrizzleAccountStore(options.db),
@@ -223,6 +259,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     mintResetToken: generatePasswordResetToken,
     mintFamilyId: generateFamilyId,
     logger: createSilentLogger(),
+    // `null` by default, which is what takes the route away, see
+    // `StartServiceOptions.memberInvites`.
+    memberInvites: memberInviteSurface,
   };
 
   const aiSurface =
@@ -286,6 +325,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       name: 'integration',
       language: 'en',
       mail: false,
+      // Reported from the SAME surface the route is mounted on, as `main.ts`
+      // does it, so a `create-app` that forgot to report it fails a suite.
+      memberInvites: memberInviteSurface !== null,
       ai: aiSurface === null ? null : { model: options.ai?.advertisedModel ?? null },
     },
   });
@@ -315,6 +357,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         dailyAiLimit: input.dailyAiLimit ?? 0,
         expiresAt: new Date(clock + 7 * 24 * 60 * 60 * 1000),
         now,
+        invitedByAccountId: input.invitedByAccountId ?? null,
       });
       if (!minted.ok) throw new Error(`could not mint an invite for ${input.email}: ${minted.reason}`);
 

@@ -18,6 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildInviteMessage, buildInviteLink, escapeHtml } from '../../src/mail/invite-message.js';
 import { buildResetMessage, buildResetLink } from '../../src/mail/reset-message.js';
+import { buildAccountNoticeMessage } from '../../src/mail/account-notice-message.js';
 import { MAIL_STRINGS, formatExpiryDate } from '../../src/mail/strings.js';
 import { INSTANCE_LANGUAGES, type InstanceLanguage } from '../../src/protocol.js';
 
@@ -110,12 +111,77 @@ test('the shipped strings themselves carry no dash, so no builder can smuggle on
   }
 });
 
+// ── The third letter, which carries no link at all ────────────────────────
+
+test('the account notice names no service, uses no dash, and carries NO url', () => {
+  for (const language of INSTANCE_LANGUAGES) {
+    const message = buildAccountNoticeMessage({ language });
+    const whole = `${message.subject}\n${message.text}\n${message.html}`;
+    for (const word of BANNED_WORDS) {
+      assert.ok(!whole.includes(word), `accountNotice/${language} contains the banned word "${word}"`);
+    }
+    for (const dash of BANNED_DASHES) {
+      assert.ok(!whole.includes(dash), `accountNotice/${language} contains a dash`);
+    }
+
+    // THE POINT OF THIS LETTER IS THAT IT HANDS OVER NOTHING. A join link
+    // would mint a second account for somebody who has one, and a reset link
+    // would be a password reset nobody asked for, mailable by any member who
+    // can type an address. So: no anchor, no href, and no url in the text.
+    assert.ok(!message.html.includes('<a '), `accountNotice/${language} must contain no anchor`);
+    assert.ok(!message.html.includes('href'), `accountNotice/${language} must contain no href`);
+    assert.ok(!whole.includes('http'), `accountNotice/${language} must contain no url`);
+  }
+});
+
+test('the account notice carries every paragraph its dictionary defines, in order', () => {
+  for (const language of INSTANCE_LANGUAGES) {
+    const message = buildAccountNoticeMessage({ language });
+    const strings = MAIL_STRINGS[language].accountNotice;
+    assert.equal(message.subject, strings.subject);
+
+    // Order, not merely presence: a letter whose paragraphs arrived shuffled
+    // would pass an `includes` check for each one. This is also the control
+    // that keeps the absence assertions above from being about an empty
+    // string.
+    let cursor = -1;
+    for (const piece of [strings.greeting, strings.invited, strings.signIn, strings.forgotten]) {
+      const found = message.text.indexOf(piece);
+      assert.ok(found > cursor, `accountNotice/${language}: "${piece.slice(0, 24)}" is out of order`);
+      cursor = found;
+    }
+    // And the html says the same thing the text does.
+    for (const piece of [strings.greeting, strings.invited, strings.signIn, strings.forgotten]) {
+      assert.ok(message.html.includes(escapeHtml(piece)), `accountNotice/${language} html is missing a paragraph`);
+    }
+  }
+});
+
+test('the two letters that DO carry a link still carry it, so the assertion above is about this letter', () => {
+  // The control for "no anchor, no href": `renderHtml` grew a nullable link
+  // for the notice, and a bug there would silently strip the URL from the
+  // invitation as well.
+  for (const language of INSTANCE_LANGUAGES) {
+    for (const message of [inviteFor(language), resetFor(language)]) {
+      assert.ok(message.html.includes(`href="${escapeHtml(message.link)}"`), 'a letter with a link must render it');
+    }
+  }
+});
+
 test('both languages carry the identical key set, which the type also enforces', () => {
   // The compiler already refuses a missing key. This asserts it at runtime too,
   // because the failure mode is a German letter with an English paragraph in
   // the middle and that is worth catching twice.
   assert.deepEqual(Object.keys(MAIL_STRINGS.en.invite).toSorted(), Object.keys(MAIL_STRINGS.de.invite).toSorted());
   assert.deepEqual(Object.keys(MAIL_STRINGS.en.reset).toSorted(), Object.keys(MAIL_STRINGS.de.reset).toSorted());
+  assert.deepEqual(
+    Object.keys(MAIL_STRINGS.en.accountNotice).toSorted(),
+    Object.keys(MAIL_STRINGS.de.accountNotice).toSorted(),
+  );
+  // THREE LETTERS, EVER, and the number is in the type. A fourth added to one
+  // language and not the other would already be a compile error; this catches
+  // a fourth added to both without the argument in `mail/mailer.ts`'s header.
+  assert.deepEqual(Object.keys(MAIL_STRINGS.en).toSorted(), ['accountNotice', 'invite', 'reset']);
 });
 
 // ── The link, which is the thing that can silently be wrong ────────────────
