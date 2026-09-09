@@ -597,6 +597,7 @@ test('GET /account reports the whole AccountView, including today’s AI spend',
   if (outcome.status !== 'ok') throw new Error('unreachable');
   assert.deepEqual(Object.keys(outcome.body.account).toSorted(), [
     'aiUsedToday',
+    'allowanceExpiresAt',
     'createdAt',
     'dailyAiLimit',
     'displayName',

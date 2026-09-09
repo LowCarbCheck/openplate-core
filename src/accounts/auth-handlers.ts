@@ -195,6 +195,7 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
     role: account.role,
     dailyAiLimit: account.dailyAiLimit,
     aiUsedToday,
+    allowanceExpiresAt: account.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: account.suspendedAt?.toISOString() ?? null,
     createdAt: account.createdAt.toISOString(),
   };

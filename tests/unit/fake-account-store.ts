@@ -178,6 +178,7 @@ export function createFakeAccountStore(): FakeAccountStore {
       // clears the name, so both are keyed on the property's presence.
       if (input.role !== undefined) account.role = input.role;
       if (input.dailyAiLimit !== undefined) account.dailyAiLimit = input.dailyAiLimit;
+      if (input.allowanceExpiresAt !== undefined) account.allowanceExpiresAt = input.allowanceExpiresAt;
       if (input.displayName !== undefined) account.displayName = input.displayName;
       return { ...account };
     },
@@ -247,6 +248,11 @@ export function createFakeAccountStore(): FakeAccountStore {
         displayName: input.account.displayName,
         role: invite.role,
         dailyAiLimit: invite.dailyAiLimit,
+        // AN INVITE CARRIES NO EXPIRY, exactly as it does in Postgres: the
+        // column has no default beyond `NULL`, and an operator sets the date
+        // afterwards through `updateStanding`. A fixture that seeded one here
+        // would let a test set up a state the service cannot reach.
+        allowanceExpiresAt: null,
         suspendedAt: null,
         verifier: input.account.verifier,
         recoveryVerifier: input.account.recoveryVerifier,

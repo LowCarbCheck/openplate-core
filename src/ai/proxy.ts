@@ -25,7 +25,10 @@
  *
  * ORDER OF OPERATIONS, and every step is where it is on purpose:
  *   1. identity   — no session on the request is a WIRING bug; fail closed.
- *   2. allowance  — a `dailyAiLimit` of 0 is refused before an upstream call.
+ *   2. allowance  — a `dailyAiLimit` of 0 is refused before an upstream call,
+ *                   and so is an allowance whose end date has passed
+ *                   (403 allowance-expired). Both refuse BEFORE step 3,
+ *                   because a reservation writes a row.
  *   3. RESERVE    — before the call, never after. Counting after the fact has a
  *                   window in which N parallel requests all read the old count.
  *   4. forward    — the caller's `Authorization` is REPLACED, not merged.
@@ -285,6 +288,15 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
       return;
     }
 
+    // THE CLOCK IS READ HERE, above both allowance tests, and not beside the
+    // reservation where it used to sit. The expiry test below needs an instant,
+    // the reservation needs the UTC day of the same instant, and reading the
+    // clock twice would let ONE request be judged against two of them: a
+    // request that arrives a microsecond before an expiry could then be
+    // refused, or one that arrives after it could reserve. One read, one
+    // instant, one answer.
+    const requestedAt = now();
+
     // 2. NO ALLOWANCE IS NOT A QUOTA REFUSAL, and the distinction matters twice.
     // It answers 403 rather than 429 because there is nothing to wait for, and
     // it returns BEFORE the reservation, because `reserve`'s insert branch is
@@ -292,6 +304,35 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     // write a row with `count = 1`.
     if (account.dailyAiLimit <= 0) {
       res.status(403).json({ error: 'ai-not-allowed' });
+      return;
+    }
+
+    // 2b. THE ALLOWANCE HAS AN END DATE, and this is the whole of the rule.
+    //
+    // IT IS HERE, BEFORE THE RESERVATION IN STEP 3, FOR THE SAME REASON THE
+    // TEST ABOVE IS. `reserve`'s insert branch is unguarded (see `quota-store.ts`): the
+    // first request of a UTC day writes a row with `count = 1` unconditionally.
+    // A refusal placed after it would therefore bill a day of AI to somebody
+    // who got no answer, and an operator reading the usage table would see
+    // spend that never happened.
+    //
+    // NOT AFTER, so the boundary instant REFUSES: `<=` rather than `<`. The
+    // date names the moment the allowance is over, not the last moment it
+    // works, and a rule that let the exact instant through would be one no
+    // sentence could describe.
+    //
+    // THE CODE IS DISTINCT FROM `ai-not-allowed` on purpose. "Your operator
+    // never gave you AI" and "your time ran out" are two different sentences
+    // for a person to read and two different branches for a client to take.
+    //
+    // SYNC IS DELIBERATELY NOT GATED BY THIS DATE, and the temptation to add
+    // it lives in `server/bearer-auth.ts`'s `createEntitledUserResolver`. The
+    // diary belongs to the account: a person whose trial lapsed must still be
+    // able to sign in on a new device and pull what they wrote. An expired
+    // allowance is a feature ending, not an account ending, and deletion is
+    // the erasure path that already exists.
+    if (account.allowanceExpiresAt !== null && account.allowanceExpiresAt.getTime() <= requestedAt.getTime()) {
+      res.status(403).json({ error: 'allowance-expired' });
       return;
     }
 
@@ -310,7 +351,7 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
 
     // 3. Reserve BEFORE the upstream call. A refusal is a 429 with the reset
     // instant named, never a 500: being out of allowance is the system working.
-    const requestedAt = now();
+    // The day is derived from the instant read above the allowance tests.
     const day = utcDayKey(requestedAt);
     const reservation = await quota.reserve({ accountId: account.id, day, limit: account.dailyAiLimit });
     if (!reservation.ok) {

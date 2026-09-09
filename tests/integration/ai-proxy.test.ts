@@ -235,7 +235,7 @@ test('the account is refused at its limit, and the refusal is the DATABASE decli
   }
 });
 
-test('an account with an allowance of 0 is told it may not, and never reserves', async () => {
+test('an account with an allowance of 0 is told it may not, and writes no usage row', async () => {
   const service = await startWithAi();
   try {
     // Zero is the DEFAULT for a new invite: the AI is opt-in per account, so
@@ -257,6 +257,68 @@ test('an account with an allowance of 0 is told it may not, and never reserves',
     const rows = await database.db.select().from(aiUsageDays).where(eq(aiUsageDays.accountId, session.account.id));
     assert.deepEqual(rows, []);
     assert.equal(received.length, 0);
+  } finally {
+    await service.close();
+  }
+});
+
+test('an expired allowance is refused with its own code and writes NO ai_usage_days row', async () => {
+  // THE CLAIM THIS FILE EXISTS FOR, applied to the new rule: the refusal has
+  // to sit BEFORE the reservation, because `reserve`'s insert branch is
+  // unguarded and the first request of a UTC day writes `count = 1` with no
+  // predicate. A check moved below it would bill a day of AI to somebody who
+  // got no answer, and only a real table can say whether the row is there.
+  const service = await startWithAi();
+  try {
+    const expired = await service.signupThroughInvite({ email: 'lapsed@example.org', dailyAiLimit: 5 });
+    // The date is set through the real column, the way the admin PATCH sets it.
+    await database.db
+      .update(accounts)
+      .set({ allowanceExpiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(accounts.id, expired.account.id));
+
+    const refused = await service.request<{ error?: string }>({
+      method: 'POST',
+      path: '/v1/chat/completions',
+      accessToken: expired.tokens.accessToken,
+      body: completionRequest(),
+    });
+
+    assert.equal(refused.status, 403);
+    // A code of its own, never `ai-not-allowed`: this account HAS an allowance,
+    // it has simply run out of time, and the two call for different sentences.
+    assert.equal(refused.body.error, 'allowance-expired');
+    assert.notEqual(refused.body.error, 'ai-not-allowed');
+    // NO ROW AT ALL, not a row at zero.
+    const rows = await database.db.select().from(aiUsageDays).where(eq(aiUsageDays.accountId, expired.account.id));
+    assert.deepEqual(rows, [], 'an expired account must not have a usage row');
+    assert.equal(received.length, 0, 'and nothing may leave the host');
+
+    // ── THE CONTROL, in the same test and against the same table ────────────
+    // A second account with a date in the FUTURE, everything else identical.
+    // It must be answered and it must leave exactly one row behind. Without
+    // this half, a handler that refused every request would turn the
+    // assertions above green; with it, moving the expiry check below the
+    // reservation turns the `deepEqual(rows, [])` above red while this half
+    // stays green, which is exactly the defect the placement guards against.
+    const live = await service.signupThroughInvite({ email: 'still-paid@example.org', dailyAiLimit: 5 });
+    await database.db
+      .update(accounts)
+      .set({ allowanceExpiresAt: new Date(Date.now() + 86_400_000) })
+      .where(eq(accounts.id, live.account.id));
+
+    const answered = await service.request<{ choices: unknown[] }>({
+      method: 'POST',
+      path: '/v1/chat/completions',
+      accessToken: live.tokens.accessToken,
+      body: completionRequest(),
+    });
+    assert.equal(answered.status, 200);
+    assert.equal(await usageCount(live.account.id), 1, 'an unexpired account spends exactly one usage row');
+    assert.equal(received.length, 1);
+    // And the expired account's row is STILL absent after a successful call by
+    // somebody else: the count is per account, so a shared row would show here.
+    assert.equal(await usageCount(expired.account.id), 0);
   } finally {
     await service.close();
   }

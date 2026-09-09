@@ -40,6 +40,7 @@ export interface AdminSeedInput {
   role?: AccountRole;
   dailyAiLimit?: number;
   aiUsedToday?: number;
+  allowanceExpiresAt?: Date | null;
   suspendedAt?: Date | null;
   lastSeenAt?: Date | null;
   blobSizeBytes?: number;
@@ -70,6 +71,8 @@ export function createFakeAdminStore(): FakeAdminStore {
         role: input.role ?? 'member',
         dailyAiLimit: input.dailyAiLimit ?? 0,
         aiUsedToday: input.aiUsedToday ?? 0,
+        // `null` is the default because it is the column's: no end date at all.
+        allowanceExpiresAt: input.allowanceExpiresAt ?? null,
         suspendedAt: input.suspendedAt ?? null,
         createdAt: new Date('2026-08-01T09:00:00.000Z'),
         lastSeenAt: input.lastSeenAt ?? null,

@@ -154,6 +154,7 @@ test('the account body carries exactly the documented metadata fields and nothin
 
   assert.deepEqual(Object.keys(account ?? {}).toSorted(), [
     'aiUsedToday',
+    'allowanceExpiresAt',
     'blob',
     'createdAt',
     'dailyAiLimit',

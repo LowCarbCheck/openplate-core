@@ -685,12 +685,15 @@ All three bearer.
   "role": "member",
   "dailyAiLimit": 200,
   "aiUsedToday": 3,
+  "allowanceExpiresAt": null,
   "suspendedAt": null,
   "createdAt": "2026-09-04T10:11:12.000Z"
 }
 ```
 
 Nothing secret is in it and nothing can be: no verifier, no KDF descriptor, no wrapped DEK, no escrow, no token. Every field is either the person's own information or the standing an operator granted them. `aiUsedToday` counts against `dailyAiLimit` on the current UTC day; `suspendedAt` is non-`null` while every authenticated call answers `403 account-suspended`.
+
+`allowanceExpiresAt` is an ISO instant or `null`, and `null` means the AI allowance has no end date, which is what a self-hosted instance keeps. From that instant on, the proxy of §5.19 answers `403 allowance-expired`. **It gates AI and nothing else**: sync keeps working past the date, because the diary belongs to the account and a new device must be able to pull it. A client may render the date and must not authorize on it; the proxy is where the rule lives.
 
 The admin account endpoints return the same shape plus two operator fields, `blob` and `keyRecordKinds` (ADR-0001). A client decoding an `AccountView` from an admin response therefore works unchanged and reads two fields it did not ask for.
 
@@ -973,6 +976,7 @@ Each account carries `dailyAiLimit`: requests per **UTC day**, defaulting to
 | ------ | -------------------------------- | ----------------------------------------------------------------------- |
 | `401`  | `authentication required`        | No access token, or one that is expired or revoked                       |
 | `403`  | `ai-not-allowed`                 | `dailyAiLimit` is `0`. Refused before anything leaves the host           |
+| `403`  | `allowance-expired`              | `allowanceExpiresAt` is set and not after the instant the request arrived. Refused before anything leaves the host, and before a usage row is written |
 | `403`  | `account-suspended`              | The account is suspended (§5.9 uses the same code)                       |
 | `400`  | `request body must be a JSON object` | The body is not an object. The input is never quoted back            |
 | `429`  | a sentence naming the reset instant | The allowance is spent. `Retry-After` is seconds to the next UTC midnight |
@@ -983,6 +987,16 @@ means "this account will never succeed here until an operator changes
 something", which is a different message to show than "come back tomorrow". The
 two `429`s are sentences because there is nothing to branch on: a person reads
 them.
+
+`403 allowance-expired` is a **separate** machine code, and it is separate
+because the two sentences are not the same sentence: "your operator never gave
+you AI" and "your time ran out" call for different words and different next
+steps. A client that folded them together would tell somebody whose trial ended
+to ask an administrator for an allowance they already had. Both refusals happen
+**before the reservation**, so an account that got no answer has no usage row
+counted against it. The date is compared as "not after": the boundary instant
+refuses rather than allows. Sync is unaffected on an expired account
+(§5.15).
 
 #### What is spent and what is given back
 
@@ -1033,7 +1047,7 @@ locked.
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
 | `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
 | `GET /v1/admin/activity`                 | The same day-by-day strip for a whole PAGE of accounts, in the list's order |
-| `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `suspended`, `displayName`. At least one required |
+| `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `suspended`, `displayName`. At least one required |
 | `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
 | `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
 | `GET /v1/admin/invites`                  | A page of pending invitations, plus `total`                               |

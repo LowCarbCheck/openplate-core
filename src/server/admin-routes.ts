@@ -79,7 +79,7 @@ import {
   type ActivityDay,
 } from '../admin/account-activity.js';
 import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
-import { asBoolean, asNumber, asObject, type JsonValue } from '../lib/json.js';
+import { asBoolean, asNumber, asObject, asString, type JsonValue } from '../lib/json.js';
 import { getAdminPrincipal } from './admin-auth.js';
 
 /** Mount prefix for the operator endpoints. The user-facing families live under `/v1/auth` and `/v1/sync`. */
@@ -176,6 +176,7 @@ function toAccountView(summary: AdminAccountSummary): AdminAccountView {
     role: summary.role,
     dailyAiLimit: summary.dailyAiLimit,
     aiUsedToday: summary.aiUsedToday,
+    allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
     createdAt: summary.createdAt.toISOString(),
     lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
@@ -371,7 +372,7 @@ interface MintInviteResponse {
 }
 
 /**
- * The four fields an operator may change on an account, each optional and each
+ * The five fields an operator may change on an account, each optional and each
  * meaning "leave it alone" when absent.
  *
  * `email` IS DELIBERATELY NOT HERE. It is the account's identity and what every
@@ -381,11 +382,41 @@ interface MintInviteResponse {
 interface AccountPatch {
   role?: AccountRole;
   dailyAiLimit?: number;
+  /**
+   * When the AI allowance ends. Absent leaves it alone; `null` clears it, so
+   * both are keyed on the property's PRESENCE rather than on its nullness.
+   */
+  allowanceExpiresAt?: Date | null;
   suspended?: boolean;
   displayName?: string | null;
 }
 
 type ParseAccountPatchResult = { ok: true; value: AccountPatch } | { ok: false; reason: string };
+
+type ParseAllowanceExpiresAtResult = { ok: true; value: Date | null } | { ok: false; reason: string };
+
+/**
+ * The `allowanceExpiresAt` field of a PATCH body: an ISO instant, or `null` to
+ * clear the date.
+ *
+ * IT REFUSES ANYTHING ELSE RATHER THAN COERCING IT. `new Date('tomorrow')` is
+ * an `Invalid Date` and `new Date(0)` is 1970, so a value this did not check
+ * would either be written as a NaN timestamp or silently expire an allowance
+ * the moment it was set. Only a string that round-trips through
+ * `Date.parse` is accepted.
+ */
+function parseAllowanceExpiresAt(value: JsonValue): ParseAllowanceExpiresAtResult {
+  if (value === null) return { ok: true, value: null };
+  const iso = asString(value);
+  if (iso === null) {
+    return { ok: false, reason: 'allowanceExpiresAt must be an ISO 8601 instant, or null to clear it' };
+  }
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) {
+    return { ok: false, reason: 'allowanceExpiresAt must be an ISO 8601 instant, or null to clear it' };
+  }
+  return { ok: true, value: new Date(parsed) };
+}
 
 /** Decodes a PATCH body. Absent means untouched; present and malformed is a `400` that names the field. */
 function parseAccountPatch(body: JsonValue): ParseAccountPatchResult {
@@ -402,6 +433,11 @@ function parseAccountPatch(body: JsonValue): ParseAccountPatchResult {
       return { ok: false, reason: `dailyAiLimit must be an integer between 0 and ${MAX_DAILY_AI_LIMIT}` };
     }
     patch.dailyAiLimit = limit;
+  }
+  if (fields.allowanceExpiresAt !== undefined) {
+    const expiry = parseAllowanceExpiresAt(fields.allowanceExpiresAt);
+    if (!expiry.ok) return { ok: false, reason: expiry.reason };
+    patch.allowanceExpiresAt = expiry.value;
   }
   if (fields.suspended !== undefined) {
     const suspended = asBoolean(fields.suspended);
@@ -667,11 +703,13 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         // An empty PATCH is a caller that believes it changed something. Same
         // rule the auth-side `PATCH /v1/auth/account` applies to an absent key:
         // silence must never read as consent.
-        res.status(400).json({ error: 'a patch must name at least one of role, dailyAiLimit, suspended, displayName' });
+        res.status(400).json({
+          error: 'a patch must name at least one of role, dailyAiLimit, allowanceExpiresAt, suspended, displayName',
+        });
         return;
       }
 
-      const { displayName, role, dailyAiLimit, suspended } = patch.value;
+      const { allowanceExpiresAt, displayName, role, dailyAiLimit, suspended } = patch.value;
       // Demoting or suspending oneself is the lockout; a rename is not.
       if (isSelfLockout({ req, targetAccountId: accountId, lockingOut: suspended === true || role === 'member' })) {
         res.status(400).json({ error: 'self-change' });
@@ -695,8 +733,19 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
           return;
         }
       }
-      if (role !== undefined || dailyAiLimit !== undefined || displayName !== undefined) {
-        const changed = await accounts.updateStanding({ accountId, role, dailyAiLimit, displayName });
+      if (
+        role !== undefined ||
+        dailyAiLimit !== undefined ||
+        allowanceExpiresAt !== undefined ||
+        displayName !== undefined
+      ) {
+        const changed = await accounts.updateStanding({
+          accountId,
+          role,
+          dailyAiLimit,
+          allowanceExpiresAt,
+          displayName,
+        });
         if (changed === null) {
           sendNotFound(res);
           return;

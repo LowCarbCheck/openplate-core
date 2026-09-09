@@ -59,6 +59,8 @@ const USAGE = `sync-api — the openplate-core admin CLI
     accounts delete <id> --yes Erase an account and everything attached to it
     accounts set-role <id> admin|member   Change what an account may do
     accounts set-limit <id> <n>           Change its AI requests per UTC day
+    accounts set-expiry <id> --allowance-expires <iso|none>
+                               Set or clear the date its AI allowance ends
     accounts suspend <id>      Lock it out and revoke every session, reversibly
     accounts reactivate <id>   Let it back in
     invites list               Outstanding and spent signup invites
@@ -77,6 +79,8 @@ const USAGE = `sync-api — the openplate-core admin CLI
     --display-name <text>  The person's name, carried onto the account
     --role <admin|member>  What the redeemed account may do (default member)
     --daily-ai-limit <n>   AI requests a day for the redeemed account (default 0)
+    --allowance-expires <iso|none>  When an account's AI allowance ends.
+                           "none" clears the date, so the allowance never ends
     --expires-in-days <n>  Invite lifetime, 1–30 (default 7)
 
   Authentication:
@@ -93,6 +97,7 @@ interface Invocation {
   displayName: string | null;
   role: string | null;
   dailyAiLimit: string | null;
+  allowanceExpires: string | null;
   expiresInDays: string | null;
   json: boolean;
   yes: boolean;
@@ -111,6 +116,7 @@ function parseInvocation(argv: string[]): Invocation {
       'display-name': { type: 'string' },
       role: { type: 'string' },
       'daily-ai-limit': { type: 'string' },
+      'allowance-expires': { type: 'string' },
       'expires-in-days': { type: 'string' },
       json: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
@@ -128,6 +134,7 @@ function parseInvocation(argv: string[]): Invocation {
     displayName: parsed.values['display-name'] ?? null,
     role: parsed.values.role ?? null,
     dailyAiLimit: parsed.values['daily-ai-limit'] ?? null,
+    allowanceExpires: parsed.values['allowance-expires'] ?? null,
     expiresInDays: parsed.values['expires-in-days'] ?? null,
     json: parsed.values.json === true,
     yes: parsed.values.yes === true,
@@ -161,6 +168,35 @@ function limitFrom(value: string): AccountPatchBody {
     throw new CliError('accounts set-limit needs a whole number of requests a day, 0 or more.');
   }
   return { dailyAiLimit: limit };
+}
+
+/**
+ * The `--allowance-expires` value of `accounts set-expiry`, or a refusal.
+ *
+ * A FLAG RATHER THAN A POSITIONAL, unlike `set-role` and `set-limit`: an ISO
+ * instant is long enough that `accounts set-expiry 7 2026-12-01T00:00:00Z`
+ * reads as two ids, and clearing the date needs a word of its own. `none` is
+ * that word, and it becomes the `null` the service documents.
+ *
+ * The date is checked HERE as well as by the service, so an obvious typo costs
+ * no round trip and cannot be mistaken for a cleared allowance.
+ */
+function expiryFrom(value: string | null): AccountPatchBody {
+  if (value === null || value.trim() === '') {
+    throw new CliError(
+      'accounts set-expiry needs --allowance-expires <iso|none>, e.g. `--allowance-expires 2026-12-01T00:00:00Z` or `--allowance-expires none`.',
+    );
+  }
+  const raw = value.trim();
+  if (raw === 'none') return { allowanceExpiresAt: null };
+
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) {
+    throw new CliError(
+      'accounts set-expiry needs an ISO 8601 instant, e.g. `2026-12-01T00:00:00Z`, or the word "none" to clear the date.',
+    );
+  }
+  return { allowanceExpiresAt: new Date(parsed).toISOString() };
 }
 
 function inviteIdArgument(invocation: Invocation): string {
@@ -257,6 +293,16 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
     return;
   }
 
+  if (subcommand === 'set-expiry') {
+    const id = accountIdArgument(invocation);
+    const patch = expiryFrom(invocation.allowanceExpires);
+    const account = decodeSingleAccount(
+      await client.request({ method: 'PATCH', path: `/v1/admin/accounts/${id}`, body: patch }),
+    );
+    print(invocation.json ? JSON.stringify(account, null, 2) : formatAccountDetail(account));
+    return;
+  }
+
   if (subcommand === 'suspend' || subcommand === 'reactivate') {
     const id = accountIdArgument(invocation);
     const account = decodeSingleAccount(
@@ -278,7 +324,7 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
   }
 
   throw new CliError(
-    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, suspend, reactivate, reset-mail.`,
+    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, set-expiry, suspend, reactivate, reset-mail.`,
   );
 }
 

@@ -30,7 +30,7 @@ const AUTH_HASH = sampleAuthHash(11);
 const NEW_AUTH_HASH = sampleAuthHash(22);
 
 interface SessionBody {
-  account: { id: number; email: string };
+  account: { id: number; email: string; allowanceExpiresAt: string | null };
   tokens: { accessToken: string; refreshToken: string } | null;
 }
 
@@ -190,6 +190,98 @@ test('the full round trip: signup, login, key record, push, pull, conflict, dele
     (await database.db.select().from(accountTokens).where(eq(accountTokens.accountId, accountId))).length,
     0,
   );
+});
+
+test('an expired AI allowance closes the proxy and leaves sync open', async () => {
+  // THE DECISION M212 SPEC 01 MADE, and the one a later reader is most likely
+  // to reverse: `accounts.allowance_expires_at` gates the AI proxy and nothing
+  // else. The diary belongs to the account, so a person whose trial lapsed
+  // must still be able to sign in on a new device and pull what they wrote. An
+  // expired allowance is a feature ending, not an account ending;
+  // `server/bearer-auth.ts` records the same decision beside the function that
+  // invites the opposite reading.
+  //
+  // ONE ACCOUNT, BOTH ANSWERS, IN ONE TEST. Split across two, a fixture that
+  // forgot to set the date would leave the sync half green and say nothing,
+  // which is why the 403 below is this test's own control: it is what proves
+  // the account really is expired when the 200 arrives.
+  //
+  // A SERVICE OF ITS OWN, because the shared harness in this file has no
+  // provider key and therefore no proxy route at all. The upstream address is
+  // a port nothing listens on, deliberately: an expired account is refused
+  // before anything leaves the host, so a reachable provider would prove less.
+  const aiService = await startService({
+    db: database.db,
+    ai: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'sk-never-reached', timeoutMs: 2_000 },
+  });
+  try {
+    const session = await aiService.signupThroughInvite({
+      email: 'lapsed-but-still-mine@example.org',
+      authHash: AUTH_HASH,
+      dailyAiLimit: 5,
+    });
+    const accessToken = session.tokens.accessToken;
+
+    // Something in the diary FIRST, while the allowance is still live, so the
+    // pull after the expiry has real bytes to return rather than a 404 that
+    // would pass for "open".
+    const ciphertext = sampleCiphertext(9, 1024);
+    const pushed = await aiService.request<{ newVersion: number }>({
+      method: 'POST',
+      path: '/v1/sync/blob',
+      accessToken,
+      body: { baseVersion: 0, envelopeVersion: 1, ciphertext },
+    });
+    assert.equal(pushed.status, 200);
+
+    await database.db
+      .update(accounts)
+      .set({ allowanceExpiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(accounts.id, session.account.id));
+
+    // The AI is closed, with its own code.
+    const refused = await aiService.request<{ error?: string }>({
+      method: 'POST',
+      path: '/v1/chat/completions',
+      accessToken,
+      body: { model: 'a-vision-model', messages: [{ role: 'user', content: 'what is on this plate?' }] },
+    });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, 'allowance-expired');
+
+    // And the diary is not. Same account, same token, same instant.
+    const pulled = await aiService.request<{ blobVersion: number; ciphertext: string }>({
+      method: 'GET',
+      path: '/v1/sync/blob',
+      accessToken,
+    });
+    assert.equal(pulled.status, 200, 'an expired allowance must never close sync');
+    assert.equal(pulled.body.ciphertext, ciphertext, 'and the bytes must come back whole');
+
+    // A push still works too: this is not a read-only account either.
+    const pushedAgain = await aiService.request<{ newVersion: number }>({
+      method: 'POST',
+      path: '/v1/sync/blob',
+      accessToken,
+      body: { baseVersion: 1, envelopeVersion: 1, ciphertext: sampleCiphertext(10, 1024) },
+    });
+    assert.equal(pushedAgain.status, 200);
+
+    // The account can also still SIGN IN, which is the new-device case the
+    // decision is actually about.
+    const login = await aiService.request<SessionBody>({
+      method: 'POST',
+      path: '/v1/auth/login',
+      body: { email: 'lapsed-but-still-mine@example.org', authHash: AUTH_HASH },
+    });
+    assert.equal(login.status, 200);
+    assert.ok(login.body.tokens, 'a lapsed allowance must not stop a new device from signing in');
+    // And the view it gets back names the date, so a client can say why the
+    // camera stopped working.
+    assert.notEqual(login.body.account.allowanceExpiresAt, null);
+  } finally {
+    await aiService.close();
+  }
 });
 
 test('sync endpoints refuse an unauthenticated caller with 401, not 403', async () => {

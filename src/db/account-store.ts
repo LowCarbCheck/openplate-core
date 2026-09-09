@@ -90,6 +90,7 @@ function mapAccountRow(row: AccountRow): AccountRecord {
     displayName: row.displayName,
     role: row.role,
     dailyAiLimit: row.dailyAiLimit,
+    allowanceExpiresAt: row.allowanceExpiresAt,
     suspendedAt: row.suspendedAt,
     verifier: row.verifier,
     recoveryVerifier: row.recoveryVerifier,
@@ -200,6 +201,7 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
       const changes: Partial<typeof accounts.$inferInsert> = {};
       if (input.role !== undefined) changes.role = input.role;
       if (input.dailyAiLimit !== undefined) changes.dailyAiLimit = input.dailyAiLimit;
+      if (input.allowanceExpiresAt !== undefined) changes.allowanceExpiresAt = input.allowanceExpiresAt;
       if (input.displayName !== undefined) changes.displayName = input.displayName;
 
       // An empty patch is refused by the route, so this is unreachable; reading

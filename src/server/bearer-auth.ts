@@ -86,6 +86,16 @@ export function createBearerAuthMiddleware(ctx: AuthContext): RequestHandler {
  * produce. The `null` branch stays because the handler cores' contract
  * demands it, and because a future entitlement rule (a paid tier, a
  * per-account quota) is exactly what it is for.
+ *
+ * AN EXPIRED AI ALLOWANCE IS NOT SUCH A RULE, and M212 spec 01 decided that
+ * deliberately rather than by omission. `accounts.allowance_expires_at` gates
+ * the AI proxy and nothing else. Returning `null` here for a lapsed allowance
+ * would answer `403 sync not enabled for this account` on every sync route,
+ * and the diary belongs to the account: a person whose trial ended must still
+ * be able to sign in on a new device and pull what they wrote. An expired
+ * allowance is a feature ending, not an account ending. Deletion is the
+ * erasure path and it already exists; suspension is the reversible lockout and
+ * it already exists too. Do not add the expiry to this function.
  */
 export function createEntitledUserResolver(): (req: Request) => Promise<SyncEntitledUser | null> {
   return async (req: Request): Promise<SyncEntitledUser | null> => {

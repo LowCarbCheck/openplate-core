@@ -163,6 +163,15 @@ export interface AccountView {
   dailyAiLimit: number;
   /** AI requests already spent on the current UTC day. */
   aiUsedToday: number;
+  /**
+   * When this account's AI allowance ends, or `null` for no end at all.
+   *
+   * A CLIENT MAY RENDER IT AND MUST NOT AUTHORIZE ON IT. Past this instant the
+   * proxy answers `403 allowance-expired` (PROTOCOL.md §5.19), which is the
+   * only place the rule lives; sync keeps working, because the diary belongs
+   * to the account.
+   */
+  allowanceExpiresAt: IsoTimestamp | null;
   /** Non-`null` while the account is suspended; every authenticated call then answers `403 account-suspended`. */
   suspendedAt: IsoTimestamp | null;
   createdAt: IsoTimestamp;

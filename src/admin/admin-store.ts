@@ -50,6 +50,12 @@ export interface AdminAccountSummary {
   dailyAiLimit: number;
   /** AI requests spent on the current UTC day — a count, never a log of what was asked. */
   aiUsedToday: number;
+  /**
+   * When this account's AI allowance ends, or `null` for no end at all. The
+   * operator's own field: it is what they set, and the AI proxy is the only
+   * thing that reads it.
+   */
+  allowanceExpiresAt: Date | null;
   /** Non-`null` while the account is suspended. */
   suspendedAt: Date | null;
   createdAt: Date;

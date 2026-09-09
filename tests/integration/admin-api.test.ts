@@ -47,6 +47,7 @@ interface AccountBody {
     role: string;
     dailyAiLimit: number;
     aiUsedToday: number;
+    allowanceExpiresAt: string | null;
     suspendedAt: string | null;
     createdAt: string;
     lastSeenAt: string | null;

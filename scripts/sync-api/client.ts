@@ -61,6 +61,8 @@ export interface MintInviteRequestBody {
 export interface AccountPatchBody {
   role?: string;
   dailyAiLimit?: number;
+  /** An ISO instant, or `null` to clear the date. Absent leaves it alone. */
+  allowanceExpiresAt?: string | null;
   suspended?: boolean;
   displayName?: string | null;
 }

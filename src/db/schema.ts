@@ -108,6 +108,29 @@ export const accounts = pgTable(
      */
     dailyAiLimit: integer('daily_ai_limit').default(0).notNull(),
     /**
+     * The instant this account's AI allowance ends, or `NULL` for no end at
+     * all. `NULL` is what every account created before M212 has and what a
+     * self-hosted instance keeps: an operator who never sells anything never
+     * sets a date.
+     *
+     * IT GATES AI AND NOTHING ELSE, and which side of it is load-bearing is
+     * the whole content of this column. `ai/proxy.ts` refuses a request whose
+     * `allowanceExpiresAt` is not after the instant it read the clock at, with
+     * `403 allowance-expired`, BEFORE the quota reservation. Sync is
+     * deliberately untouched: the diary belongs to the account, so a person
+     * whose trial lapsed must still be able to sign in on a new device and
+     * pull what they wrote. An expired allowance is a feature ending, not an
+     * account ending, and deletion is the erasure path.
+     *
+     * IT IS A DATE ON THE ROW RATHER THAN A REMOTE FACT on purpose. An access
+     * rule that ends because another service's cron fired fails OPEN when that
+     * service is down, and what fails open here is the operator's provider
+     * bill. Checked in the same `if` ladder that already refuses
+     * `dailyAiLimit <= 0`, by the process that spends the money, it cannot be
+     * lost.
+     */
+    allowanceExpiresAt: timestamp('allowance_expires_at'),
+    /**
      * Set when an operator suspends the account, `NULL` while it is in good
      * standing. A suspended account cannot log in, refresh, sync or use AI:
      * every such call is `403 {"error":"account-suspended"}`.

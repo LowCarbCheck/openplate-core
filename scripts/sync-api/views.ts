@@ -24,6 +24,8 @@ export interface AccountView {
   role: string;
   dailyAiLimit: number;
   aiUsedToday: number;
+  /** When the account's AI allowance ends, or `null` for no end at all. */
+  allowanceExpiresAt: string | null;
   suspendedAt: string | null;
   createdAt: string;
   blobBytes: number | null;
@@ -81,6 +83,7 @@ function decodeAccount(value: JsonValue | undefined): AccountView {
     role: asString(account?.role) ?? 'member',
     dailyAiLimit: asNumber(account?.dailyAiLimit) ?? 0,
     aiUsedToday: asNumber(account?.aiUsedToday) ?? 0,
+    allowanceExpiresAt: asString(account?.allowanceExpiresAt),
     suspendedAt: asString(account?.suspendedAt),
     createdAt,
     blobBytes: asNumber(blob?.sizeBytes),
@@ -296,19 +299,23 @@ function pad(value: string, width: number): string {
 export function formatAccountTable(page: AccountPageView): string {
   if (page.accounts.length === 0) return 'No accounts.';
 
-  const header = `${pad('ID', 6)}${pad('EMAIL', 32)}${pad('NAME', 20)}${pad('ROLE', 8)}${pad('AI', 12)}${pad('BLOB', 10)}STANDING`;
+  const header = `${pad('ID', 6)}${pad('EMAIL', 32)}${pad('NAME', 20)}${pad('ROLE', 8)}${pad('AI', 12)}${pad('AI UNTIL', 26)}${pad('BLOB', 10)}STANDING`;
   const rows = page.accounts.map((account) => {
     const blob = account.blobBytes === null ? '—' : formatBytes(account.blobBytes);
     // An allowance of 0 is a dash rather than `0/0`: the account cannot use the
     // proxy at all, which reads differently from one that has spent its day.
     const ai = account.dailyAiLimit === 0 ? '—' : `${account.aiUsedToday}/${account.dailyAiLimit}`;
     const standing = account.suspendedAt === null ? 'active' : 'suspended';
+    // A dash means NO END, which is what every self-hosted account has. It is
+    // not the same as an expiry the operator cannot see.
+    const aiUntil = account.allowanceExpiresAt ?? '—';
     return [
       pad(String(account.id), 6),
       pad(account.email, 32),
       pad(account.displayName ?? '—', 20),
       pad(account.role, 8),
       pad(ai, 12),
+      pad(aiUntil, 26),
       pad(blob, 10),
       standing,
     ].join('');
@@ -324,6 +331,7 @@ export function formatAccountDetail(account: AccountView): string {
     `name            ${account.displayName ?? '—'}`,
     `role            ${account.role}`,
     `ai today        ${account.aiUsedToday} of ${account.dailyAiLimit}`,
+    `ai allowance    ${account.allowanceExpiresAt === null ? 'no end date' : `ends ${account.allowanceExpiresAt}`}`,
     `standing        ${account.suspendedAt === null ? 'active' : `suspended ${account.suspendedAt}`}`,
     `created         ${account.createdAt}`,
     `blob            ${account.blobBytes === null ? 'none' : `${formatBytes(account.blobBytes)}, updated ${account.blobUpdatedAt ?? 'unknown'}`}`,

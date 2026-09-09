@@ -51,6 +51,7 @@ interface AccountIdentityRow {
   displayName: string | null;
   role: AccountRole;
   dailyAiLimit: number;
+  allowanceExpiresAt: Date | null;
   suspendedAt: Date | null;
   createdAt: Date;
   lastSeenAt: Date | null;
@@ -68,6 +69,10 @@ const IDENTITY_COLUMNS = {
   displayName: accounts.displayName,
   role: accounts.role,
   dailyAiLimit: accounts.dailyAiLimit,
+  // The end of the AI allowance (M212). An operator sets it and the AI proxy
+  // is the only thing that reads it; it is on the user-facing `AccountView`
+  // too, because the person whose trial ends has to be told when.
+  allowanceExpiresAt: accounts.allowanceExpiresAt,
   suspendedAt: accounts.suspendedAt,
   createdAt: accounts.createdAt,
   // An operator fact, added in M201: when this person last did something on
@@ -153,6 +158,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       role: identity.role,
       dailyAiLimit: identity.dailyAiLimit,
       aiUsedToday: usage.get(identity.id) ?? 0,
+      allowanceExpiresAt: identity.allowanceExpiresAt,
       suspendedAt: identity.suspendedAt,
       createdAt: identity.createdAt,
       lastSeenAt: identity.lastSeenAt,

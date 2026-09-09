@@ -127,6 +127,7 @@ test('PATCH changes a role, an allowance and a name, and returns the AccountView
   const view = asObject(asObject(changed.body)?.account);
   assert.deepEqual(Object.keys(view ?? {}).toSorted(), [
     'aiUsedToday',
+    'allowanceExpiresAt',
     'blob',
     'createdAt',
     'dailyAiLimit',
@@ -174,6 +175,10 @@ test('a malformed field is a 400 that names it, and changes nothing', async () =
     [{ dailyAiLimit: 1_000_000 }, /dailyAiLimit/],
     [{ dailyAiLimit: 1.5 }, /dailyAiLimit/],
     [{ suspended: 'yes' }, /suspended/],
+    [{ allowanceExpiresAt: 'tomorrow' }, /allowanceExpiresAt/],
+    [{ allowanceExpiresAt: '' }, /allowanceExpiresAt/],
+    [{ allowanceExpiresAt: 1_764_547_200_000 }, /allowanceExpiresAt/],
+    [{ allowanceExpiresAt: true }, /allowanceExpiresAt/],
   ] as const) {
     const refused = await patchAccount({ id, body });
     assert.equal(refused.status, 400, JSON.stringify(body));
@@ -183,6 +188,48 @@ test('a malformed field is a 400 that names it, and changes nothing', async () =
   const account = await harness.fakeAccounts.findAccountById(id);
   assert.equal(account?.role, 'member');
   assert.equal(account?.dailyAiLimit, 5);
+});
+
+test('PATCH sets the allowance end date, reads it back, and clears it with null', async () => {
+  const id = await seedAccount({ dailyAiLimit: 200 });
+
+  // A new account has no end date: the column's default, and what every
+  // self-hosted account keeps.
+  assert.equal((await harness.fakeAccounts.findAccountById(id))?.allowanceExpiresAt, null);
+
+  const set = await patchAccount({ id, body: { allowanceExpiresAt: '2026-12-01T00:00:00.000Z' } });
+  assert.equal(set.status, 200);
+  assert.deepEqual(
+    (await harness.fakeAccounts.findAccountById(id))?.allowanceExpiresAt,
+    new Date('2026-12-01T00:00:00.000Z'),
+    'the date must reach the row as an instant, not as a string',
+  );
+
+  // A second patch that does not name it leaves it alone, exactly as an absent
+  // `role` or `dailyAiLimit` does.
+  assert.equal((await patchAccount({ id, body: { displayName: 'Anna' } })).status, 200);
+  assert.deepEqual(
+    (await harness.fakeAccounts.findAccountById(id))?.allowanceExpiresAt,
+    new Date('2026-12-01T00:00:00.000Z'),
+  );
+
+  // `null` CLEARS it, which is a value and not an omission — the same rule
+  // `displayName: null` follows.
+  assert.equal((await patchAccount({ id, body: { allowanceExpiresAt: null } })).status, 200);
+  assert.equal((await harness.fakeAccounts.findAccountById(id))?.allowanceExpiresAt, null);
+
+  // And the allowance itself did not move: clearing the date is not granting
+  // or revoking requests.
+  assert.equal((await harness.fakeAccounts.findAccountById(id))?.dailyAiLimit, 200);
+});
+
+test('the empty-patch refusal names allowanceExpiresAt among the fields it accepts', async () => {
+  // The sentence is the only place a caller learns the field exists, so a
+  // field added to the parser and not to the sentence is a field nobody finds.
+  const id = await seedAccount();
+  const empty = await patchAccount({ id, body: {} });
+  assert.equal(empty.status, 400);
+  assert.match(asString(asObject(empty.body)?.error) ?? '', /allowanceExpiresAt/);
 });
 
 test('suspending revokes every session, and reactivating does NOT restore one', async () => {

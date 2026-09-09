@@ -161,6 +161,8 @@ interface Harness {
 async function startProxy(options: {
   upstreamBaseUrl: string;
   dailyAiLimit?: number;
+  /** When the account's AI allowance ends. Absent means no end date, which is what a new account has. */
+  allowanceExpiresAt?: Date;
   quota?: RecordingQuota;
   timeoutMs?: number;
 }): Promise<Harness> {
@@ -169,6 +171,12 @@ async function startProxy(options: {
     email: 'anna@example.org',
     dailyAiLimit: options.dailyAiLimit ?? 200,
   });
+  if (options.allowanceExpiresAt !== undefined) {
+    // Through `updateStanding`, the operator's own write, rather than a
+    // fixture-only setter: an invite carries no expiry, so this is the only way
+    // the service itself can put a date on an account.
+    await fixture.store.updateStanding({ accountId: account.id, allowanceExpiresAt: options.allowanceExpiresAt });
+  }
   await fixture.store.insertTokens([
     {
       accountId: account.id,
@@ -291,6 +299,104 @@ test('a limit of 0 is 403 ai-not-allowed, before the upstream and before the res
   assert.deepEqual(await response.json(), { error: 'ai-not-allowed' });
   assert.equal(upstream.received.length, 0);
   assert.equal(harness.quota.reserves, 0, 'a zero limit must never reach the quota store');
+
+  await harness.close();
+});
+
+// ── The allowance's end date ───────────────────────────────────────────────
+
+test('an expired allowance is 403 allowance-expired, before the upstream and before the reserve', async () => {
+  // A DISTINCT CODE FROM `ai-not-allowed`, because the two sentences a client
+  // shows are not the same sentence: "your operator never gave you AI" against
+  // "your time ran out".
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 200,
+    // The fixture clock is 2026-08-04T10:00:00Z, so this lapsed an hour ago.
+    allowanceExpiresAt: new Date('2026-08-04T09:00:00.000Z'),
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'allowance-expired' });
+  assert.notEqual(response.status, 429, 'there is nothing to wait for, so a Retry-After would be a lie');
+  assert.equal(upstream.received.length, 0);
+  // THE LOAD-BEARING HALF. `reserve`'s insert branch is unguarded, so a
+  // refusal placed after it would write a row with `count = 1` and bill a day
+  // of AI to somebody who got no answer.
+  assert.equal(harness.quota.reserves, 0, 'an expired allowance must never reach the quota store');
+
+  await harness.close();
+});
+
+test('an allowance that expires LATER is not a refusal', async () => {
+  // The control for the case above: with the same wiring and a date in the
+  // future, the request goes through. Without it, a handler that refused every
+  // account would pass the refusal test.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 200,
+    allowanceExpiresAt: new Date('2026-08-05T10:00:00.000Z'),
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 200);
+  assert.equal(upstream.received.length, 1);
+  assert.equal(harness.quota.reserves, 1);
+
+  await harness.close();
+});
+
+test('the boundary instant REFUSES rather than allows', async () => {
+  // The date names the moment the allowance is over, not the last moment it
+  // works. A `<` instead of a `<=` passes both cases above and fails only
+  // here.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 200,
+    // Exactly the fixture's clock.
+    allowanceExpiresAt: new Date('2026-08-04T10:00:00.000Z'),
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'allowance-expired' });
+  assert.equal(harness.quota.reserves, 0);
+
+  await harness.close();
+});
+
+test('an account with no end date is not expired, which is what every account starts as', async () => {
+  // The other control: `null` must not read as "expired at the epoch". A
+  // handler that compared `new Date(account.allowanceExpiresAt ?? 0)` would
+  // refuse every account this service has ever created.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({ upstreamBaseUrl: upstream.baseUrl, dailyAiLimit: 200 });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 200);
+  assert.equal(harness.quota.reserves, 1);
+
+  await harness.close();
+});
+
+test('an expired allowance is refused even when the daily limit is generous', async () => {
+  // The two refusals are independent: this account has 500 requests a day and
+  // has spent none of them, so the only thing that can refuse it is the date.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 500,
+    allowanceExpiresAt: new Date('2026-01-01T00:00:00.000Z'),
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'allowance-expired' });
+  assert.equal(harness.quota.count, 0);
 
   await harness.close();
 });

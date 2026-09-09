@@ -28,6 +28,14 @@ export interface AccountRecord {
   /** AI requests allowed per UTC day. `0` means this account has no AI. */
   dailyAiLimit: number;
   /**
+   * When this account's AI allowance ends, or `null` for no end at all.
+   *
+   * READ BY THE AI PROXY AND BY NOTHING ELSE. It is not an authentication
+   * input and it does not close sync: see the schema column and
+   * `server/bearer-auth.ts`'s `createEntitledUserResolver` for why.
+   */
+  allowanceExpiresAt: Date | null;
+  /**
    * Non-`null` while the account is suspended. Every caller that authenticates
    * an account MUST check this — login, refresh, the bearer middleware and the
    * recovery paths all answer `403 account-suspended` for a non-`null` value.
@@ -214,8 +222,8 @@ export interface AccountStore {
   updateDisplayName(input: { accountId: number; displayName: string | null }): Promise<AccountRecord | null>;
 
   /**
-   * The operator's edit: role, allowance and display name, each optional and
-   * each meaning "leave it alone" when absent.
+   * The operator's edit: role, allowance, when the allowance ends, and display
+   * name, each optional and each meaning "leave it alone" when absent.
    *
    * SEPARATE FROM {@link AccountStore.updateDisplayName}, which is the OWNER's
    * edit and can change nothing else. Folding the two into one method would
@@ -377,6 +385,11 @@ export interface UpdateStandingInput {
   accountId: number;
   role?: AccountRole;
   dailyAiLimit?: number;
+  /**
+   * The new end of the AI allowance. Absent leaves it alone; `null` is a real
+   * value that CLEARS it, exactly as `displayName: null` clears the name.
+   */
+  allowanceExpiresAt?: Date | null;
   displayName?: string | null;
 }
 
