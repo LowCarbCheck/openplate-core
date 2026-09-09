@@ -29,7 +29,7 @@
 # Pin the Compose project name. Without it Compose names the project after
 # this file's parent directory — "docker" — and every container and volume
 # inherits that.
-name: openplate-sync-dev
+name: openplate-core-dev
 
 services:
   postgres:

@@ -47,7 +47,7 @@ import {
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 
-const USAGE = `sync-api — the openplate-sync admin CLI
+const USAGE = `sync-api — the openplate-core admin CLI
 
   Usage: pnpm sync-api <command> [options]
 

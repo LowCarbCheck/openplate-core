@@ -8,13 +8,13 @@ Pre-1.0. Only the latest tagged release receives fixes — currently the `0.3.x`
 
 **Please do not open a public issue for a suspected vulnerability.**
 
-Report it privately via GitHub's [private vulnerability reporting](https://github.com/LowCarbCheck/openplate-sync/security/advisories/new). This opens a draft security advisory visible only to you and the maintainers, and is the only channel we triage for security reports.
+Report it privately via GitHub's [private vulnerability reporting](https://github.com/LowCarbCheck/openplate-core/security/advisories/new). This opens a draft security advisory visible only to you and the maintainers, and is the only channel we triage for security reports.
 
 This is a small open-source project maintained without a dedicated security team and with no bug bounty. There is no SLA, but reports are read and taken seriously — expect an initial response within a few days. If a report turns out to be valid, we will work with you on a fix and, if you want, credit you in the advisory when it is published.
 
 ## What "vulnerability" means for this service
 
-openplate-sync is an account and end-to-end-encrypted sync service. The server stores a handle, opaque ciphertext blobs, and wrapped key records. It never receives a passphrase, a recovery code, a data-encryption key, or anything that decrypts a blob. See [`PROTOCOL.md`](./PROTOCOL.md) for the full design.
+openplate-core is an account and end-to-end-encrypted sync service. The server stores a handle, opaque ciphertext blobs, and wrapped key records. It never receives a passphrase, a recovery code, a data-encryption key, or anything that decrypts a blob. See [`PROTOCOL.md`](./PROTOCOL.md) for the full design.
 
 **Since 0.5.0 this service holds no email address and has no mailer.** An account is a handle plus a passphrase, where a handle is an opaque per-server string the client generated, the user may edit, and which may not contain an `@`. That removes an entire branch of this threat model: there is no mailbox whose compromise takes over an account, no mailed reset link, no verification token, and no address to phish, correlate or subpoena. The reasoning is in [`docs/adr/0004-identity-without-email.md`](./docs/adr/0004-identity-without-email.md); the short version is that a mailed reset on a zero-knowledge service was an account-takeover path that returned no recovery, because the link holder got a login to a diary that stayed sealed.
 
@@ -49,4 +49,4 @@ The consequence, stated plainly: the account still exists and still holds cipher
 
 A report that this is "a missing password reset" will be closed. A report that some other path _does_ restore access to such an account is the most serious class of issue this project has, and belongs in the private channel above.
 
-Non-security bugs (crashes, incorrect sync behavior, docs errors, etc.) belong in regular [GitHub issues](https://github.com/LowCarbCheck/openplate-sync/issues), not here.
+Non-security bugs (crashes, incorrect sync behavior, docs errors, etc.) belong in regular [GitHub issues](https://github.com/LowCarbCheck/openplate-core/issues), not here.

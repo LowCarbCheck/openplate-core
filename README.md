@@ -1,4 +1,4 @@
-# openplate-sync
+# openplate-core
 
 The account service for [openplate](https://github.com/LowCarbCheck/openplate). Its first feature is end-to-end-encrypted sync between your devices.
 
@@ -14,7 +14,7 @@ The second is reported estimates. With `SYNC_FEEDBACK` on, a person who saw a wr
 
 **This service is optional.** openplate is a complete, fully functional tracker without it: your diary lives in the browser, exports to JSON, and imports again on another device. Sync removes the manual step; it does not unlock anything.
 
-> **Open source.** openplate-sync is licensed under the [MIT License](./LICENSE) (SPDX: `MIT`), the same license as the openplate app. Self-hosting is explicitly one of the things it supports. See [License](#license).
+> **Open source.** openplate-core is licensed under the [MIT License](./LICENSE) (SPDX: `MIT`), the same license as the openplate app. Self-hosting is explicitly one of the things it supports. See [License](#license).
 
 ---
 
@@ -36,8 +36,8 @@ and The admin API sections read like standalone guides and are candidates for sp
 ## Self-hosting
 
 ```bash
-git clone https://github.com/LowCarbCheck/openplate-sync.git
-cd openplate-sync
+git clone https://github.com/LowCarbCheck/openplate-core.git
+cd openplate-core
 cp .env.example .env
 
 # Generate the one secret you must not lose:
@@ -387,7 +387,7 @@ Full detail, including the exact protocol, HKDF labels, and token lifetimes: [`P
 
 ## License
 
-openplate-sync is **open source** under the [MIT License](./LICENSE) (SPDX: `MIT`), matching the [openplate](https://github.com/LowCarbCheck/openplate) app. MIT is one of the most permissive licenses available: run it, read it, change it, fork it, redistribute it, host it for others (commercially or not) with no restrictions beyond keeping the copyright and license notice attached to any copy you distribute. Self-hosting this service is a first-class use, and so is running it as a hosted product for others.
+openplate-core is **open source** under the [MIT License](./LICENSE) (SPDX: `MIT`), matching the [openplate](https://github.com/LowCarbCheck/openplate) app. MIT is one of the most permissive licenses available: run it, read it, change it, fork it, redistribute it, host it for others (commercially or not) with no restrictions beyond keeping the copyright and license notice attached to any copy you distribute. Self-hosting this service is a first-class use, and so is running it as a hosted product for others.
 
 ---
 

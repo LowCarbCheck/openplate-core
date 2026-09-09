@@ -54,7 +54,7 @@ const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   const config = parseConfig(process.env);
-  const logger = createLogger({ component: 'openplate-sync', level: config.logLevel });
+  const logger = createLogger({ component: 'openplate-core', level: config.logLevel });
 
   const secrets = deriveServerSecrets(config.serverSecret);
   const database = createDatabase({ connectionString: config.databaseUrl, ssl: config.databaseSsl });
@@ -222,7 +222,7 @@ async function main(): Promise<void> {
   // form of `listen` takes IPv6 as well, so writing it out would quietly narrow
   // what production binds today.
   const server = app.listen({ port: config.port, host: config.host ?? undefined }, () => {
-    logger.info('openplate-sync listening', {
+    logger.info('openplate-core listening', {
       port: config.port,
       // The bound address, honestly: `null` is not "no host", it is every one.
       host: config.host ?? 'all interfaces',

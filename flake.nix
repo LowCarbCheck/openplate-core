@@ -1,5 +1,5 @@
 {
-  description = "openplate-sync development shell";
+  description = "openplate-core development shell";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";

@@ -8,7 +8,7 @@ The machine-readable counterpart lives in two files that are hand-maintained dup
 
 | Repo             | File                              |
 | ---------------- | --------------------------------- |
-| `openplate-sync` | `src/protocol.ts`                 |
+| `openplate-core` | `src/protocol.ts`                 |
 | `openplate`      | `app/lib/sync/engine/protocol.ts` |
 
 Each repo has a unit test asserting its constants against transcribed literals (`tests/unit/protocol.test.ts` and `tests/unit/sync-engine/protocol.test.ts`). There is no shared CI between the repos, so those tests are the only thing standing between us and a silent protocol split. **This document is normative; the TypeScript is its transcription.**

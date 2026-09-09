@@ -4,11 +4,11 @@
  *
  * THIS FILE IS MAINTAINED IN TWO REPOS AND MUST STAY IDENTICAL IN SUBSTANCE:
  *  - `openplate/app/lib/sync/engine/protocol.ts`   (the client half)
- *  - `openplate-sync/src/protocol.ts`              (this file — the service half)
+ *  - `openplate-core/src/protocol.ts`              (this file — the service half)
  *
  * They are deliberately NOT a shared package: the two repos ship and version
  * independently, and a third party must be able to implement either side from
- * `openplate-sync/PROTOCOL.md` alone without depending on our code. The price
+ * `openplate-core/PROTOCOL.md` alone without depending on our code. The price
  * of that independence is hand-maintained duplication, so each repo carries a
  * unit test that asserts its local `PROTOCOL_VERSION` (and the size/retention
  * limits) against TRANSCRIBED literals — there is no shared CI, so drift has

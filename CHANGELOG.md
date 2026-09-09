@@ -1,9 +1,19 @@
 # Changelog
 
-All notable changes to `openplate-sync` are recorded here. The format follows
+All notable changes to `openplate-core` are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
+
+## [Unreleased]
+
+### Changed
+
+- **The repo, the package and the published image are now `openplate-core`.**
+  The hostname `sync.openplate.de`, the `/v1/sync` routes, the
+  `SYNC_SERVER_URL` env var and the `pnpm sync-api` CLI are unchanged; only
+  the project's own name moved. A self-hoster's only action is to repoint
+  their image reference to `ghcr.io/lowcarbcheck/openplate-core`.
 
 ## [0.9.0] - 2026-09-08
 

@@ -57,7 +57,7 @@ export interface HandshakeView {
 /** The one sentence every decode failure gets: the far end is not what we expected, and we do not quote it. */
 function undocumentedResponse(what: string): CliError {
   return new CliError(
-    `The service's ${what} response did not have the documented shape. Check that --url points at an openplate-sync instance and that its version matches this CLI.`,
+    `The service's ${what} response did not have the documented shape. Check that --url points at an openplate-core instance and that its version matches this CLI.`,
   );
 }
 

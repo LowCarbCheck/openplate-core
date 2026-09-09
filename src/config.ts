@@ -546,7 +546,7 @@ function throwIfRemoved(env: NodeJS.ProcessEnv, name: string, because: string): 
 
 /** Why the SMTP and pigeon-shaped variables went: M181 deleted those transports and M192 did not bring them back. */
 const MAILER_DELETED =
-  "openplate-sync speaks only pigeon's HTTP API, configured as MAIL_API_URL, MAIL_API_KEY and MAIL_API_FROM — SMTP is a non-goal";
+  "openplate-core speaks only pigeon's HTTP API, configured as MAIL_API_URL, MAIL_API_KEY and MAIL_API_FROM — SMTP is a non-goal";
 
 /**
  * Every variable this service refuses, one by one.

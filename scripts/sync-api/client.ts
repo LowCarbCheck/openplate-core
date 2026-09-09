@@ -187,7 +187,7 @@ export class AdminClient {
       // this service — an HTML login page from a reverse proxy is the usual
       // one. The text is not quoted, for the same reason an error body is not.
       throw new CliError(
-        `${url} answered with something that is not JSON. That address is probably not an openplate-sync instance.`,
+        `${url} answered with something that is not JSON. That address is probably not an openplate-core instance.`,
       );
     }
   }

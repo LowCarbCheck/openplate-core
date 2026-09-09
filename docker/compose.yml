@@ -33,7 +33,7 @@
 # Pin the Compose project name. Without it Compose names the project after
 # this file's parent directory — "docker" — and every container and volume
 # inherits that.
-name: openplate-sync
+name: openplate-core
 
 services:
   postgres:
@@ -58,7 +58,7 @@ services:
   sync:
     build: .
     # Or pull the published image instead of building:
-    # image: ghcr.io/lowcarbcheck/openplate-sync:latest
+    # image: ghcr.io/lowcarbcheck/openplate-core:latest
     restart: unless-stopped
     depends_on:
       postgres:
