@@ -27,6 +27,11 @@ import { createFakeInviteStore } from './fake-invite-store.js';
 
 const servers: Server[] = [];
 
+/** A minimal instance block with one field under test, so a case names only what it is about. */
+function instanceInfo({ plans }: { plans: boolean }): InstanceInfo {
+  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans };
+}
+
 after(async () => {
   await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
@@ -101,12 +106,44 @@ test('the handshake reports protocol version 2 and no signupMode at all', async 
   assert.ok(!('signupMode' in body), 'signupMode must be gone, not merely empty');
 });
 
+test('the handshake reports whether a biller stands behind this instance, both ways round', async () => {
+  // BOTH WAYS ROUND, because a field hard-coded to `false` would pass a
+  // one-sided test and would tell every client there is no plan door on the
+  // one instance that has one. `plans` is what a client reads to decide
+  // whether to draw that door, see PROTOCOL.md §5.6.
+  const withoutBiller = await readHandshake(null, instanceInfo({ plans: false }));
+  assert.equal(asObject(withoutBiller.instance)?.plans, false);
+
+  const withBiller = await readHandshake(null, instanceInfo({ plans: true }));
+  assert.equal(asObject(withBiller.instance)?.plans, true);
+});
+
+test('plans is a boolean and is never omitted, unlike the feedback promise beside it', async () => {
+  // `feedback` is a PROMISE and is absent when there is none. This is a
+  // description of a door, which every instance can make, so a missing key
+  // would leave a client guessing where `false` is the honest answer.
+  const body = await readHandshake(null, instanceInfo({ plans: false }));
+  const instance = asObject(body.instance);
+
+  assert.ok(instance !== null);
+  assert.ok('plans' in instance, 'the key must be present even when the answer is no');
+  assert.equal(instance.plans, false);
+});
+
 test('an instance block is published whole, and omitted entirely when there is none', async () => {
   const withNone = await readHandshake(null, null);
   // Omitted rather than sent as null, for the reason the notice is: a client
   // older than protocol 2 must parse the body exactly as it always did.
   assert.ok(!('instance' in withNone), 'an unconfigured instance must not add a field to the healthcheck body');
 
-  const body = await readHandshake(null, { name: 'Praxis Nord', language: 'de', mail: false, memberInvites: false, ai: null });
-  assert.deepEqual(body.instance, { name: 'Praxis Nord', language: 'de', mail: false, memberInvites: false, ai: null });
+  const instance: InstanceInfo = {
+    name: 'Praxis Nord',
+    language: 'de',
+    mail: false,
+    memberInvites: false,
+    ai: null,
+    plans: false,
+  };
+  const body = await readHandshake(null, instance);
+  assert.deepEqual(body.instance, instance);
 });

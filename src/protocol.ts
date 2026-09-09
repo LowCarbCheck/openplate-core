@@ -89,6 +89,21 @@ export const BLOB_VERSION_RETENTION = 5;
  */
 export const SYNC_API_PREFIX = '/v1/sync';
 
+/**
+ * Path prefix the plans pass-through is mounted under (M213 spec 02).
+ *
+ * OUTSIDE {@link SYNC_API_PREFIX} ON PURPOSE, and that is the fact a reader
+ * needs before touching `server/create-app.ts`: no bearer middleware stands
+ * over this subtree by inheritance, so the mount itself has to put one there.
+ *
+ * The routes behind it belong to the biller, not to this protocol. This
+ * service forwards `GET` and `POST` under the prefix to one configured
+ * upstream and reads none of the bodies; an instance with no
+ * `PLANS_UPSTREAM_URL` answers the ordinary unknown-path 404 on the whole
+ * subtree. See PROTOCOL.md §5.22.
+ */
+export const PLANS_API_PREFIX = '/v1/plans';
+
 // ---------------------------------------------------------------------------
 // Key records
 // ---------------------------------------------------------------------------
@@ -229,6 +244,24 @@ export interface InstanceInfo {
    * rule and the throttle to the server.
    */
   memberInvites: boolean;
+  /**
+   * Whether this instance has a biller behind it, so `/v1/plans/*` exists
+   * here (`PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, both or neither).
+   *
+   * A BOOLEAN AND NOT AN OPTIONAL PROMISE, which is the choice `feedback`
+   * below makes and the opposite one. `feedback` is a promise about what
+   * happens to a photograph, and an instance with nothing to promise says
+   * nothing. This field promises nothing at all: it says only whether a door
+   * exists, which is the same kind of statement `mail` and `memberInvites`
+   * make, so `false` is the honest answer for every instance that has no
+   * biller and for every build older than the field.
+   *
+   * DESCRIPTIVE, NEVER A GRANT. `false` means the whole subtree answers the
+   * ordinary unknown-path 404, so a client draws no plan door; `true` still
+   * leaves the bearer gate, the account's own state and the biller's own
+   * refusals where they are.
+   */
+  plans: boolean;
   /** The AI proxy this instance offers, or `null` when it has no upstream key. Wired by spec 03. */
   ai: InstanceAi | null;
   /**

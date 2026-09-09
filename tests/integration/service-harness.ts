@@ -329,6 +329,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       // does it, so a `create-app` that forgot to report it fails a suite.
       memberInvites: memberInviteSurface !== null,
       ai: aiSurface === null ? null : { model: options.ai?.advertisedModel ?? null },
+      // No biller reaches the integration instance, so the whole `/v1/plans`
+      // subtree is the ordinary unknown-path 404 there. `tests/unit` owns both
+      // halves of that field, see `plans-404-when-unset.test.ts`.
+      plans: false,
     },
   });
 

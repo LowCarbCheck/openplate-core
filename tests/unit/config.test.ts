@@ -40,6 +40,9 @@ test('a minimal valid environment parses with sane defaults', () => {
   assert.equal(config.researchEnabled, false);
   // And the one whose absence protects a photograph rather than a ciphertext.
   assert.equal(config.feedbackEnabled, false);
+  // And no biller: the whole /v1/plans subtree is the ordinary unknown-path
+  // 404 until an operator sets both plans variables (M213).
+  assert.equal(config.plans, null);
   assert.equal(config.feedbackDailyLimit, 5);
   assert.equal(config.feedbackMaxRequestBytes, 8_000_000);
   // NO INSTANCE-WIDE AI CEILING unless an operator asks for one. A default
@@ -415,4 +418,42 @@ test('BILLING_TOKEN and ADMIN_TOKEN are two independent variables', () => {
   const adminOnly = parseConfig(baseEnv({ ADMIN_TOKEN: 'c'.repeat(MIN_ADMIN_TOKEN_LENGTH) }));
   assert.equal(adminOnly.billingToken, null);
   assert.notEqual(adminOnly.adminToken, null);
+});
+
+test('a plans URL with no secret refuses to boot, and names the missing variable', () => {
+  assert.throws(
+    () => parseConfig(baseEnv({ PLANS_UPSTREAM_URL: 'http://openplate-billing:3000/plans' })),
+    /PLANS_UPSTREAM_SECRET/,
+  );
+});
+
+test('a plans secret with no URL refuses to boot too, because it is a typo far more often than an intention', () => {
+  assert.throws(() => parseConfig(baseEnv({ PLANS_UPSTREAM_SECRET: 'a-shared-secret' })), /PLANS_UPSTREAM_URL/);
+});
+
+test('the refusal never prints the secret it refused', () => {
+  // A message that quoted the value would put a shared secret in a startup
+  // log, which is the one place an operator pastes into an issue.
+  const secret = 'the-secret-that-must-not-be-logged';
+  assert.throws(
+    () => parseConfig(baseEnv({ PLANS_UPSTREAM_SECRET: secret })),
+    (error: Error) => !error.message.includes(secret),
+  );
+});
+
+test('a relative or misspelled plans URL is a boot failure, not an upstream that goes nowhere', () => {
+  assert.throws(
+    () => parseConfig(baseEnv({ PLANS_UPSTREAM_URL: 'openplate-billing/plans', PLANS_UPSTREAM_SECRET: 's' })),
+    /PLANS_UPSTREAM_URL/,
+  );
+});
+
+test('both set is the feature on, with the trailing slash stripped once', () => {
+  // THE CONTROL for the four refusals above: without it they would all pass
+  // against a parser that refused every plans configuration.
+  const config = parseConfig(
+    baseEnv({ PLANS_UPSTREAM_URL: 'http://openplate-billing:3000/plans/', PLANS_UPSTREAM_SECRET: 'a-shared-secret' }),
+  );
+
+  assert.deepEqual(config.plans, { baseUrl: 'http://openplate-billing:3000/plans', secret: 'a-shared-secret' });
 });

@@ -436,7 +436,9 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), and `ai` is `null` when no upstream key is configured.
+
+`plans` is a **boolean and not an optional promise**, which is the opposite of the choice `instance.feedback` makes below, on purpose. That field is a promise about what happens to a photograph, and an instance with nothing to promise omits it. This one promises nothing: it says only whether a door exists, which is the same kind of statement `mail` and `memberInvites` make, so `false` is the honest answer both for an instance with no biller and for a service built before the field existed.
 
 `memberInvites` is **descriptive, never a grant**, like everything else in this block. A client reads it to decide whether to draw an invite card at all; it never reads it to decide whether it may mint. `false` means `POST /v1/auth/invites` answers the ordinary unknown-path `404`, and `true` still leaves the lifetime cap, the re-invite rule and the throttle to the service.
 
@@ -1249,6 +1251,38 @@ When the address already holds an account, the service mails **that person** a s
 **The lifetime cap is five per account, ever, counted as rows.** Withdrawn and expired invitations count: the cap is on how many letters an account caused, not on how many worked. Exceeding it is `403 {"error":"member-invite-cap-reached"}`, and it is the one thing this endpoint says about the caller's own account, which is a fact about them and about nobody else. An administrator is exempt, on this route and on the admin one, which is what `invitesLeft: null` means (§5.15).
 
 `202` also carries **no token and no link**, unlike the admin mint. The caller is not the operator and must not hold a capability that creates an account.
+
+---
+
+### 5.22 `/v1/plans/*`: the pass-through to a biller
+
+**Present only when the operator configured a biller.** Without one the whole subtree answers the ordinary unknown-path `404`, to everybody, credentialed or not, and `instance.plans` is `false` on the handshake (§5.6). An implementation of this protocol MAY omit the subtree entirely; a client MUST read `instance.plans` before offering a plan door rather than probing the path.
+
+**Nothing behind this prefix is part of this protocol.** The routes, the request bodies and the response bodies belong to the biller, which is a separate service on its own release cycle. This document specifies only what the gateway does to a request on its way there and to an answer on its way back. That is deliberate: the alternative is a normative document that self-hosters cannot use, churning on somebody else's VAT calendar.
+
+Authenticated with the account's ordinary **access token** (§4.1). An anonymous caller gets the ordinary `401`.
+
+```
+POST /v1/plans/checkout
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{ "plan": "…" }
+```
+
+Five properties a conforming implementation MUST hold:
+
+1. **Only `GET` and `POST` are forwarded.** Every other method in the subtree is `405 {"error":"plans-method-not-allowed"}` with an `Allow` header, and never reaches the upstream. The gateway does not know what routes the biller has, so a general-purpose tunnel into a service holding subscription state is what a pass-everything proxy would be.
+2. **The forwarded headers are BUILT, never copied and overwritten.** They are exactly `X-Account-Id` from the resolved session, `X-Account-Email` read from the account row, `X-Plans-Secret` holding the shared secret, and the inbound `Content-Type`. A copy-then-overwrite forwards cookies and whatever the next client decides to send.
+3. **The caller's own credential is never forwarded.** This is the rule the whole arrangement rests on: forwarding the access token would make the biller a second place a stolen one works.
+4. **The account id is the session's, and the address is the row's.** A client that sends its own `X-Account-Id` or `X-Account-Email` cannot influence what the upstream reads. An `accountId` a browser can choose is an authorization bug, and a biller that read that account's address to prefill a checkout would be an address-disclosure oracle.
+5. **The answer passes through with its status and its JSON body, and only `Content-Type` comes back with it.** A `402` or a `409` from the biller is a real answer about the caller's plan and is relayed as one.
+
+An upstream that is unreachable, times out, answers something that is not JSON, or answers a body over the relay cap is `502` in the §4 envelope with a machine code: `plans-upstream-unreachable`, `plans-upstream-timeout` or `plans-upstream-invalid`. A request body over the subtree's own small cap is `413 {"error":"plans-request-too-large"}`, which is a different statement: the biller is fine, and what you sent will never be accepted. **No body is logged in either direction**; a refusal is logged with the status and the path and nothing else.
+
+The outbound call carries an explicit timeout. It is short, because every route here is a button somebody just pressed, and it exists as much to bound undici's hidden 300 second cap as to bound a slow biller.
+
+The operator configures `PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, **both or neither**. A URL with no secret is a refusal to boot rather than a silent downgrade: the secret is the only thing that tells the biller the account id it is reading came from a gateway that authenticated somebody.
 
 ## 6. Version handshake: required, and required to fail closed
 

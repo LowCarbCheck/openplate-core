@@ -137,7 +137,7 @@ before(async () => {
     trustProxy: false,
     mailer,
     mailConfigured: true,
-    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null },
+    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null, plans: false },
     admin: {
       token: ADMIN_TOKEN,
       metadata: createDrizzleAdminStore(database.db),

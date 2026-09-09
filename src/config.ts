@@ -15,6 +15,7 @@ import { isLogLevel, type LogLevel } from './logger.js';
 import { INSTANCE_LANGUAGES, isInstanceLanguage, type InstanceLanguage, type OperatorNotice } from './protocol.js';
 import type { HttpMailConfig } from './mail/mailer.js';
 import type { AiUpstreamConfig } from './ai/proxy.js';
+import type { PlansUpstreamConfig } from './server/plans-proxy.js';
 import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
 import { MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 
@@ -218,6 +219,23 @@ export interface ServiceConfig {
    */
   billingToken: string | null;
   /**
+   * The biller this instance forwards `/v1/plans/*` to, or `null` when no
+   * biller stands behind it, which is the default and what every self-hoster
+   * has (M213).
+   *
+   * `PLANS_UPSTREAM_URL` AND `PLANS_UPSTREAM_SECRET`, BOTH OR NEITHER. A URL
+   * with no secret is a boot refusal rather than a silent downgrade: the
+   * secret is the only thing that tells the biller this request came from a
+   * gateway that authenticated somebody, so forwarding without one would ask
+   * it to trust an unsigned account id.
+   *
+   * `null` IS NOT "MOUNTED BUT REFUSING". The whole `/v1/plans` subtree
+   * answers the ordinary unknown-path 404 there, to everybody, credentialed
+   * or not (`server/create-app.ts`), for the reason `adminToken`,
+   * `sharingEnabled` and `feedbackEnabled` do the same.
+   */
+  plans: PlansUpstreamConfig | null;
+  /**
    * Whether this instance implements ADR-0002's clinician sharing.
    *
    * `false` — the default, and what every deployment gets until an operator
@@ -326,6 +344,58 @@ function parseBillingToken(env: NodeJS.ProcessEnv): string | null {
     );
   }
   return raw;
+}
+
+/** The two names that make up the plans block. Listed once so every message below can name both. */
+const PLANS_VARIABLES = ['PLANS_UPSTREAM_URL', 'PLANS_UPSTREAM_SECRET'] as const;
+
+/**
+ * `PLANS_UPSTREAM_URL` + `PLANS_UPSTREAM_SECRET`, both or neither, exactly as
+ * the mail and AI blocks are.
+ *
+ * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
+ * and never a value: a shared secret in a startup log is a shared secret in a
+ * log. A URL with no secret is the dangerous half, and it is the reason this
+ * is a refusal rather than a downgrade to off: the secret is the only thing
+ * that tells the biller the account id it is reading came from a gateway that
+ * authenticated somebody. A secret with no URL is refused too, because it is a
+ * typo far more often than an intention.
+ *
+ * NEITHER SET IS THE DEFAULT AND IT IS NOT A MISCONFIGURATION. It means no
+ * biller reaches this instance, and the whole subtree answers the ordinary
+ * unknown-path 404.
+ */
+function parsePlans(env: NodeJS.ProcessEnv): PlansUpstreamConfig | null {
+  const present = PLANS_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = PLANS_VARIABLES.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete plans configuration: ${missing.join(', ')} is not set. ` +
+        `${PLANS_VARIABLES.join(' and ')} are all-or-nothing, set both, or neither and this instance offers no plans.`,
+    );
+  }
+
+  const baseUrl = env.PLANS_UPSTREAM_URL?.trim() ?? '';
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(`Invalid PLANS_UPSTREAM_URL: expected an absolute http(s) URL, got "${baseUrl}"`);
+  }
+  if (!NOTICE_URL_SCHEMES.includes(parsed.protocol)) {
+    throw new Error(
+      `Invalid PLANS_UPSTREAM_URL scheme "${parsed.protocol}": only ${NOTICE_URL_SCHEMES.join('/')} are accepted`,
+    );
+  }
+
+  return {
+    // Trailing slashes stripped once, here, so the proxy can concatenate a
+    // path without deciding whether to.
+    baseUrl: baseUrl.replace(/\/+$/, ''),
+    secret: env.PLANS_UPSTREAM_SECRET?.trim() ?? '',
+  };
 }
 
 /**
@@ -782,6 +852,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     trustProxy: parseTrustProxy(env),
     adminToken: parseAdminToken(env),
     billingToken: parseBillingToken(env),
+    plans: parsePlans(env),
     sharingEnabled: parseBoolean(env, 'SYNC_SHARING', false),
     researchEnabled: parseBoolean(env, 'SYNC_RESEARCH', false),
     feedbackEnabled: parseBoolean(env, 'SYNC_FEEDBACK', false),

@@ -58,6 +58,15 @@
  * users' food that the operator can look at. See
  * `docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md`.
  *
+ * THE PLANS SUBTREE IS THE SAME BARGAIN, AND ITS TERMINATOR IS THE STRICTEST
+ * ABOUT PLACEMENT. `PLANS_UPSTREAM_URL` unset means the whole `/v1/plans`
+ * subtree answers the ordinary unknown-path 404, to everybody, and the mount
+ * sits AHEAD of the bearer middleware below. Unlike the feedback tree, this
+ * one carries its own `requireAuth` when it is configured, so a terminator
+ * mounted lower down would be standing behind a gate and would answer 401 to
+ * an anonymous probe. A self-hoster who never configured a biller cannot tell
+ * this build has one. See `server/plans-proxy.ts`.
+ *
  * THE OPERATOR'S SIDE OF THAT TREE IS `/v1/admin/feedback`, and it is gated
  * TWICE: by the admin middleware every other operator route is behind, and by
  * `SYNC_FEEDBACK` again. The second gate is a terminator inside that router
@@ -68,7 +77,7 @@
  */
 import express from 'express';
 import type { Express } from 'express';
-import { ENVELOPE_VERSION, PROTOCOL_VERSION, SYNC_API_PREFIX } from '../protocol.js';
+import { ENVELOPE_VERSION, PLANS_API_PREFIX, PROTOCOL_VERSION, SYNC_API_PREFIX } from '../protocol.js';
 import type { InstanceInfo, OperatorNotice, ProtocolHandshake } from '../protocol.js';
 import type { SyncResearchStore, SyncRotationStore, SyncShareStore, SyncStorageAdapter } from '../contract-types.js';
 import type { AuthContext } from '../accounts/auth-handlers.js';
@@ -83,6 +92,7 @@ import { RESEARCH_API_PREFIXES, registerResearchRoutes } from './research-routes
 import { registerRotateDekRoute } from './rotate-dek-route.js';
 import { CHAT_COMPLETIONS_PATH, registerAiRoute } from '../ai/register-ai-route.js';
 import { FEEDBACK_API_PREFIX, registerFeedbackRoute } from '../feedback/register-feedback-route.js';
+import { registerPlansRoutes, type PlansUpstreamConfig } from './plans-proxy.js';
 import type { FeedbackAdminStore } from '../feedback/feedback-admin-store.js';
 import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
 import type { FeedbackStore } from '../feedback/feedback-store.js';
@@ -242,6 +252,13 @@ export interface CreateAppOptions {
    * before you default it to anything but `null`.
    */
   feedback?: FeedbackSurfaceOptions | null;
+  /**
+   * The biller `/v1/plans/*` is forwarded to, or `null`/absent for "no biller
+   * stands behind this instance", the default, and what every deployment
+   * without `PLANS_UPSTREAM_URL` gets. Absence is a 404 on the whole subtree,
+   * not a mounted-but-refusing surface.
+   */
+  plans?: PlansUpstreamConfig | null;
 }
 
 export function createApp(options: CreateAppOptions): Express {
@@ -326,6 +343,25 @@ export function createApp(options: CreateAppOptions): Express {
     for (const prefix of RESEARCH_API_PREFIXES) {
       app.use(prefix, handleNotFound);
     }
+  }
+
+  // THE PLANS TERMINATOR, AND WHY IT IS UP HERE WITH THE OTHER TWO.
+  //
+  // `PLANS_UPSTREAM_URL` is unset on every deployment that has not
+  // deliberately pointed this service at a biller. The whole `/v1/plans`
+  // subtree then answers the ordinary unknown-path 404, to everybody,
+  // credentialed or not.
+  //
+  // The ORDER is load-bearing here for a reason the feedback terminator does
+  // not share. `/v1/plans` sits OUTSIDE `SYNC_API_PREFIX`, so no bearer
+  // middleware reaches it by inheritance; but the configured subtree mounts
+  // its own `requireAuth` further down, and a terminator placed after that
+  // mount would sit behind a gate and answer 401 to an anonymous probe.
+  // Ahead of it, an unconfigured instance stays indistinguishable from one
+  // where the feature was never written.
+  const plans = options.plans ?? null;
+  if (plans === null) {
+    app.use(PLANS_API_PREFIX, handleNotFound);
   }
 
   // Every blob/key-record route is behind the bearer gate. `registerSyncRoutes`
@@ -433,6 +469,21 @@ export function createApp(options: CreateAppOptions): Express {
       dailyLimit: feedback.dailyLimit,
       maxRequestBytes: feedback.maxRequestBytes,
       now,
+    });
+  }
+
+  // THE PLANS PASS-THROUGH, when a biller stands behind this instance. It is
+  // handed the account store because `X-Account-Email` is read from the row
+  // and never from the request, and the bearer middleware because the subtree
+  // is authenticated: an anonymous caller here gets the ordinary 401 the rest
+  // of the authenticated surface gives. The unconfigured case was pinned to a
+  // 404 above, ahead of everything. See `server/plans-proxy.ts`.
+  if (plans !== null) {
+    registerPlansRoutes(app, {
+      upstream: plans,
+      requireAuth,
+      accounts: options.authContext.store,
+      logger: options.logger,
     });
   }
 

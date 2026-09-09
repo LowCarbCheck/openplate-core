@@ -63,7 +63,14 @@ after(async () => {
  * field is added by the same expression the service uses, or not added at all.
  */
 function instanceInfo({ feedbackEnabled }: { feedbackEnabled: boolean }): InstanceInfo {
-  const instance: InstanceInfo = { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null };
+  const instance: InstanceInfo = {
+    name: 'openplate',
+    language: 'en',
+    mail: false,
+    memberInvites: false,
+    ai: null,
+    plans: false,
+  };
   if (feedbackEnabled) instance.feedback = feedbackRetentionAdvertisement();
   return instance;
 }
@@ -166,7 +173,7 @@ test('an instance that accepts no reports advertises no window at all', async ()
   assert.ok(!('feedback' in instance), 'an instance with the feature off must add no key to the healthcheck body');
   // And the rest of the handshake is untouched: additive or nothing.
   assert.ok(isProtocolHandshake(body), 'the body must still decode as a handshake');
-  assert.deepEqual(instance, { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null });
+  assert.deepEqual(instance, { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans: false });
 });
 
 test('the service wires the advertisement from the retention module, under the feedback gate', () => {

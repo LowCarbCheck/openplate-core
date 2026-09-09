@@ -180,6 +180,11 @@ async function main(): Promise<void> {
     // learns from the 503 the proxy answers. `GET /v1/admin/stats` reports it
     // to the operator instead, behind the admin credential.
     ai: ai === null ? null : { model: config.aiAdvertisedModel },
+    // DESCRIPTIVE, NEVER A GRANT, and built from the SAME config binding that
+    // decides whether the subtree is mounted at all, so an instance cannot
+    // advertise a door it does not have. `false` means `/v1/plans/*` answers
+    // the ordinary unknown-path 404 here, and a client draws no plan door.
+    plans: config.plans !== null,
   };
 
   // `null` unless SYNC_SHARING is on, which leaves both share subtrees
@@ -234,6 +239,10 @@ async function main(): Promise<void> {
     mailConfigured: config.mail !== null,
     admin,
     ai,
+    // `null` unless PLANS_UPSTREAM_URL and PLANS_UPSTREAM_SECRET are both set,
+    // which leaves the whole `/v1/plans` subtree answering the ordinary
+    // unknown-path 404, see `server/create-app.ts`.
+    plans: config.plans,
     shares,
     research,
     feedback,
@@ -268,6 +277,9 @@ async function main(): Promise<void> {
       research: research !== null,
       feedback: feedback !== null,
       memberInvites: config.memberInvites !== null,
+      // Whether a biller stands behind this instance, never its URL and never
+      // its shared secret.
+      plans: config.plans !== null,
     });
   });
 
