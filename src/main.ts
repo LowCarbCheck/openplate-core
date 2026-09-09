@@ -109,6 +109,10 @@ async function main(): Promise<void> {
   // until an admin account signs in — see `server/admin-auth.ts`.
   const admin = {
     token: config.adminToken,
+    // The biller's scoped credential (M213). `null` on every instance that has
+    // not set `BILLING_TOKEN`, which means the third principal does not exist
+    // there and its three routes are the operator's alone.
+    billingToken: config.billingToken,
     metadata: createDrizzleAdminStore(database.db),
     invites,
     // The same pair the mailer builds its links from, so an admin response and
@@ -256,6 +260,8 @@ async function main(): Promise<void> {
       instanceLanguage: config.instanceLanguage,
       // Whether a break-glass credential exists on this instance, never its value.
       adminToken: config.adminToken !== null,
+      // Whether a biller reaches this instance, never its credential.
+      billingToken: config.billingToken !== null,
       mail: config.mail !== null,
       ai: ai !== null,
       sharing: shares !== null,

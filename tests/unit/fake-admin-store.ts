@@ -14,6 +14,8 @@ import type {
   AdminAccountSummary,
   AdminMetadataStore,
   AdminStats,
+  ExpiringAllowance,
+  ExpiringAllowancePage,
   ListAccountsInput,
 } from '../../src/admin/admin-store.js';
 import type { AccountRole, SyncKeyRecordKind } from '../../src/protocol.js';
@@ -51,6 +53,15 @@ export interface AdminSeedInput {
 
 export interface FakeAdminStore extends AdminMetadataStore {
   seed(input: AdminSeedInput): AdminSeedSecrets;
+  /**
+   * Test-only: drop ONE account, which is how a test spells out what
+   * `AccountStore.deleteAccount` does to the row this store reads.
+   *
+   * The real pair is one `accounts` table and one cascade, so an erasure is
+   * invisible to the metadata store the moment it happens. Two fakes cannot
+   * share a row, so a test that erases has to say so here as well.
+   */
+  forget(accountId: number): void;
   /** Test-only: forget everything, so one process-wide server can serve many cases. */
   clear(): void;
 }
@@ -99,6 +110,12 @@ export function createFakeAdminStore(): FakeAdminStore {
       return seeded;
     },
 
+    forget(accountId: number): void {
+      summaries.delete(accountId);
+      secrets.delete(accountId);
+      activity.delete(accountId);
+    },
+
     clear(): void {
       summaries.clear();
       secrets.clear();
@@ -108,6 +125,23 @@ export function createFakeAdminStore(): FakeAdminStore {
     async listAccounts(input: ListAccountsInput): Promise<AdminAccountPage> {
       const ordered = [...summaries.values()].toSorted((left, right) => left.id - right.id);
       return { accounts: ordered.slice(input.offset, input.offset + input.limit), total: ordered.length };
+    },
+
+    async listExpiringAllowances(input: {
+      after: Date;
+      limit: number;
+      offset: number;
+    }): Promise<ExpiringAllowancePage> {
+      // The PREDICATE is applied here, exactly as the real query applies it: a
+      // fake that returned every seeded account would let a route that forgot
+      // the future-date filter pass.
+      const future: ExpiringAllowance[] = [];
+      for (const account of [...summaries.values()].toSorted((left, right) => left.id - right.id)) {
+        const expiry = account.allowanceExpiresAt;
+        if (expiry === null || expiry.getTime() <= input.after.getTime()) continue;
+        future.push({ id: account.id, allowanceExpiresAt: expiry });
+      }
+      return { accounts: future.slice(input.offset, input.offset + input.limit), total: future.length };
     },
 
     async getAccount(input: { accountId: number; day: string }): Promise<AdminAccountSummary | null> {

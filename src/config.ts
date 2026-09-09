@@ -201,6 +201,23 @@ export interface ServiceConfig {
    */
   adminToken: string | null;
   /**
+   * The biller's scoped service credential, or `null` when no biller reaches
+   * this instance, which is the default, and what every deployment and every
+   * self-hoster has until somebody deliberately sets the variable (M213).
+   *
+   * IT IS NOT A SECOND `ADMIN_TOKEN`, and the difference is the point. This
+   * value reaches three routes and two fields:
+   * `server/service-principal-scope.ts` is the whole policy. It cannot list
+   * the accounts on the instance, cannot read an address, cannot suspend,
+   * cannot change a role, cannot erase and cannot open a reported
+   * photograph. Setting BOTH variables to the same string would therefore
+   * widen nothing; setting this one alone is the shape a paid instance wants.
+   *
+   * `null` behaves exactly as `adminToken`'s does: with both unset the whole
+   * `/v1/admin` tree answers the ordinary unknown-path `404` to everybody.
+   */
+  billingToken: string | null;
+  /**
    * Whether this instance implements ADR-0002's clinician sharing.
    *
    * `false` — the default, and what every deployment gets until an operator
@@ -284,6 +301,28 @@ function parseAdminToken(env: NodeJS.ProcessEnv): string | null {
   if (raw.length < MIN_ADMIN_TOKEN_LENGTH) {
     throw new Error(
       `ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters — generate it, do not choose it (see .env.example)`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * `BILLING_TOKEN` is optional, and an absent value is the default rather than
+ * a misconfiguration: it means no biller reaches this instance and the service
+ * principal does not exist here at all.
+ *
+ * THE SAME MINIMUM LENGTH AS `ADMIN_TOKEN`, and the same refusal shape. A
+ * shorter reason would be that this credential can only move two numbers, and
+ * it is not good enough: those two numbers are what somebody pays for, so a
+ * guessable value here is a free allowance for anybody who finds the host.
+ * Generate it, do not choose it.
+ */
+function parseBillingToken(env: NodeJS.ProcessEnv): string | null {
+  const raw = env.BILLING_TOKEN?.trim();
+  if (raw === undefined || raw === '') return null;
+  if (raw.length < MIN_ADMIN_TOKEN_LENGTH) {
+    throw new Error(
+      `BILLING_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters, generate it, do not choose it (see .env.example)`,
     );
   }
   return raw;
@@ -742,6 +781,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     aiMaxRequestBytes: parsePositiveInteger(env, 'AI_MAX_REQUEST_BYTES', DEFAULT_AI_MAX_REQUEST_BYTES),
     trustProxy: parseTrustProxy(env),
     adminToken: parseAdminToken(env),
+    billingToken: parseBillingToken(env),
     sharingEnabled: parseBoolean(env, 'SYNC_SHARING', false),
     researchEnabled: parseBoolean(env, 'SYNC_RESEARCH', false),
     feedbackEnabled: parseBoolean(env, 'SYNC_FEEDBACK', false),

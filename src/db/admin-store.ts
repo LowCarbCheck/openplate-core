@@ -36,6 +36,8 @@ import type {
   AdminBlobSummary,
   AdminMetadataStore,
   AdminStats,
+  ExpiringAllowance,
+  ExpiringAllowancePage,
   ListAccountsInput,
 } from '../admin/admin-store.js';
 import type { AccountActivityCount, ActivityDay } from '../admin/account-activity.js';
@@ -215,6 +217,41 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       const [totals] = await db.select({ total: count() }).from(accounts);
 
       return { accounts: await summarize(identities, input.day), total: totals?.total ?? 0 };
+    },
+
+    async listExpiringAllowances(input: {
+      after: Date;
+      limit: number;
+      offset: number;
+    }): Promise<ExpiringAllowancePage> {
+      // TWO COLUMNS, and deliberately not `IDENTITY_COLUMNS`. The caller is
+      // the biller's reconciliation (M213): it compares dates against its own
+      // subscriptions, so the address, the name and the role are material it
+      // has no use for and must never hold. See `admin/admin-store.ts`.
+      const rows = await db
+        .select({ id: accounts.id, allowanceExpiresAt: accounts.allowanceExpiresAt })
+        .from(accounts)
+        .where(gt(accounts.allowanceExpiresAt, input.after))
+        // A stable order, for the reason `listAccounts` has one: two pages of
+        // the same list can otherwise show one account twice and miss another,
+        // which in a reconciliation reads as a subscription with no account.
+        .orderBy(accounts.id)
+        .limit(input.limit)
+        .offset(input.offset);
+
+      const [totals] = await db
+        .select({ total: count() })
+        .from(accounts)
+        .where(gt(accounts.allowanceExpiresAt, input.after));
+
+      const page: ExpiringAllowance[] = [];
+      for (const row of rows) {
+        // `allowance_expires_at` is nullable, so drizzle types it as such even
+        // though the `>` above cannot match a NULL.
+        if (row.allowanceExpiresAt === null) continue;
+        page.push({ id: row.id, allowanceExpiresAt: row.allowanceExpiresAt });
+      }
+      return { accounts: page, total: totals?.total ?? 0 };
     },
 
     async getAccount(input: { accountId: number; day: string }): Promise<AdminAccountSummary | null> {

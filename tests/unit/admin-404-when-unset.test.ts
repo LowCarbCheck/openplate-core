@@ -16,6 +16,15 @@
  * body — including for a caller who presents a perfectly well-formed bearer
  * token, which is the case a "did we forget to mount auth" bug would sail
  * through.
+ *
+ * M213 ADDS A SECOND VARIABLE TO THE SAME RULE. `BILLING_TOKEN` is a third
+ * credential on this tree, and the bargain is unchanged: with NEITHER token
+ * configured the whole subtree is still the ordinary unknown-path 404, to a
+ * caller presenting a perfectly well-formed billing token as much as to
+ * anybody. A self-hoster who configured nothing gained no surface when the
+ * feature shipped. The control for that is at the bottom of this file: with
+ * `BILLING_TOKEN` set and a WRONG value presented the same paths answer 401,
+ * so the 404 above is the absence of a credential and not a broken mount.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,6 +36,8 @@ let harness: AdminHarness;
 const ADMIN_PATHS: readonly { method: string; path: string }[] = [
   { method: 'GET', path: '/v1/admin/accounts' },
   { method: 'GET', path: '/v1/admin/accounts/1' },
+  { method: 'PATCH', path: '/v1/admin/accounts/1' },
+  { method: 'GET', path: '/v1/admin/accounts/expiring' },
   { method: 'DELETE', path: '/v1/admin/accounts/1' },
   { method: 'GET', path: '/v1/admin/stats' },
   { method: 'GET', path: '/v1/admin/invites' },
@@ -39,9 +50,12 @@ const ADMIN_PATHS: readonly { method: string; path: string }[] = [
 /** A syntactically perfect credential. It must buy nothing, because there is nothing to buy. */
 const VALID_LOOKING_TOKEN = 'a'.repeat(48);
 
+/** What a billing service would present. It must buy nothing either, because nothing was configured. */
+const VALID_LOOKING_BILLING_TOKEN = 'billing-0c48e17a9d2b365fe0a7c134';
+
 before(async () => {
-  harness = await startAdminHarness({ adminToken: null });
-  harness.admin.seed({ id: 1, email: 'seeded@example.org' });
+  harness = await startAdminHarness({ adminToken: null, billingToken: null });
+  harness.admin.seed({ id: 1, email: 'seeded@example.org', allowanceExpiresAt: new Date('2099-01-01T00:00:00.000Z') });
 });
 
 after(async () => {
@@ -80,6 +94,51 @@ test('an admin path is byte-for-byte the answer an unknown path gives', async ()
     // DELETE answers with no body on a 204 elsewhere; here every case is a 404
     // and must carry the identical body.
     assert.equal(body, unknownBody, `${route.path} body`);
+  }
+});
+
+test('a well-formed billing token buys nothing either, because BILLING_TOKEN is unset', async () => {
+  for (const route of ADMIN_PATHS) {
+    const response = await harness.request({ ...route, token: VALID_LOOKING_BILLING_TOKEN });
+    assert.equal(
+      response.status,
+      404,
+      `${route.method} ${route.path} with a billing token must be 404, not ${response.status}`,
+    );
+  }
+});
+
+test('with BILLING_TOKEN set, a wrong value is 401 and the 404 above was not vacuous', async () => {
+  // THE CONTROL FOR THIS WHOLE FILE'S NEW HALF. Without it, every assertion
+  // above would still pass on a service that had lost the ability to
+  // authenticate a billing credential at all.
+  const configured = await startAdminHarness({ adminToken: null, billingToken: VALID_LOOKING_BILLING_TOKEN });
+  try {
+    configured.admin.seed({ id: 1, email: 'seeded@example.org' });
+
+    const wrong = await configured.request({
+      method: 'GET',
+      path: '/v1/admin/accounts/1',
+      token: 'billing-0c48e17a9d2b365fe0a7c135',
+    });
+    assert.equal(wrong.status, 401, 'a configured instance answers 401 to a wrong value, never 404');
+
+    // And the log line carries no part of what was presented.
+    const rejections = configured.logLines.filter((line) => line.message === 'Admin request rejected');
+    assert.ok(rejections.length > 0, 'a configured instance logs the failure');
+    for (const line of rejections) {
+      const serialized = JSON.stringify(line);
+      assert.ok(!serialized.includes('0c48e17a'), 'no part of the presented value may reach the log');
+    }
+
+    const right = await configured.request({
+      method: 'GET',
+      path: '/v1/admin/accounts/1',
+      token: VALID_LOOKING_BILLING_TOKEN,
+    });
+    assert.equal(right.status, 200, 'and the right value reaches the one route it may');
+  } finally {
+    await configured.close();
   }
 });
 

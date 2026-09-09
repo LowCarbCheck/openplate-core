@@ -29,6 +29,12 @@ import { createFakeRotationStore } from './fake-rotation-store.js';
 import { createFakeAdminStore, type FakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore, type FakeInviteStore } from './fake-invite-store.js';
 import type { FakeAccountStore } from './fake-account-store.js';
+import {
+  createFakeFeedbackAdminStore,
+  createFakeFeedbackImageStore,
+  createFakeFeedbackStore,
+} from './feedback-harness.js';
+import type { FeedbackReportDetail } from '../../src/feedback/feedback-admin-store.js';
 
 /** One emitted log line, kept whole so a test can assert on the message AND the fields. */
 export interface CapturedLogLine {
@@ -75,6 +81,23 @@ export interface AdminHarness {
 export interface StartAdminHarnessOptions {
   /** `null` means "this instance has no static break-glass credential" — the default state of every deployment. */
   adminToken: string | null;
+  /**
+   * The biller's scoped service credential (M213), or absent for the instance
+   * every deployment boots as: no `BILLING_TOKEN`, and no service principal
+   * that any value could produce.
+   */
+  billingToken?: string | null;
+  /**
+   * The operator's reported-estimate surface, on or off. `false` is what every
+   * deployment boots as, and it leaves `/v1/admin/feedback*` answering the
+   * ordinary unknown-path 404 to an authenticated administrator.
+   *
+   * A SCOPE TEST HAS TO TURN IT ON. Proving that the service principal is
+   * refused a route that answers 404 to everybody would prove nothing; the
+   * four feedback routes have to be live for their 403 to mean the scope
+   * stopped them.
+   */
+  feedbackEnabled?: boolean;
   /** Where a join link points. Absent means this instance builds none, and an invite comes back with a raw token. */
   links?: { clientBaseUrl: string; serverPublicUrl: string } | null;
   /**
@@ -121,6 +144,8 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
   const inviteStore = createFakeInviteStore();
   const capturing = createCapturingLogger();
   const deletedAccountIds: number[] = [];
+  /** Shared by the two feedback fakes below, exactly as `feedback-harness.ts` shares it. Empty unless one is built. */
+  const feedbackRows: FeedbackReportDetail[] = [];
 
   /**
    * The account store the app is given, wrapped so a test can prove the admin
@@ -146,10 +171,21 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
     now: fixture.now,
     admin: {
       token: options.adminToken,
+      billingToken: options.billingToken ?? null,
       metadata: adminStore,
       invites: inviteStore,
       links: options.links ?? null,
     },
+    feedback:
+      options.feedbackEnabled === true
+        ? {
+            reports: createFakeFeedbackStore(feedbackRows),
+            review: createFakeFeedbackAdminStore(feedbackRows),
+            images: createFakeFeedbackImageStore(),
+            dailyLimit: 5,
+            maxRequestBytes: 8_000_000,
+          }
+        : null,
     ai:
       options.aiInstanceDailyLimit === undefined
         ? null

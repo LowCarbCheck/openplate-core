@@ -1069,17 +1069,22 @@ Bearer`:
    every account is locked out.
 2. **An account whose `role` is `admin`**, using its own access token. This is
    what puts the console in the app rather than in a shell.
+3. **A scoped service token** (`BILLING_TOKEN`). It is a
+   THIRD principal, not a second copy of the first: it reaches three routes and
+   two fields and is refused everywhere else. See "The billing principal"
+   below.
 
-With **neither** configured nor matching, the whole subtree answers the same
-`404` any unknown path does, to everybody. An instance that never configured
-an operator token is indistinguishable from one built before the feature
-existed. A `401` there would announce that a credential exists and is merely
-locked.
+With **none** configured nor matching, the whole subtree answers the same
+`404` any unknown path does, to everybody. An instance that configured neither
+token is indistinguishable from one built before the feature existed. A `401`
+there would announce that a credential exists and is merely locked. Setting
+either token turns that `404` into the `401` a wrong value gets.
 
 | Endpoint                                | Does                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------ |
 | `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling) |
 | `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
+| `GET /v1/admin/accounts/expiring`        | A page of `{ id, allowanceExpiresAt }` for accounts whose allowance ends in the future, plus `total` |
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
 | `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
 | `GET /v1/admin/activity`                 | The same day-by-day strip for a whole PAGE of accounts, in the list's order |
@@ -1174,6 +1179,42 @@ without an operator action or a cron entry. Deleting an account removes its
 counters and its `lastSeenAt` in the same statement as the rest of the erasure,
 through `ON DELETE CASCADE`. Ninety is one number in one place: it is what the
 sweep prunes at and the longest window the endpoint above can answer.
+
+**The billing principal (`BILLING_TOKEN`).** A payment service needs to move
+two numbers on one account: the end of an allowance, and the number of AI
+requests a day it buys. Giving it the operator token would give it every
+address on the instance, the erase button and the reported photographs, so the
+credential is scoped at the door instead. It is optional, unset by default, and
+carries the same 24-character minimum the operator token does.
+
+| Endpoint                         | The billing principal may                                             |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `GET /v1/admin/accounts/expiring` | Read `{ id, allowanceExpiresAt }` for accounts whose end date is in the future, paged with the same `limit`, `offset` and `400` sentence as every other paged endpoint here |
+| `GET /v1/admin/accounts/:id`      | Read `{ id, allowanceExpiresAt, dailyAiLimit }` for that one account   |
+| `PATCH /v1/admin/accounts/:id`    | Write `allowanceExpiresAt` and `dailyAiLimit`, and nothing else        |
+
+- **Every other route in this section answers `403` with
+  `{"error": "service-scope"}`**, including the four feedback routes and
+  including any route added after this was written. The refusal happens at the
+  mount, before any handler runs and before any row is read, so it is not an
+  oracle for whether an account exists.
+- **A `PATCH` body naming any other field is `403` with
+  `{"error": "service-scope-field"}`, and nothing is written**, not even the
+  allowed fields beside it. A silent drop would let a defect in the billing
+  service read as success.
+- `dailyAiLimit` is bounded exactly as it is for an operator. The credential
+  relaxes no validation.
+- **The two reads are projections and never an `AccountView`.** No address, no
+  display name, no role, no suspension, no usage, no blob. `GET
+  /v1/admin/accounts/expiring` selects two columns in the query rather than
+  filtering a row afterwards.
+- **A deleted account and an unknown id are the same `404`.** Erasure here is a
+  cascade and not a tombstone (§9), so there is nothing left to tell them apart
+  with, and a `deletedAt` this route could report would be a record of a person
+  kept after the erasure that removed them. Both mean "stop charging".
+- The principal has no self, so the self-change rule above cannot apply to it:
+  it cannot suspend, demote or delete anybody, including itself, because none
+  of those routes are reachable.
 
 `AccountView` is the same shape the account's own `GET /v1/auth/account`
 returns (§5.15), `invitesLeft` included and computed the same way, plus

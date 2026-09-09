@@ -138,8 +138,43 @@ export interface ListAccountsInput {
   day: string;
 }
 
+/**
+ * One account with an AI allowance that has not run out yet: its id and the
+ * instant it ends, and NOTHING else.
+ *
+ * A SEPARATE SHAPE RATHER THAN AN `AdminAccountSummary`, and that is the whole
+ * reason it exists. This is what the biller's nightly reconciliation reads
+ * (M213), and a reconciliation that received summaries would receive every
+ * address on the instance to answer a question about dates. `allowanceExpiresAt`
+ * is non-nullable here because an account without one is not in the answer.
+ */
+export interface ExpiringAllowance {
+  id: number;
+  allowanceExpiresAt: Date;
+}
+
+/** One page of them, plus the total the page was taken from, the shape `AdminAccountPage` has, for the same reason. */
+export interface ExpiringAllowancePage {
+  accounts: ExpiringAllowance[];
+  total: number;
+}
+
 export interface AdminMetadataStore {
   listAccounts(input: ListAccountsInput): Promise<AdminAccountPage>;
+  /**
+   * Accounts whose `allowanceExpiresAt` is strictly after `after`, by id,
+   * paged.
+   *
+   * IT PROJECTS TWO COLUMNS IN THE QUERY, not in a mapper afterwards. The
+   * caller is a billing service that must not learn who anybody is, and a
+   * value that was never read out of Postgres cannot be leaked by a later edit
+   * to a view function. Same discipline, and the same reason, as the module
+   * header's rule about the columns this store never selects.
+   *
+   * `after` is the caller's clock, injected like every other one here, so a
+   * test can decide what "in the future" means.
+   */
+  listExpiringAllowances(input: { after: Date; limit: number; offset: number }): Promise<ExpiringAllowancePage>;
   getAccount(input: { accountId: number; day: string }): Promise<AdminAccountSummary | null>;
   /**
    * One account's AI spend per UTC day across an inclusive day range, for the

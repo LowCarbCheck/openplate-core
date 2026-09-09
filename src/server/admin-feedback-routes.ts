@@ -117,12 +117,12 @@ function sendNotFound(res: Response): void {
 }
 
 /**
- * Which of the two admin credentials was presented. `unknown` is unreachable
+ * Which admin credential was presented. `unknown` is unreachable
  * through a mounted route (the middleware attaches a principal before any
  * handler runs) and exists so an audit line can never be silently absent: a
  * handler reached some other way logs "somebody" rather than nothing.
  */
-type AdminCredentialKind = 'static-token' | 'account' | 'unknown';
+type AdminCredentialKind = 'static-token' | 'account' | 'service' | 'unknown';
 
 /** The two fields every audit line below carries. Named, so both call sites emit the same shape. */
 interface AdminAuditFields {
@@ -136,6 +136,11 @@ function describeAdmin(req: Request): AdminAuditFields {
   const principal = getAdminPrincipal(req);
   if (principal === null) return { credential: 'unknown', adminAccountId: null };
   if (principal.kind === 'static') return { credential: 'static-token', adminAccountId: null };
+  // UNREACHABLE THROUGH A MOUNTED ROUTE, and named anyway for the reason
+  // `unknown` is: the biller's credential is refused on this whole family by
+  // `enforceServicePrincipalScope`, which runs before this router, so a line
+  // saying `service` here would be evidence that the scope stopped working.
+  if (principal.kind === 'service') return { credential: 'service', adminAccountId: null };
   return { credential: 'account', adminAccountId: principal.accountId };
 }
 

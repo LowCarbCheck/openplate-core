@@ -1,5 +1,5 @@
 /**
- * Authentication for the admin API — TWO credentials, one gate.
+ * Authentication for the admin API: THREE credentials, one gate.
  *
  * 1. **The static `ADMIN_TOKEN`**, the operator's break-glass credential. It
  *    belongs to whoever runs the container, is not an account, and works when
@@ -9,6 +9,14 @@
  *    in the client at `/admin`, behind the same sign-in as everything else, so
  *    the person using it holds a session and not a shell variable. `role` is
  *    `'admin'` and the account is not suspended, or it is not a credential.
+ * 3. **The biller's `BILLING_TOKEN`** (M213), a SERVICE credential that is
+ *    scoped at this door rather than trusted behind it. It authenticates the
+ *    same way the static token does and then reaches three routes and two
+ *    fields, and nothing else: `server/service-principal-scope.ts` is the
+ *    whole policy, and `docs/adr/0001-...` still governs what those routes may
+ *    return. It exists because a biller holding credential 1 could list every
+ *    address on the instance, suspend somebody and erase somebody, in order to
+ *    move two numbers on one account.
  *
  * SAME TIMING DISCIPLINE AS `bearer-auth.ts`, FOR A BIGGER PRIZE. One admin
  * credential lists every account on the instance and erases any of them, so it
@@ -37,12 +45,13 @@
  * mount-time branch can know that. The indistinguishability ADR-0001 bought is
  * preserved here instead:
  *
- *  - No `ADMIN_TOKEN` configured, and the bearer is not an admin account →
- *    the ordinary unknown-path 404, exactly as an unmounted tree answered.
- *    A prober on a fresh deployment cannot tell this service has an admin
- *    surface at all.
- *  - `ADMIN_TOKEN` configured, and the credential is wrong → 401, exactly as
- *    a mounted tree answered before. The operator who set the variable already
+ *  - NEITHER `ADMIN_TOKEN` NOR `BILLING_TOKEN` configured, and the bearer is
+ *    not an admin account → the ordinary unknown-path 404, exactly as an
+ *    unmounted tree answered. A prober on a fresh deployment cannot tell this
+ *    service has an admin surface at all, and a self-hoster who configured
+ *    neither variable gained no surface when M213 added the second one.
+ *  - EITHER token configured, and the credential is wrong → 401, exactly as
+ *    a mounted tree answered before. The operator who set a variable already
  *    knows the surface is there.
  *  - A suspended admin account → `403 account-suspended`, not 401 and not 404.
  *    They have proved who they are; the honest answer is why the door is shut.
@@ -77,8 +86,15 @@ const REJECTION_MESSAGE = 'admin authentication required';
  * `static` is the operator's break-glass token, which belongs to whoever runs
  * the container and is not an account: it has no self, so no self-change guard
  * applies to it.
+ *
+ * `service` is the biller's `BILLING_TOKEN` (M213). It has no self either, and
+ * unlike the other two it cannot reach a route that would let the guard
+ * matter: it can neither suspend, demote nor delete, so the guard is not
+ * exempted for it, it is UNREACHABLE by it. See
+ * `server/service-principal-scope.ts`, which is what stops it, and note that
+ * a `switch` over this union must now handle three members.
  */
-export type AdminPrincipal = { kind: 'static' } | { kind: 'account'; accountId: number };
+export type AdminPrincipal = { kind: 'static' } | { kind: 'account'; accountId: number } | { kind: 'service' };
 
 const principalsByRequest = new WeakMap<Request, AdminPrincipal>();
 
@@ -94,10 +110,18 @@ function digest(value: string): Buffer {
 export interface CreateAdminAuthOptions {
   /**
    * The operator's static break-glass credential, already length-validated by
-   * `parseConfig`, or `null` when this instance has none — which is the
+   * `parseConfig`, or `null` when this instance has none, which is the
    * default and what every deployment gets until somebody sets the variable.
    */
   adminToken: string | null;
+  /**
+   * The biller's scoped service credential, already length-validated by
+   * `parseConfig`, or `null` when this instance has none, which is the
+   * default and what every deployment gets. `null` means the service
+   * principal DOES NOT EXIST here: no value can produce it, so the three
+   * routes it would reach are reachable only by the operator.
+   */
+  billingToken: string | null;
   /** Resolves a presented bearer as an account, so an admin's own session can authenticate. */
   authContext: AuthContext;
   logger: Logger;
@@ -107,22 +131,31 @@ export function createAdminAuthMiddleware(options: CreateAdminAuthOptions): Requ
   // Hashed once, at construction. The per-request cost is one hash and one
   // fixed-size comparison.
   const expectedDigest = options.adminToken === null ? null : digest(options.adminToken);
+  const billingDigest = options.billingToken === null ? null : digest(options.billingToken);
   const { authContext, logger } = options;
+
+  /**
+   * Whether this instance admits to having an admin surface at all. EITHER
+   * configured token is enough: an instance that set only `BILLING_TOKEN` has
+   * deliberately put a credential on this tree, so a wrong value there is the
+   * 401 the operator can debug rather than a 404 that hides their own typo.
+   */
+  const anyTokenConfigured = expectedDigest !== null || billingDigest !== null;
 
   /**
    * The refusal, chosen by whether this instance admits to having an admin
    * surface at all. See the module header for why the two differ.
    *
    * THE LOG FOLLOWS THE SAME BRANCH AS THE STATUS, and that is not a detail.
-   * An instance with no static token answers the ordinary 404 and writes
-   * NOTHING, exactly as an unmounted tree did before M192: there is no admin
-   * surface here to protect, so a probe is not a security event, and logging
-   * one would let anybody fill an unconfigured operator's log by curling a
-   * path. An instance that HAS configured a credential logs every failure,
+   * An instance with neither configured token answers the ordinary 404 and
+   * writes NOTHING, exactly as an unmounted tree did before M192: there is no
+   * admin surface here to protect, so a probe is not a security event, and
+   * logging one would let anybody fill an unconfigured operator's log by
+   * curling a path. An instance that HAS configured a credential logs every failure,
    * because nobody but the operator has business calling `/v1/admin` there.
    */
   function refuse(req: Request, res: Response, reason: string): void {
-    if (expectedDigest === null) {
+    if (!anyTokenConfigured) {
       handleNotFound(req, res);
       return;
     }
@@ -147,6 +180,17 @@ export function createAdminAuthMiddleware(options: CreateAdminAuthOptions): Requ
     // broken.
     if (expectedDigest !== null && timingSafeEqual(digest(presented), expectedDigest)) {
       principalsByRequest.set(req, { kind: 'static' });
+      next();
+      return;
+    }
+
+    // The biller's token second, and for the same two reasons: it is compared
+    // with hashed operands so neither its length nor a prefix of it is
+    // observable, and it is answered without a database round trip. What it
+    // may then DO is not decided here. `enforceServicePrincipalScope` runs
+    // next in the same mount and refuses everything outside three routes.
+    if (billingDigest !== null && timingSafeEqual(digest(presented), billingDigest)) {
+      principalsByRequest.set(req, { kind: 'service' });
       next();
       return;
     }

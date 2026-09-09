@@ -76,6 +76,7 @@ import { registerAuthRoutes } from '../accounts/register-auth-routes.js';
 import { ADMIN_API_PREFIX, createAdminRoutes, type AdminLinkBases } from './admin-routes.js';
 import { createAdminFeedbackRoutes } from './admin-feedback-routes.js';
 import { createAdminAuthMiddleware } from './admin-auth.js';
+import { enforceServicePrincipalScope } from './service-principal-scope.js';
 import { registerSyncRoutes } from './register-routes.js';
 import { SHARE_API_PREFIXES, registerShareRoutes } from './share-routes.js';
 import { RESEARCH_API_PREFIXES, registerResearchRoutes } from './research-routes.js';
@@ -110,6 +111,13 @@ import { SERVICE_VERSION } from '../version.js';
 export interface AdminSurfaceOptions {
   /** Already length-validated by `parseConfig`, or `null` for an instance with no break-glass credential. */
   token: string | null;
+  /**
+   * The biller's scoped service credential, or `null` for an instance no
+   * biller reaches, which is every instance until somebody sets
+   * `BILLING_TOKEN`. Optional here so a test that has no opinion about the
+   * third principal does not have to state one.
+   */
+  billingToken?: string | null;
   /** Metadata reads. Erasure goes through `authContext.store`, the same method the self-service path calls. */
   metadata: AdminMetadataStore;
   /** Invite minting and revocation — the only door onto this service. */
@@ -446,9 +454,17 @@ export function createApp(options: CreateAppOptions): Express {
     ADMIN_API_PREFIX,
     createAdminAuthMiddleware({
       adminToken: options.admin.token,
+      billingToken: options.admin.billingToken ?? null,
       authContext: options.authContext,
       logger: options.logger,
     }),
+    // THE BILLER'S SCOPE, DIRECTLY BEHIND THE DOOR AND AHEAD OF BOTH ROUTERS.
+    // Its position is the property: a service principal calling anything
+    // outside three routes is refused here, so no handler runs and no row is
+    // read, and a route added to either router later is refused because it was
+    // never named rather than because somebody remembered it. A no-op for the
+    // operator's two credentials. See `server/service-principal-scope.ts`.
+    enforceServicePrincipalScope,
     createAdminFeedbackRoutes({
       surface: feedback === null ? null : { reports: feedback.review, images: feedback.images },
       logger: options.logger,

@@ -62,7 +62,7 @@ import express from 'express';
 import type { Request, Response, Router } from 'express';
 import { asyncHandler } from './async-handler.js';
 import type { AccountStore } from '../accounts/account-store.js';
-import type { AdminAccountSummary, AdminMetadataStore, AdminStats } from '../admin/admin-store.js';
+import type { AdminAccountSummary, AdminMetadataStore, AdminStats, ExpiringAllowance } from '../admin/admin-store.js';
 import {
   DEFAULT_INVITE_TTL_MS,
   MAX_DAILY_AI_LIMIT,
@@ -89,6 +89,7 @@ import {
 import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
 import { asBoolean, asNumber, asObject, asString, type JsonValue } from '../lib/json.js';
 import { getAdminPrincipal } from './admin-auth.js';
+import { SERVICE_FIELD_REFUSAL, SERVICE_PRINCIPAL_PATCH_FIELDS } from './service-principal-scope.js';
 
 /** Mount prefix for the operator endpoints. The user-facing families live under `/v1/auth` and `/v1/sync`. */
 export const ADMIN_API_PREFIX = '/v1/admin';
@@ -215,6 +216,45 @@ function toAccountView(summary: AdminAccountSummary, memberInvites: boolean): Ad
         : { sizeBytes: summary.blob.sizeBytes, updatedAt: summary.blob.updatedAt.toISOString() },
     keyRecordKinds: summary.keyRecordKinds,
   };
+}
+
+/**
+ * The wire shape one account has for the BILLER, and the only one it ever
+ * sees.
+ *
+ * THREE FIELDS, NAMED HERE, AND NOT A NARROWED `AdminAccountView`. A `Pick<>`
+ * or a delete-the-keys projection would inherit every field added to the
+ * operator's view later, so an address that arrives on that view in some
+ * future milestone would arrive here silently. This shape grows only when
+ * somebody types into it.
+ *
+ * There is no `deletedAt` and there is no tombstone behind it: erasure on this
+ * service is a cascade, so an account that is gone is the ordinary `404` the
+ * route gives an id that never existed. See the handler.
+ */
+interface ServiceAccountView {
+  id: number;
+  allowanceExpiresAt: string | null;
+  dailyAiLimit: number;
+}
+
+/** The ONLY function that builds a body for the service principal. No address, no name, no role, no usage. */
+function toServiceAccountView(summary: AdminAccountSummary): ServiceAccountView {
+  return {
+    id: summary.id,
+    allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
+    dailyAiLimit: summary.dailyAiLimit,
+  };
+}
+
+/** One row of the reconciliation list. Two fields, and `allowanceExpiresAt` is never `null`: see `ExpiringAllowance`. */
+interface ExpiringAllowanceView {
+  id: number;
+  allowanceExpiresAt: string;
+}
+
+function toExpiringAllowanceView(row: ExpiringAllowance): ExpiringAllowanceView {
+  return { id: row.id, allowanceExpiresAt: row.allowanceExpiresAt.toISOString() };
 }
 
 function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | null }): AdminStatsView {
@@ -600,6 +640,38 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
     }),
   );
 
+  // REGISTERED BEFORE `/accounts/:id`, AND THE ORDER IS LOAD-BEARING. Express
+  // matches in registration order, and `expiring` is a literal segment that
+  // the parameterised route below would otherwise swallow and answer 404 for.
+  router.get(
+    '/accounts/expiring',
+    asyncHandler(async (req, res) => {
+      const limit = parseBoundedInteger(queryValue(req, 'limit'), DEFAULT_ADMIN_PAGE_LIMIT, MAX_ADMIN_PAGE_LIMIT);
+      const offset = parseBoundedInteger(queryValue(req, 'offset'), 0, Number.MAX_SAFE_INTEGER);
+      if (!limit.ok || !offset.ok) {
+        res.status(400).json({ error: PAGING_REFUSAL });
+        return;
+      }
+
+      // THE FUTURE IS THE PREDICATE, and the store applies it, so an expired
+      // date is not in the answer at all. A reconciliation reads this list
+      // against its own live subscriptions: an account whose allowance already
+      // ran out is not a disagreement, it is the ordinary end of a paid
+      // period.
+      const page = await metadata.listExpiringAllowances({
+        after: options.now(),
+        limit: limit.value,
+        offset: offset.value,
+      });
+      res.status(200).json({
+        accounts: page.accounts.map(toExpiringAllowanceView),
+        total: page.total,
+        limit: limit.value,
+        offset: offset.value,
+      });
+    }),
+  );
+
   router.get(
     '/accounts/:id',
     asyncHandler(async (req, res) => {
@@ -611,7 +683,19 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
 
       const summary = await metadata.getAccount({ accountId, day: utcDayKey(options.now()) });
       if (summary === null) {
+        // THE BILLER GETS THIS 404 TOO, for a deleted account as much as for an
+        // id that never existed, and the two are the same answer because there
+        // is nothing left to tell them apart with. `AccountStore.deleteAccount`
+        // is a cascade, not a tombstone: erasure is the DSAR path, so a
+        // `deletedAt` an admin read could report would be a record of a person
+        // kept after the erasure that was supposed to remove them. A biller
+        // reading 404 stops charging, which is the correct action for both
+        // cases.
         sendNotFound(res);
+        return;
+      }
+      if (getAdminPrincipal(req)?.kind === 'service') {
+        res.status(200).json({ account: toServiceAccountView(summary) });
         return;
       }
       res.status(200).json({ account: toAccountView(summary, options.memberInvites) });
@@ -737,6 +821,21 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       // JSON-shaped by construction; `asObject` re-establishes that at the type
       // level and yields `null` for anything that is not an object.
       const body = asObject(req.body as JsonValue) ?? {};
+
+      // THE BILLER'S FIELD SCOPE, BEFORE ANYTHING IS PARSED OR WRITTEN. A body
+      // that names `role`, `suspended` or `displayName` is refused WHOLE, and
+      // the two allowed keys beside it are not written either: a partial write
+      // would leave the caller believing it did the thing it was refused. The
+      // list lives in `server/service-principal-scope.ts` with the route allow
+      // list, so there is one answer to what this credential can change.
+      if (getAdminPrincipal(req)?.kind === 'service') {
+        const outOfScope = Object.keys(body).filter((key) => !SERVICE_PRINCIPAL_PATCH_FIELDS.includes(key));
+        if (outOfScope.length > 0) {
+          res.status(403).json({ error: SERVICE_FIELD_REFUSAL });
+          return;
+        }
+      }
+
       const patch = parseAccountPatch(body);
       if (!patch.ok) {
         res.status(400).json({ error: patch.reason });

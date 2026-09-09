@@ -4,7 +4,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_SYNC_NOTICE_LENGTH, MIN_SERVER_SECRET_LENGTH, parseConfig } from '../../src/config.js';
+import {
+  MAX_SYNC_NOTICE_LENGTH,
+  MIN_ADMIN_TOKEN_LENGTH,
+  MIN_SERVER_SECRET_LENGTH,
+  parseConfig,
+} from '../../src/config.js';
 
 const SECRET = 'x'.repeat(MIN_SERVER_SECRET_LENGTH);
 
@@ -376,4 +381,38 @@ test('SYNC_NOTICE_URL must be an absolute http(s) URL, and must have something t
   // A link with no message is far more likely a typo in the variable name than
   // an intention, and it would publish nothing either way.
   assert.throws(() => parseConfig(baseEnv({ SYNC_NOTICE_URL: 'https://example.org/moving' })), /SYNC_NOTICE_URL/);
+});
+
+test('BILLING_TOKEN is unset by default, so the service principal does not exist', () => {
+  // THE DEFAULT IS THE PROPERTY. A self-hoster who configured nothing must
+  // gain no admin surface at all, so `null` here is what keeps the whole
+  // `/v1/admin` tree answering the ordinary unknown-path 404 on their
+  // instance. See `server/admin-auth.ts`.
+  assert.equal(parseConfig(baseEnv()).billingToken, null);
+  assert.equal(parseConfig(baseEnv({ BILLING_TOKEN: '' })).billingToken, null);
+  assert.equal(parseConfig(baseEnv({ BILLING_TOKEN: '   ' })).billingToken, null);
+});
+
+test('a short BILLING_TOKEN is fatal, on the same floor ADMIN_TOKEN has', () => {
+  // Not a warning. What this credential moves is what somebody paid for, so a
+  // guessable value is a free allowance for anybody who finds the host, and a
+  // boot failure is the only refusal an operator cannot ignore.
+  assert.throws(() => parseConfig(baseEnv({ BILLING_TOKEN: 'short' })), /BILLING_TOKEN/);
+  assert.throws(() => parseConfig(baseEnv({ BILLING_TOKEN: 'a'.repeat(MIN_ADMIN_TOKEN_LENGTH - 1) })), /BILLING_TOKEN/);
+
+  const generated = 'a'.repeat(MIN_ADMIN_TOKEN_LENGTH);
+  assert.equal(parseConfig(baseEnv({ BILLING_TOKEN: generated })).billingToken, generated);
+});
+
+test('BILLING_TOKEN and ADMIN_TOKEN are two independent variables', () => {
+  // Neither implies the other, and setting one alone is a supported shape: a
+  // paid instance may run a biller without a break-glass token, and every
+  // instance today runs a break-glass token without a biller.
+  const billingOnly = parseConfig(baseEnv({ BILLING_TOKEN: 'b'.repeat(MIN_ADMIN_TOKEN_LENGTH) }));
+  assert.equal(billingOnly.adminToken, null);
+  assert.notEqual(billingOnly.billingToken, null);
+
+  const adminOnly = parseConfig(baseEnv({ ADMIN_TOKEN: 'c'.repeat(MIN_ADMIN_TOKEN_LENGTH) }));
+  assert.equal(adminOnly.billingToken, null);
+  assert.notEqual(adminOnly.adminToken, null);
 });
