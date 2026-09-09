@@ -180,6 +180,16 @@ export interface AccountView {
 /**
  * What an instance says about itself on the handshake, beside the version
  * numbers. Descriptive only: a client renders it, and never authorizes on it.
+ *
+ * IT DOES NOT CARRY THE INSTANCE'S AI CEILING, and this is where a reader
+ * looking for `AI_INSTANCE_DAILY_LIMIT` will look. That number is the
+ * operator's BUDGET and `/health` is unauthenticated, so publishing it would
+ * tell a stranger what the operator is willing to spend in a day. A client
+ * could not act on it either: it never learns how much of the ceiling is
+ * spent, so it can neither warn nor plan, and the one fact it needs, "this
+ * instance is out of capacity right now", arrives as the proxy's
+ * `503 ai-instance-ceiling` (PROTOCOL.md §5.19). The operator reads the
+ * ceiling from `GET /v1/admin/stats`, behind the admin credential.
  */
 export interface InstanceInfo {
   /** The operator's name for this instance (`INSTANCE_NAME`, default `openplate`). */

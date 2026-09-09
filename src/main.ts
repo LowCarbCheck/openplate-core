@@ -137,6 +137,7 @@ async function main(): Promise<void> {
           quota: aiQuota,
           perMinute: config.aiRateLimitPerMinute,
           maxRequestBytes: config.aiMaxRequestBytes,
+          instanceDailyLimit: config.aiInstanceDailyLimit,
         };
 
   const instance: InstanceInfo = {
@@ -150,6 +151,16 @@ async function main(): Promise<void> {
     // the caller may use it: an account with `dailyAiLimit: 0` gets a 403
     // whatever this says. The model name is advertising copy the operator
     // chose, and `null` when they chose none.
+    //
+    // THE INSTANCE CEILING IS DELIBERATELY NOT HERE, and this is where a reader
+    // looking for it will look. `AI_INSTANCE_DAILY_LIMIT` is the operator's
+    // BUDGET, and `/health` is unauthenticated: publishing it would tell any
+    // stranger how much the operator is willing to spend per day and how much
+    // of it is left. A client also could not act on it, because it never learns
+    // how much of the ceiling is spent, so it can neither warn nor plan. The
+    // one thing it does need, "the instance is out of capacity right now", it
+    // learns from the 503 the proxy answers. `GET /v1/admin/stats` reports it
+    // to the operator instead, behind the admin credential.
     ai: ai === null ? null : { model: config.aiAdvertisedModel },
   };
 

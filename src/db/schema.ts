@@ -477,6 +477,44 @@ export const aiUsageDays = pgTable(
 export type InsertAiUsageDay = InferInsertModel<typeof aiUsageDays>;
 export type SelectAiUsageDay = InferSelectModel<typeof aiUsageDays>;
 
+/**
+ * ONE ROW PER UTC DAY FOR THE WHOLE INSTANCE: how many AI requests every
+ * account together has spent against the operator's ceiling
+ * (`AI_INSTANCE_DAILY_LIMIT`). M212 spec 02.
+ *
+ * WHY THIS TABLE EXISTS AT ALL, when `ai_usage_days` above already holds every
+ * number in it. A `SUM` over that table for one day is an operator STATISTIC
+ * and cannot be a limit, for two independent reasons:
+ *
+ *  1. IT IS NOT MONOTONIC. `ai_usage_days.account_id` cascades on delete, so
+ *     erasing an account removes the days it spent and the sum FALLS. A ceiling
+ *     built on it would hand the instance free requests back every time
+ *     somebody deleted themselves, which is the one thing a spend ceiling must
+ *     never do.
+ *  2. IT SCANS. That table's primary key is `(account_id, day)` with no index
+ *     on `day` alone, and this number is needed on every single request.
+ *
+ * So the instance total is its own row, incremented in the same one-statement
+ * upsert shape the per-account reservation uses (`ai/quota-store.ts`), and it
+ * references nothing: no foreign key means no cascade means the day's spend
+ * only ever goes up. THE TWO COUNTERS ARE NOT REDUNDANT, they answer different
+ * questions: `ai_usage_days` answers "what did this person spend", this one
+ * answers "what did this instance spend".
+ *
+ * A COUNTER, NOT A LOG, exactly as the table above is: a day and an integer,
+ * and nothing that says who asked for what. The same ninety-day retention
+ * sweep does NOT touch it yet, and it does not need to: at one row per day a
+ * decade of instance history is 3650 rows.
+ */
+export const aiInstanceDays = pgTable('ai_instance_days', {
+  /** The UTC calendar day, `YYYY-MM-DD`, and the whole primary key: one row per day for the instance. */
+  day: date('day', { mode: 'string' }).primaryKey(),
+  count: integer('count').default(0).notNull(),
+});
+
+export type InsertAiInstanceDay = InferInsertModel<typeof aiInstanceDays>;
+export type SelectAiInstanceDay = InferSelectModel<typeof aiInstanceDays>;
+
 // =============================================================================
 // Sync blobs (relocated from the openplate app, M128 spec 02)
 // =============================================================================

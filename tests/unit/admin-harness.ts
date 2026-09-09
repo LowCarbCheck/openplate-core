@@ -22,6 +22,7 @@ import { createApp } from '../../src/server/create-app.js';
 import { createThrottleStore } from '../../src/lib/throttle.js';
 import type { LogFields, Logger } from '../../src/logger.js';
 import type { AccountStore } from '../../src/accounts/account-store.js';
+import type { AiQuotaStore, ReserveResult } from '../../src/ai/quota-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
 import { createFakeStorageAdapter } from './fake-storage-adapter.js';
 import { createFakeRotationStore } from './fake-rotation-store.js';
@@ -76,6 +77,42 @@ export interface StartAdminHarnessOptions {
   adminToken: string | null;
   /** Where a join link points. Absent means this instance builds none, and an invite comes back with a raw token. */
   links?: { clientBaseUrl: string; serverPublicUrl: string } | null;
+  /**
+   * The whole instance's AI ceiling per UTC day, reported by
+   * `GET /v1/admin/stats`. Absent boots WITHOUT an AI surface at all, which is
+   * every deployment that has not bought a provider key, and the stats read
+   * then reports `null`.
+   *
+   * A NUMBER HERE BUILDS THE REAL AI SURFACE, because that is where the
+   * ceiling lives: `create-app.ts` reads it off the surface the proxy
+   * enforces, so a fixture that could set it any other way would be able to
+   * pass a test the production wiring fails.
+   */
+  aiInstanceDailyLimit?: number;
+}
+
+/**
+ * A quota store that answers everything and counts nothing. The admin suite
+ * never posts a completion; it exists only so an AI surface can be built at
+ * all, which is what carries the ceiling into `GET /v1/admin/stats`.
+ */
+function createStubQuota(): AiQuotaStore {
+  return {
+    async reserve(input: { accountId: number; day: string; limit: number }): Promise<ReserveResult> {
+      return { ok: true, used: 1, limit: input.limit };
+    },
+    async release(): Promise<void> {},
+    async countRequestsOn(): Promise<number> {
+      return 0;
+    },
+    async purgeUsageBefore(): Promise<number> {
+      return 0;
+    },
+    async reserveInstance(input: { day: string; limit: number }): Promise<ReserveResult> {
+      return { ok: true, used: 1, limit: input.limit };
+    },
+    async releaseInstance(): Promise<void> {},
+  };
 }
 
 export async function startAdminHarness(options: StartAdminHarnessOptions): Promise<AdminHarness> {
@@ -113,6 +150,16 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
       invites: inviteStore,
       links: options.links ?? null,
     },
+    ai:
+      options.aiInstanceDailyLimit === undefined
+        ? null
+        : {
+            upstream: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'never-called', timeoutMs: 1000 },
+            quota: createStubQuota(),
+            perMinute: 10_000,
+            maxRequestBytes: 8_000_000,
+            instanceDailyLimit: options.aiInstanceDailyLimit,
+          },
   });
 
   const server: Server = app.listen(0);

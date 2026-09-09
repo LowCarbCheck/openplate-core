@@ -28,7 +28,7 @@ import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
-import { aiUsageDays, accounts } from '../../src/db/schema.js';
+import { aiInstanceDays, aiUsageDays, accounts } from '../../src/db/schema.js';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
 import { startService, sampleCiphertext, DEFAULT_AI_MAX_REQUEST_BYTES, type ServiceHarness } from './service-harness.js';
 
@@ -123,6 +123,14 @@ async function startWithAi(perMinute?: number): Promise<ServiceHarness> {
   });
 }
 
+/** The same service, with the whole instance bounded to `instanceDailyLimit` requests a UTC day. */
+async function startWithCeiling(instanceDailyLimit: number): Promise<ServiceHarness> {
+  return startService({
+    db: database.db,
+    ai: { baseUrl: upstreamBaseUrl, apiKey: UPSTREAM_KEY, timeoutMs: 5_000, instanceDailyLimit },
+  });
+}
+
 /** The body a client actually posts. Small, but shaped like the real thing. */
 interface CompletionRequest {
   model: string;
@@ -154,6 +162,17 @@ async function waitForLastSeen(accountId: number): Promise<Date | null> {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   return null;
+}
+
+/** Every `ai_instance_days` row there is. The whole table, because there is one row per UTC day. */
+async function instanceRows(): Promise<{ day: string; count: number }[]> {
+  return database.db.select().from(aiInstanceDays);
+}
+
+/** The instance's total for the day that has one, or 0 when the table is empty. */
+async function instanceCount(): Promise<number> {
+  const rows = await instanceRows();
+  return rows[0]?.count ?? 0;
 }
 
 /** The single `ai_usage_days` count for an account, or 0 when no row exists. */
@@ -390,6 +409,107 @@ test('an upstream refusal releases the unit, so a misconfigured key costs nobody
     // Reserved, then released: back to zero, in the real row, through the real
     // floored `UPDATE`.
     assert.equal(await usageCount(session.account.id), 0);
+  } finally {
+    await service.close();
+  }
+});
+
+test('at the instance ceiling a second account with allowance left is refused too', async () => {
+  // THE CLAIM THIS FILE EXISTS FOR, applied to the ceiling: the refusal is the
+  // DATABASE declining to update a real row, not a number this test handed the
+  // handler. Two accounts, because a per-account bound would let the second one
+  // through and every assertion about the first would still pass.
+  const service = await startWithCeiling(2);
+  try {
+    const first = await service.signupThroughInvite({ email: 'anna@example.org', dailyAiLimit: 50 });
+    const second = await service.signupThroughInvite({ email: 'bruno@example.org', dailyAiLimit: 50 });
+    const send = (accessToken: string) =>
+      service.request<{ error?: string }>({
+        method: 'POST',
+        path: '/v1/chat/completions',
+        accessToken,
+        body: completionRequest(),
+      });
+
+    assert.equal((await send(first.tokens.accessToken)).status, 200);
+    assert.equal((await send(first.tokens.accessToken)).status, 200);
+    assert.equal(await instanceCount(), 2, 'both accounts spend against ONE instance row');
+
+    // The second account has spent nothing of its own 50, and is refused
+    // anyway. That is the whole feature.
+    const refused = await send(second.tokens.accessToken);
+    assert.equal(refused.status, 503);
+    assert.equal(refused.body.error, 'ai-instance-ceiling');
+    const retryAfter = Number(refused.headers.get('retry-after'));
+    assert.ok(Number.isInteger(retryAfter) && retryAfter > 0 && retryAfter <= 86_400, `retry-after was ${retryAfter}`);
+
+    // NOTHING LEFT THE HOST and the refused account was not billed: the
+    // instance's reservation is taken before the account's, so a refusal here
+    // writes no `ai_usage_days` row at all.
+    assert.equal(received.length, 2);
+    assert.equal(await usageCount(second.account.id), 0);
+    const rows = await database.db.select().from(aiUsageDays).where(eq(aiUsageDays.accountId, second.account.id));
+    assert.deepEqual(rows, [], 'a request refused by the ceiling must not bill the caller');
+    // AND THE COUNTER DID NOT MOVE. A refused upsert updates nothing.
+    assert.equal(await instanceCount(), 2);
+  } finally {
+    await service.close();
+  }
+});
+
+test('with no ceiling configured NO ai_instance_days row is written and the refusal never fires', async () => {
+  // THE CONTROL FOR EVERY CEILING CASE, and the state every existing
+  // deployment upgrades into. "No ceiling" is not "a ceiling nobody reaches":
+  // no statement is issued, so the table stays empty. A handler that reserved
+  // unconditionally with a huge default would pass every other test in this
+  // file and fail here.
+  const service = await startWithAi();
+  try {
+    const session = await service.signupThroughInvite({ email: 'anna@example.org', dailyAiLimit: 5 });
+    for (let sent = 0; sent < 3; sent += 1) {
+      const answered = await service.request<{ choices: unknown[] }>({
+        method: 'POST',
+        path: '/v1/chat/completions',
+        accessToken: session.tokens.accessToken,
+        body: completionRequest(),
+      });
+      assert.equal(answered.status, 200);
+    }
+
+    assert.equal(await usageCount(session.account.id), 3, 'the per-account counter still counts');
+    assert.deepEqual(await instanceRows(), [], 'an instance with no ceiling writes no instance row');
+  } finally {
+    await service.close();
+  }
+});
+
+test('a reservation the account cannot afford gives it back to the instance', async () => {
+  // The instance's unit is taken FIRST, so a per-account refusal after it is
+  // the one path where a unit has been taken for a request that will never
+  // reach the provider. Keeping it would let one account at its own limit eat
+  // the whole instance's ceiling by retrying.
+  const service = await startWithCeiling(100);
+  try {
+    const session = await service.signupThroughInvite({ email: 'anna@example.org', dailyAiLimit: 1 });
+    const send = () =>
+      service.request<{ error?: string }>({
+        method: 'POST',
+        path: '/v1/chat/completions',
+        accessToken: session.tokens.accessToken,
+        body: completionRequest(),
+      });
+
+    assert.equal((await send()).status, 200);
+    const spentBefore = await instanceCount();
+    assert.equal(spentBefore, 1);
+
+    for (let refused = 0; refused < 5; refused += 1) {
+      assert.equal((await send()).status, 429, "the account's own allowance is what refused this");
+    }
+
+    // FIVE REFUSALS LATER, THE SAME NUMBER, read out of the real floored
+    // `UPDATE` rather than out of a fake.
+    assert.equal(await instanceCount(), spentBefore, 'a refused account must not spend the instance');
   } finally {
     await service.close();
   }

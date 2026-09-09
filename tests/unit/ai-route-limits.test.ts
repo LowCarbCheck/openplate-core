@@ -64,6 +64,13 @@ function createAllowingQuota(): AiQuotaStore {
     async purgeUsageBefore(): Promise<number> {
       return 0;
     },
+    async reserveInstance(input: { day: string; limit: number }): Promise<ReserveResult> {
+      // Always allows too. This file boots the route with no instance ceiling,
+      // so nothing here should be called at all; it is present so the fake
+      // satisfies the whole port rather than a convenient part.
+      return { ok: true, used: 1, limit: input.limit };
+    },
+    async releaseInstance(): Promise<void> {},
   };
 }
 
@@ -121,6 +128,9 @@ async function startRoute(options: { maxRequestBytes?: number } = {}): Promise<R
     requireAuth: createBearerAuthMiddleware(fixture.ctx),
     perMinute: 10_000,
     maxRequestBytes: options.maxRequestBytes ?? DEFAULT_AI_MAX_REQUEST_BYTES,
+    // No instance ceiling: this file is about the body parser in front of the
+    // handler, and `ai-proxy.test.ts` owns the ceiling's own properties.
+    instanceDailyLimit: null,
   });
   // The terminal handler the real app mounts last. Present so a test can see
   // that the route's own handler answered rather than falling through to it.

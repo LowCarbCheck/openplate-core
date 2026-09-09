@@ -447,6 +447,7 @@ test('stats reports the three fields the console shows beside the counts', async
     'accounts',
     'accountsWithBlob',
     'admins',
+    'aiInstanceDailyLimit',
     'aiRequestsToday',
     'blobBytes',
     'blobVersions',
@@ -454,4 +455,31 @@ test('stats reports the three fields the console shows beside the counts', async
     'pendingInvites',
   ]);
   assert.equal(asNumber(stats?.admins), 1);
+  // THIS HARNESS HAS NO AI SURFACE, so there is no ceiling to report and the
+  // field is `null` rather than absent: an operator's console has to be able
+  // to tell "no ceiling" from "an old server that does not know about one".
+  assert.equal(stats?.aiInstanceDailyLimit, null);
+});
+
+test('stats reports the instance AI ceiling the proxy actually enforces', async () => {
+  // THE CONTROL FOR THE `null` ABOVE. Without a case that carries a number, a
+  // handler that hardcoded `null` would pass, and the operator's only view of
+  // their own budget would be a constant.
+  //
+  // It goes through a SECOND app, built by `createApp` with a real AI surface,
+  // because the ceiling is a property of that surface: `create-app.ts` reads it
+  // from the same object the proxy is handed, so the number in the console
+  // cannot be a different number from the one in the predicate.
+  const withCeiling = await startAdminHarness({ adminToken: ADMIN_TOKEN, aiInstanceDailyLimit: 1500 });
+  try {
+    const response = await withCeiling.request({ method: 'GET', path: '/v1/admin/stats', token: ADMIN_TOKEN });
+    assert.equal(response.status, 200);
+    const stats = asObject(asObject(await jsonBody(response))?.stats);
+    assert.equal(asNumber(stats?.aiInstanceDailyLimit), 1500);
+    // Beside the count it bounds, which is the whole point of putting it here:
+    // 1400 is fine under 5000 and is an outage in an hour under 1500.
+    assert.equal(asNumber(stats?.aiRequestsToday), 0);
+  } finally {
+    await withCeiling.close();
+  }
 });

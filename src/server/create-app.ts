@@ -148,6 +148,17 @@ export interface AiSurfaceOptions {
   perMinute: number;
   /** The largest body the proxy route accepts, in bytes (`AI_MAX_REQUEST_BYTES`, default 8 MB). */
   maxRequestBytes: number;
+  /**
+   * The whole instance's ceiling in AI requests per UTC day
+   * (`AI_INSTANCE_DAILY_LIMIT`), or `null` for an instance that set none.
+   *
+   * IT LIVES ON THIS SURFACE AND NOWHERE ELSE, even though
+   * `GET /v1/admin/stats` also reports it. One value, one owner: a copy on the
+   * admin surface would be a second place to configure the same bound, and the
+   * failure it invites is an operator reading a number in the console that is
+   * not the number being enforced.
+   */
+  instanceDailyLimit: number | null;
 }
 
 export interface CreateAppOptions {
@@ -378,6 +389,7 @@ export function createApp(options: CreateAppOptions): Express {
       requireAuth,
       perMinute: ai.perMinute,
       maxRequestBytes: ai.maxRequestBytes,
+      instanceDailyLimit: ai.instanceDailyLimit,
     });
   }
 
@@ -450,6 +462,12 @@ export function createApp(options: CreateAppOptions): Express {
       // that did nothing is indistinguishable from one that worked.
       mailConfigured: options.mailConfigured ?? false,
       links: options.admin.links ?? null,
+      // The SAME value the proxy enforces, read off the AI surface rather than
+      // configured again here, see `AiSurfaceOptions.instanceDailyLimit`. An
+      // instance with no AI surface at all reports `null`, which is honest:
+      // `POST /v1/chat/completions` does not exist on it, so no ceiling
+      // applies whatever the environment says.
+      aiInstanceDailyLimit: ai?.instanceDailyLimit ?? null,
       // The SAME minter the auth handlers use, so an operator-sent reset and a
       // self-service one produce tokens of the same shape.
       mintResetToken: options.authContext.mintResetToken,

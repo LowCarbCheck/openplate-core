@@ -981,6 +981,7 @@ Each account carries `dailyAiLimit`: requests per **UTC day**, defaulting to
 | `400`  | `request body must be a JSON object` | The body is not an object. The input is never quoted back            |
 | `429`  | a sentence naming the reset instant | The allowance is spent. `Retry-After` is seconds to the next UTC midnight |
 | `429`  | a sentence naming the per-minute bound | More than `AI_RATE_LIMIT_PER_MINUTE` requests in any trailing 60 s   |
+| `503`  | `ai-instance-ceiling`            | The whole instance has spent its daily ceiling. `Retry-After` is seconds to the next UTC midnight |
 
 `403 ai-not-allowed` is a machine code because a client MUST branch on it; it
 means "this account will never succeed here until an operator changes
@@ -997,6 +998,34 @@ to ask an administrator for an allowance they already had. Both refusals happen
 counted against it. The date is compared as "not after": the boundary instant
 refuses rather than allows. Sync is unaffected on an expired account
 (§5.15).
+
+#### The instance ceiling
+
+An operator MAY set a ceiling on the whole instance, in the same unit as the
+allowance above: requests per UTC day, across every account together
+(`AI_INSTANCE_DAILY_LIMIT`). Unset means there is none, which is what a
+self-hosted instance keeps and what every existing deployment keeps.
+
+It exists because every other bound here is per account. Ten accounts at 200
+requests a day is 2000 requests a day against the operator's provider key, so
+invitations multiply accounts without multiplying the bound.
+
+With the ceiling reached, **every account is refused**, including one that has
+spent none of its own allowance, until the next UTC day. The refusal is
+`503 ai-instance-ceiling` with `Retry-After` in seconds. It is a `503` rather
+than a `429` or a `403` because it is neither the caller's fault nor the
+caller's allowance: the service is out of the capacity its operator paid for. A
+client MUST branch on it, because "the operator is out of capacity today" is a
+different screen from "you are out of requests today", and only the second one
+is about the person reading it.
+
+The instance's unit is taken **before** the account's, so a refused instance
+never bills anybody, and it is given back whenever the account's unit is (the
+table below applies to both, row for row).
+
+The ceiling is **not** published on `/health`: it is the operator's budget, and
+that handshake is unauthenticated. `GET /v1/admin/stats` reports it as
+`aiInstanceDailyLimit`, beside the `aiRequestsToday` it bounds.
 
 #### What is spent and what is given back
 
@@ -1042,7 +1071,7 @@ locked.
 
 | Endpoint                                | Does                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------ |
-| `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday` |
+| `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling) |
 | `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
 | `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |

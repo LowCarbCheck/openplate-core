@@ -125,6 +125,24 @@ export interface ServiceConfig {
   /** Requests per account in any trailing 60 seconds on the proxy route. `AI_RATE_LIMIT_PER_MINUTE`, default 20. */
   aiRateLimitPerMinute: number;
   /**
+   * The whole instance's AI ceiling in requests per UTC day
+   * (`AI_INSTANCE_DAILY_LIMIT`), or `null` for NO ceiling, which is the default
+   * and what every existing deployment and every self-hoster keeps.
+   *
+   * IT IS THE ONLY BOUND HERE THAT IS NOT PER ACCOUNT, and that is why it
+   * exists. `accounts.daily_ai_limit` and {@link ServiceConfig.aiRateLimitPerMinute}
+   * both key on the caller, so ten accounts at 200 requests a day is 2000
+   * requests a day against the operator's provider key. Invitations multiply
+   * accounts; before M212 nothing multiplied the bound because there was no
+   * bound.
+   *
+   * IN THE SAME UNIT AS THE PER-ACCOUNT ALLOWANCE, requests per UTC day, so an
+   * operator can do the arithmetic without a second mental model.
+   *
+   * ZERO IS A BOOT FAILURE, not "off". See `parseAiInstanceDailyLimit`.
+   */
+  aiInstanceDailyLimit: number | null;
+  /**
    * The largest request body the proxy route accepts, in bytes.
    * `AI_MAX_REQUEST_BYTES`, default 8 MB.
    *
@@ -520,6 +538,37 @@ function parseAi(env: NodeJS.ProcessEnv): AiUpstreamConfig | null {
   };
 }
 
+/**
+ * `AI_INSTANCE_DAILY_LIMIT`, the whole instance's ceiling in requests per UTC
+ * day. Unset or empty is `null`, which means NO ceiling.
+ *
+ * IT IS OPTIONAL RATHER THAN DEFAULTED, unlike every other numeric variable in
+ * this file. A default here would be a bound arriving on somebody's running
+ * instance during an ordinary upgrade, and the first they would hear of it is
+ * their users being refused. An operator opts in.
+ *
+ * ZERO IS A BOOT FAILURE AND THE MESSAGE SAYS WHY. It is the value that reads
+ * most like "no ceiling" and means the exact opposite: it would refuse every
+ * request on an instance that still has a provider key configured, which an
+ * operator reads as a provider outage and debugs at the wrong end. Somebody who
+ * wants no AI at all unsets `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY`, which
+ * takes the route away instead of leaving one that always says no.
+ */
+function parseAiInstanceDailyLimit(env: NodeJS.ProcessEnv): number | null {
+  const raw = env.AI_INSTANCE_DAILY_LIMIT?.trim();
+  if (raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `Invalid AI_INSTANCE_DAILY_LIMIT: expected a positive integer, got "${raw}". ` +
+        'Zero is not "no ceiling" and not "AI off": it would refuse every request on an instance ' +
+        'that still has a provider key. Unset it for no ceiling, or unset UPSTREAM_BASE_URL and ' +
+        'UPSTREAM_API_KEY for no AI at all.',
+    );
+  }
+  return parsed;
+}
+
 function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {
   const raw = env.LOG_LEVEL?.trim().toLowerCase() ?? 'info';
   if (!isLogLevel(raw)) throw new Error(`Invalid LOG_LEVEL: expected debug/info/warn/error, got "${raw}"`);
@@ -613,6 +662,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     ai: parseAi(env),
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),
+    aiInstanceDailyLimit: parseAiInstanceDailyLimit(env),
     aiMaxRequestBytes: parsePositiveInteger(env, 'AI_MAX_REQUEST_BYTES', DEFAULT_AI_MAX_REQUEST_BYTES),
     trustProxy: parseTrustProxy(env),
     adminToken: parseAdminToken(env),

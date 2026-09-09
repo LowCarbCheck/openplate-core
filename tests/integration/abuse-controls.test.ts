@@ -14,11 +14,21 @@
  *    service on the others
  *  - repeated reset requests lock out and are NEVER cleared, because a person
  *    forgets their password once and a caller filling a mailbox does not
+ *
+ * AND ONE THAT IS NOT A THROTTLE: the instance-wide AI ceiling must not be
+ * refundable by deleting an account. It is here rather than in
+ * `ai-proxy.test.ts` because it is an abuse property: the cheapest attack on a
+ * ceiling built the obvious way is to spend it and then erase yourself.
  */
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { eq, sql } from 'drizzle-orm';
 import { DEFAULT_THROTTLE_CONFIG } from '../../src/lib/throttle.js';
 import { createDrizzleInviteStore } from '../../src/db/invite-store.js';
+import { aiInstanceDays, aiUsageDays } from '../../src/db/schema.js';
+import { utcDayKey } from '../../src/lib/utc-day.js';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
 import {
   sampleAuthHash,
@@ -30,11 +40,31 @@ import {
 
 let database: TestDatabase;
 
+/**
+ * A provider that answers everything. The ceiling case below has to make real
+ * proxied requests, because the counter it is about is written by the proxy.
+ */
+let upstream: Server;
+let upstreamBaseUrl: string;
+
 before(async () => {
   database = await setupTestDatabase();
+
+  upstream = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ choices: [{ message: { content: 'a bowl of rice' } }] }));
+  });
+  upstream.listen(0);
+  await new Promise<void>((resolve) => upstream.once('listening', resolve));
+  const address = upstream.address();
+  if (address === null) throw new Error('expected a listening upstream');
+  // SAFETY: `listen(0)` binds a TCP port; Node returns the string form of an
+  // address only for a Unix domain socket, which this never opens.
+  upstreamBaseUrl = `http://127.0.0.1:${(address as AddressInfo).port}`;
 });
 
 after(async () => {
+  await new Promise<void>((resolve, reject) => upstream.close((error) => (error ? reject(error) : resolve())));
   await database.close();
 });
 
@@ -248,3 +278,67 @@ test('reset requests throttle per address and are never cleared by a success', a
     await service.close();
   }
 });
+
+test('deleting an account does not refund the instance ceiling it spent', async () => {
+  // THE ATTACK THIS SHAPE OF COUNTER EXISTS TO STOP. A ceiling read as a `SUM`
+  // over `ai_usage_days` would be refundable: `account_id` cascades on delete
+  // (`db/schema.ts`), so erasing an account removes the days it spent and
+  // today's total falls. Spend the instance's capacity, delete yourself,
+  // redeem another invitation, spend it again.
+  const service = await startService({
+    db: database.db,
+    ai: { baseUrl: upstreamBaseUrl, apiKey: 'sk-the-operators-key', instanceDailyLimit: 10 },
+  });
+  try {
+    const leaver = await service.signupThroughInvite({ email: 'leaver@example.org', dailyAiLimit: 5 });
+    const stayer = await service.signupThroughInvite({ email: 'stayer@example.org', dailyAiLimit: 5 });
+    const send = (accessToken: string) =>
+      service.request<unknown>({
+        method: 'POST',
+        path: '/v1/chat/completions',
+        accessToken,
+        body: { model: 'a-vision-model', messages: [{ role: 'user', content: 'what is on this plate?' }] },
+      });
+
+    assert.equal((await send(leaver.tokens.accessToken)).status, 200);
+    assert.equal((await send(leaver.tokens.accessToken)).status, 200);
+    assert.equal((await send(stayer.tokens.accessToken)).status, 200);
+
+    const day = utcDayKey(new Date());
+    const instanceBefore = await database.db.select().from(aiInstanceDays).where(eq(aiInstanceDays.day, day));
+    assert.equal(instanceBefore[0]?.count, 3);
+    // The number the rejected design would have used, measured before the
+    // delete so the comparison after it is against something real.
+    const sumBefore = await usageSumOn(day);
+    assert.equal(sumBefore, 3);
+
+    // The real erasure path, the same method the self-service delete calls.
+    await service.authContext.store.deleteAccount(leaver.account.id);
+
+    // ── THE CONTROL, and it must hold or the test below proves nothing ──────
+    // The cascade IS real: the leaver's per-account rows are gone, and the sum
+    // a `SUM`-based ceiling would have read has FALLEN by two. Without this
+    // half, a ceiling that happened to be immune for some other reason would
+    // look like a design that worked.
+    const leftovers = await database.db.select().from(aiUsageDays).where(eq(aiUsageDays.accountId, leaver.account.id));
+    assert.deepEqual(leftovers, [], 'deleting an account must still erase its own usage rows');
+    assert.equal(await usageSumOn(day), 1, 'the sum a SUM-based ceiling would read fell from 3 to 1');
+
+    // ── THE PROPERTY ───────────────────────────────────────────────────────
+    // The instance's own counter did not move. It references nothing, so no
+    // cascade can reach it, and a day's spend only ever goes up.
+    const instanceAfter = await database.db.select().from(aiInstanceDays).where(eq(aiInstanceDays.day, day));
+    assert.equal(instanceAfter[0]?.count, 3, 'an erasure must not hand the instance its spend back');
+  } finally {
+    await service.close();
+  }
+});
+
+/** What a ceiling built as a `SUM` over `ai_usage_days` would have read for one UTC day. */
+async function usageSumOn(day: string): Promise<number> {
+  const rows = await database.db
+    .select({ total: sql<number>`coalesce(sum(${aiUsageDays.count}), 0)::int` })
+    .from(aiUsageDays)
+    .where(eq(aiUsageDays.day, day));
+  return rows[0]?.total ?? 0;
+}

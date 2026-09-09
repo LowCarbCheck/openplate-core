@@ -165,6 +165,17 @@ interface AdminStatsView {
   pendingInvites: number;
   admins: number;
   aiRequestsToday: number;
+  /**
+   * The whole instance's ceiling in AI requests per UTC day
+   * (`AI_INSTANCE_DAILY_LIMIT`), or `null` for an instance that set none.
+   *
+   * IT SITS BESIDE `aiRequestsToday` SO THE TWO ARE READ TOGETHER. A count with
+   * no bound beside it is a number an operator cannot act on: 1400 is fine
+   * under a ceiling of 5000 and is an outage in an hour under one of 1500.
+   * This is the ONLY place the ceiling is published, and it is behind the admin
+   * credential: it is the operator's budget, not a client fact.
+   */
+  aiInstanceDailyLimit: number | null;
 }
 
 /** The ONLY function that turns an account into a response body. See the module header. */
@@ -188,7 +199,8 @@ function toAccountView(summary: AdminAccountSummary): AdminAccountView {
   };
 }
 
-function toStatsView(stats: AdminStats): AdminStatsView {
+function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | null }): AdminStatsView {
+  const { stats } = input;
   return {
     accounts: stats.accounts,
     accountsWithBlob: stats.accountsWithBlob,
@@ -198,6 +210,10 @@ function toStatsView(stats: AdminStats): AdminStatsView {
     pendingInvites: stats.pendingInvites,
     admins: stats.admins,
     aiRequestsToday: stats.aiRequestsToday,
+    // NOT from the store. Every other field here is something the database
+    // counted; this one is what the operator configured, and the store that
+    // reads rows has no business inventing it.
+    aiInstanceDailyLimit: input.aiInstanceDailyLimit,
   };
 }
 
@@ -490,6 +506,15 @@ export interface AdminRoutesOptions {
   mailConfigured: boolean;
   /** Where a join link points, or `null` when this instance cannot build one. */
   links: AdminLinkBases | null;
+  /**
+   * The whole instance's AI ceiling per UTC day, or `null` when it has none.
+   * Reported by `GET /v1/admin/stats` beside the count it bounds.
+   *
+   * IT IS NOT CONFIGURED HERE. `create-app.ts` reads it off the AI surface the
+   * proxy enforces, so the number in the console and the number in the
+   * predicate cannot be two different numbers.
+   */
+  aiInstanceDailyLimit: number | null;
   /** Mints the `sr_` token `POST /accounts/:id/reset-mail` writes. Injected so a test can name it. */
   mintResetToken(): GeneratedToken;
   /** Injected, like every clock in this repo, so a test can pin "today" and an invite's status. */
@@ -844,7 +869,12 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
   router.get(
     '/stats',
     asyncHandler(async (_req, res) => {
-      res.status(200).json({ stats: toStatsView(await metadata.stats({ now: options.now() })) });
+      res.status(200).json({
+        stats: toStatsView({
+          stats: await metadata.stats({ now: options.now() }),
+          aiInstanceDailyLimit: options.aiInstanceDailyLimit,
+        }),
+      });
     }),
   );
 

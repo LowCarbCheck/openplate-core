@@ -74,6 +74,13 @@ function createFakeQuota(days: string[]): AiQuotaStore {
       days.splice(0, days.length, ...survivors);
       return deleted;
     },
+    // The instance-wide half of the port. The sweep never touches it, because
+    // one row per day for the whole instance is a few thousand rows a decade.
+    // These exist only so the fake satisfies the whole port.
+    async reserveInstance(input: { day: string; limit: number }): Promise<ReserveResult> {
+      return { ok: true, used: 1, limit: input.limit };
+    },
+    async releaseInstance(): Promise<void> {},
   };
 }
 

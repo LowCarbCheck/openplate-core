@@ -113,15 +113,53 @@ interface RecordingQuota extends AiQuotaStore {
   reserves: number;
   releases: number;
   count: number;
+  /** The instance-wide counter, and the days it was asked about. */
+  instanceReserves: number;
+  instanceReleases: number;
+  instanceCount: number;
+  instanceDays: string[];
+  /**
+   * Every call in order, as `'instance-reserve'`, `'reserve'`,
+   * `'instance-release'`, `'release'`.
+   *
+   * THE ORDER IS A PROPERTY, not a detail. "The instance's unit is taken
+   * before the account's" cannot be observed from two counters: both are 1
+   * either way round.
+   */
+  calls: string[];
 }
 
-function createRecordingQuota(options: { failAt?: number } = {}): RecordingQuota {
+function createRecordingQuota(options: { failAt?: number; instanceFailAt?: number } = {}): RecordingQuota {
   const store: RecordingQuota = {
     reserves: 0,
     releases: 0,
     count: 0,
+    instanceReserves: 0,
+    instanceReleases: 0,
+    instanceCount: 0,
+    instanceDays: [],
+    calls: [],
+    async reserveInstance(input: { day: string; limit: number }): Promise<ReserveResult> {
+      store.instanceReserves += 1;
+      store.instanceDays.push(input.day);
+      store.calls.push('instance-reserve');
+      // The real store's rule, reproduced: the ceiling is the predicate, and a
+      // refusal reports the ceiling as spent.
+      if (store.instanceCount >= (options.instanceFailAt ?? input.limit)) {
+        return { ok: false, used: input.limit, limit: input.limit };
+      }
+      store.instanceCount += 1;
+      return { ok: true, used: store.instanceCount, limit: input.limit };
+    },
+    async releaseInstance(): Promise<void> {
+      store.instanceReleases += 1;
+      store.calls.push('instance-release');
+      // Floored at zero, as the real store's `WHERE count > 0` is.
+      store.instanceCount = Math.max(0, store.instanceCount - 1);
+    },
     async reserve(input: { accountId: number; day: string; limit: number }): Promise<ReserveResult> {
       store.reserves += 1;
+      store.calls.push('reserve');
       // The real store's rule, reproduced: the limit is the predicate, and a
       // refusal reports the limit as spent.
       if (store.count >= (options.failAt ?? input.limit)) {
@@ -132,6 +170,7 @@ function createRecordingQuota(options: { failAt?: number } = {}): RecordingQuota
     },
     async release(): Promise<void> {
       store.releases += 1;
+      store.calls.push('release');
       // Floored at zero, as the real store's `WHERE count > 0` is.
       store.count = Math.max(0, store.count - 1);
     },
@@ -165,6 +204,8 @@ async function startProxy(options: {
   allowanceExpiresAt?: Date;
   quota?: RecordingQuota;
   timeoutMs?: number;
+  /** The whole instance's ceiling per UTC day. Absent means NONE, which is every deployment that has not opted in. */
+  instanceDailyLimit?: number | null;
 }): Promise<Harness> {
   const fixture = createAuthFixture();
   const account = await fixture.store.seedAccount({
@@ -203,6 +244,7 @@ async function startProxy(options: {
       quota,
       accounts: fixture.store,
       logger: logger.logger,
+      instanceDailyLimit: options.instanceDailyLimit ?? null,
       now: fixture.now,
     }),
   );
@@ -397,6 +439,150 @@ test('an expired allowance is refused even when the daily limit is generous', as
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: 'allowance-expired' });
   assert.equal(harness.quota.count, 0);
+
+  await harness.close();
+});
+
+// ── The instance's own ceiling (M212 spec 02) ──────────────────────────────
+
+test('the instance at its ceiling answers 503 ai-instance-ceiling, before the account and before the upstream', async () => {
+  // NOT A 429 AND NOT A 403. A 403 would accuse the caller, whose allowance is
+  // untouched; the 429 sentence names "your daily quota", which this is not.
+  // The service is out of the capacity its operator paid for.
+  const upstream = await startFakeUpstream();
+  const quota = createRecordingQuota();
+  quota.instanceCount = 2;
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 200,
+    instanceDailyLimit: 2,
+    quota,
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'ai-instance-ceiling' });
+  // The fixture clock is 2026-08-04T10:00:00Z, so the next UTC day is 14 hours
+  // out, computed by the same two helpers the 429 path uses.
+  assert.equal(Number(response.headers.get('retry-after')), 14 * 60 * 60);
+  assert.equal(upstream.received.length, 0, 'a refused instance must not reach the provider');
+  // THE ACCOUNT PAYS NOTHING. Its allowance is 200 and it has spent none of
+  // it, so a per-account reservation here would bill one person for a refusal
+  // that is about the whole instance.
+  assert.equal(harness.quota.reserves, 0);
+  assert.equal(harness.quota.count, 0);
+
+  await harness.close();
+});
+
+test('a ceiling that is NOT reached lets the request through, instance unit first', async () => {
+  // The control for the case above: same wiring, a ceiling with room in it.
+  // Without this half, a handler that refused every request would pass.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({ upstreamBaseUrl: upstream.baseUrl, dailyAiLimit: 200, instanceDailyLimit: 5 });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 200);
+  assert.equal(upstream.received.length, 1);
+  // THE ORDER, which two counters cannot show: both are 1 either way round.
+  assert.deepEqual(harness.quota.calls, ['instance-reserve', 'reserve']);
+  assert.equal(harness.quota.instanceCount, 1);
+  assert.equal(harness.quota.count, 1);
+  // And both counters key on the same UTC day the account's quota does.
+  assert.deepEqual(harness.quota.instanceDays, [utcDayKey(harness.fixture.now())]);
+
+  await harness.close();
+});
+
+test('with NO ceiling configured the instance counter is never touched at all', async () => {
+  // THE UNCONFIGURED PATH, which is every deployment that has not opted in and
+  // every self-hoster. Not "a ceiling nobody reaches": no statement is issued,
+  // so no row exists to be read, counted or swept.
+  const upstream = await startFakeUpstream();
+  const harness = await startProxy({ upstreamBaseUrl: upstream.baseUrl, dailyAiLimit: 200 });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 200);
+  assert.equal(harness.quota.instanceReserves, 0, 'an instance with no ceiling must issue no instance statement');
+  assert.equal(harness.quota.instanceReleases, 0);
+  assert.deepEqual(harness.quota.calls, ['reserve']);
+
+  await harness.close();
+});
+
+test('a refused per-account reservation gives the instance unit back', async () => {
+  // The instance's unit is taken FIRST, so this is the one path where a unit
+  // has been taken for a request that is about to be refused. Keeping it would
+  // let one account at its own limit eat the whole instance's ceiling by
+  // retrying: 200 refusals, 200 units of somebody else's capacity gone.
+  const upstream = await startFakeUpstream();
+  const quota = createRecordingQuota();
+  quota.count = 2;
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 2,
+    instanceDailyLimit: 100,
+    quota,
+  });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 429, "the account's own limit is what refused this");
+  assert.deepEqual(harness.quota.calls, ['instance-reserve', 'reserve', 'instance-release']);
+  assert.equal(harness.quota.instanceReleases, 1);
+  // BACK WHERE IT STARTED, which is the assertion a pair of counters can make
+  // and the call list cannot: the release actually decremented.
+  assert.equal(harness.quota.instanceCount, 0);
+
+  await harness.close();
+});
+
+test('an upstream 4xx releases BOTH units, so a bad provider key costs the instance nothing', async () => {
+  // The spend/release table in `proxy.ts` applies to both counters, row for
+  // row. A 4xx means the provider REFUSED the request, so nobody billed it.
+  const upstream = await startFakeUpstream(() => ({ status: 400, body: JSON.stringify({ error: 'unknown model' }) }));
+  const harness = await startProxy({ upstreamBaseUrl: upstream.baseUrl, dailyAiLimit: 3, instanceDailyLimit: 100 });
+
+  const response = await postCompletion(harness);
+  assert.equal(response.status, 400);
+  assert.equal(harness.quota.count, 0, "the account's unit came back");
+  assert.equal(harness.quota.instanceCount, 0, "and so did the instance's");
+  assert.deepEqual(harness.quota.calls, ['instance-reserve', 'reserve', 'release', 'instance-release']);
+
+  await harness.close();
+});
+
+test('the first refusal of a UTC day writes ONE warn line, and later refusals that day write none', async () => {
+  // A ceiling set too low has to show up in the log rather than only in a
+  // support mail. Once, though: at a reached ceiling EVERY request is refused,
+  // so a line per refusal would be the whole day's traffic written to disk.
+  const upstream = await startFakeUpstream();
+  const quota = createRecordingQuota();
+  quota.instanceCount = 1;
+  const harness = await startProxy({
+    upstreamBaseUrl: upstream.baseUrl,
+    dailyAiLimit: 200,
+    instanceDailyLimit: 1,
+    quota,
+  });
+
+  assert.equal((await postCompletion(harness)).status, 503);
+  const afterFirst = harness.logger.lines.filter((line) => line.message.includes('instance AI ceiling'));
+  assert.equal(afterFirst.length, 1, 'the first refusal of the day must be recorded');
+
+  // WHAT THE LINE CARRIES: the day and the ceiling, which are the two things
+  // an operator acts on. And no account id and no body, per PROTOCOL.md §5.19.
+  const recorded = afterFirst[0];
+  assert.equal(recorded?.fields?.day, '2026-08-04');
+  assert.equal(recorded?.fields?.instanceDailyLimit, 1);
+  assert.equal(recorded?.fields?.accountId, undefined, 'whoever sent the refused request is not part of this fact');
+  const serialized = JSON.stringify(afterFirst);
+  assert.ok(!serialized.includes('anna@example.org'));
+  assert.ok(!serialized.includes('an-access-token'));
+
+  assert.equal((await postCompletion(harness)).status, 503);
+  assert.equal((await postCompletion(harness)).status, 503);
+  const afterMore = harness.logger.lines.filter((line) => line.message.includes('instance AI ceiling'));
+  assert.equal(afterMore.length, 1, 'a second refusal on the same day must write nothing');
 
   await harness.close();
 });

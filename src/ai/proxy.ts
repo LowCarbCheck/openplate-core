@@ -31,6 +31,9 @@
  *                   because a reservation writes a row.
  *   3. RESERVE    — before the call, never after. Counting after the fact has a
  *                   window in which N parallel requests all read the old count.
+ *                   The INSTANCE's ceiling is taken first and the account's
+ *                   second, so a refusal of the whole instance never bills one
+ *                   person for it (503, and step 3a says why it is not a 429).
  *   4. forward    — the caller's `Authorization` is REPLACED, not merged.
  *   5. release?   — only when the provider cannot have billed us. See the
  *                   spent-vs-released table below; it is the money question.
@@ -61,6 +64,12 @@
  *                                   provider ran the request. That we failed to
  *                                   read the answer is our problem, not a refund.
  *   upstream 2xx                    SPENT — obviously.
+ *
+ * THE INSTANCE COUNTER FOLLOWS THAT TABLE EXACTLY, row for row, and it does so
+ * because it is released from the same `releaseQuietly` the account's unit goes
+ * through rather than from a second set of call sites. Two release disciplines
+ * would drift, and the drift would read as an instance that has spent more than
+ * its accounts have.
  *
  * ── THE THREE HARD RULES ────────────────────────────────────────────────────
  *  1. NEVER LOG A BODY. Not the request, not the response, not a prefix, not a
@@ -129,6 +138,17 @@ export interface ChatCompletionsDeps {
   /** Reads the caller's `dailyAiLimit` and stamps `last_seen_at` on a successful call. */
   accounts: AccountStore;
   logger: Logger;
+  /**
+   * The whole instance's ceiling in requests per UTC day
+   * (`AI_INSTANCE_DAILY_LIMIT`), or `null` for an instance that set none,
+   * which is every existing deployment and every self-hoster.
+   *
+   * REQUIRED RATHER THAN OPTIONAL, deliberately. A `?` here would let a wiring
+   * change that forgot to pass it compile, and the symptom would be a ceiling
+   * an operator configured, an admin read that reports it, and nothing
+   * enforcing it. `null` has to be written out by whoever builds this.
+   */
+  instanceDailyLimit: number | null;
   /** Injectable so a test can freeze the UTC day boundary the quota keys on. */
   now?: () => Date;
 }
@@ -231,7 +251,7 @@ function createByteCounter(): ByteCounter {
 }
 
 export function createChatCompletionsHandler(deps: ChatCompletionsDeps): RequestHandler {
-  const { accounts, logger, quota, upstream: upstreamConfig } = deps;
+  const { accounts, instanceDailyLimit, logger, quota, upstream: upstreamConfig } = deps;
   const now = deps.now ?? ((): Date => new Date());
   const upstreamUrl = `${upstreamConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
@@ -246,10 +266,46 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
   });
 
   /**
+   * The UTC day whose first ceiling refusal has already been logged, or `null`.
+   *
+   * ONE LINE PER DAY, and the day itself is the state rather than a boolean, so
+   * the line comes back tomorrow without anything having to reset it.
+   *
+   * IN MEMORY AND THEREFORE PER PROCESS, which is the same honest limitation
+   * `ai/rate-limit.ts` writes down about itself. A restart logs the day's first
+   * refusal again. That is the right way round: the counter that guards money
+   * is in Postgres, and this is only how an operator finds out.
+   */
+  let ceilingRefusalLoggedForDay: string | null = null;
+
+  /**
+   * Says once, per UTC day, that the instance is out of capacity.
+   *
+   * NO ACCOUNT ID AND NO BODY (PROTOCOL.md §5.19 property 2): the fact is about
+   * the instance, and whoever happened to send the first refused request is not
+   * part of it. What it carries is the two things an operator has to act on:
+   * which day, and what the ceiling was set to.
+   */
+  function logCeilingRefusalOnce(input: { day: string; limit: number }): void {
+    if (ceilingRefusalLoggedForDay === input.day) return;
+    ceilingRefusalLoggedForDay = input.day;
+    logger.warn('The instance AI ceiling is reached; every account is refused until the next UTC day', {
+      day: input.day,
+      instanceDailyLimit: input.limit,
+    });
+  }
+
+  /**
    * A refund must never become the client's error. If the store cannot be
    * written the account has been over-charged by one request — annoying, and
    * strictly better than replacing the real upstream failure with a 500 that
    * points at the quota table.
+   *
+   * IT GIVES BACK BOTH UNITS, the account's and the instance's, from this ONE
+   * place. Every caller below reached a point where the provider cannot have
+   * billed us, and that answer is the same for both counters; two release
+   * disciplines would eventually disagree, and the disagreement would look like
+   * an instance that had spent more than the sum of its accounts.
    */
   async function releaseQuietly(input: { accountId: number; day: string }): Promise<void> {
     try {
@@ -257,6 +313,25 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     } catch (cause) {
       logger.warn('Could not release a quota reservation', {
         accountId: input.accountId,
+        day: input.day,
+        error: describeError(cause),
+      });
+    }
+    await releaseInstanceQuietly({ day: input.day });
+  }
+
+  /**
+   * The instance's unit alone, for the one path where there is no account unit
+   * to give back: the per-account reservation refused AFTER the instance's was
+   * taken. Quiet for the same reason `releaseQuietly` is, because a failed refund
+   * must not replace a correct 429 with a 500.
+   */
+  async function releaseInstanceQuietly(input: { day: string }): Promise<void> {
+    if (instanceDailyLimit === null) return;
+    try {
+      await quota.releaseInstance(input);
+    } catch (cause) {
+      logger.warn('Could not release an instance quota reservation', {
         day: input.day,
         error: describeError(cause),
       });
@@ -349,12 +424,60 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     }
     const forwardedBody = Buffer.from(JSON.stringify(body), 'utf8');
 
-    // 3. Reserve BEFORE the upstream call. A refusal is a 429 with the reset
-    // instant named, never a 500: being out of allowance is the system working.
-    // The day is derived from the instant read above the allowance tests.
+    // The day is derived from the instant read above the allowance tests, and
+    // both reservations below key on this one value.
     const day = utcDayKey(requestedAt);
+
+    // 3a. THE WHOLE INSTANCE HAS A CEILING, and it is taken BEFORE the
+    // account's unit. M212 spec 02.
+    //
+    // WHY IT EXISTS. Every other guard in this service is per account: the
+    // minute limiter and the daily allowance both key on the caller. Five
+    // invitations per member multiply accounts, and ten accounts at 200
+    // requests a day is 2000 requests a day against the operator's provider
+    // key. Nothing said no before this.
+    //
+    // FIRST, NOT SECOND. Reserving the account's unit first and then finding
+    // the instance out of capacity would bill one person for a refusal that is
+    // not about them, and the giving-back would have to be right on a path
+    // nobody exercises. This way the only thing that can need giving back is
+    // the instance's unit, on exactly one path (see the account's reservation
+    // below).
+    //
+    // 503, NOT 429 AND NOT 403. It is not the caller's fault, so a 403 would
+    // accuse them; and it is not the caller's allowance, so the 429 sentence
+    // about "your daily quota" would be a lie. The service is out of the
+    // capacity its operator paid for, which is what a 503 says. `Retry-After`
+    // still names the next UTC midnight, because that is genuinely when the
+    // counter resets.
+    //
+    // UNSET MEANS NOTHING HAPPENS AT ALL: no statement is issued, no row is
+    // written, and this refusal is unreachable. That is what every deployment
+    // that has not set `AI_INSTANCE_DAILY_LIMIT` gets.
+    if (instanceDailyLimit !== null) {
+      const instanceReservation = await quota.reserveInstance({ day, limit: instanceDailyLimit });
+      if (!instanceReservation.ok) {
+        const resetAt = nextUtcMidnight(requestedAt);
+        res.setHeader('Retry-After', String(secondsUntil({ target: resetAt, now: requestedAt })));
+        logCeilingRefusalOnce({ day, limit: instanceDailyLimit });
+        // A CODE, not a sentence, because a client has to BRANCH on this one:
+        // "the operator is out of capacity today" is a different screen from
+        // "you are out of requests today", and only the second one is about
+        // the person reading it. The client's wording is M212 spec 04's.
+        res.status(503).json({ error: 'ai-instance-ceiling' });
+        return;
+      }
+    }
+
+    // 3b. Reserve BEFORE the upstream call. A refusal is a 429 with the reset
+    // instant named, never a 500: being out of allowance is the system working.
     const reservation = await quota.reserve({ accountId: account.id, day, limit: account.dailyAiLimit });
     if (!reservation.ok) {
+      // THE INSTANCE'S UNIT GOES BACK. It was taken a few lines above for a
+      // request that is about to be refused and will never reach the provider,
+      // so keeping it would let one account at its own limit eat the whole
+      // instance's ceiling by retrying.
+      await releaseInstanceQuietly({ day });
       const resetAt = nextUtcMidnight(requestedAt);
       res.setHeader('Retry-After', String(secondsUntil({ target: resetAt, now: requestedAt })));
       res.setHeader('X-Quota-Used', String(reservation.used));

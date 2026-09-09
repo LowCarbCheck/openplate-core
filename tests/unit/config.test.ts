@@ -37,6 +37,10 @@ test('a minimal valid environment parses with sane defaults', () => {
   assert.equal(config.feedbackEnabled, false);
   assert.equal(config.feedbackDailyLimit, 5);
   assert.equal(config.feedbackMaxRequestBytes, 8_000_000);
+  // NO INSTANCE-WIDE AI CEILING unless an operator asks for one. A default
+  // here would be a bound arriving on a running instance during an ordinary
+  // upgrade, and the first anybody would hear of it is users being refused.
+  assert.equal(config.aiInstanceDailyLimit, null);
 });
 
 test('a missing DATABASE_URL or SERVER_SECRET is fatal', () => {
@@ -266,6 +270,30 @@ test('the two feedback bounds are operator knobs with sane defaults', () => {
   // would read as a working instance refusing every report.
   assert.throws(() => parseConfig(baseEnv({ FEEDBACK_DAILY_LIMIT: '0' })), /FEEDBACK_DAILY_LIMIT/);
   assert.throws(() => parseConfig(baseEnv({ FEEDBACK_MAX_REQUEST_BYTES: '-1' })), /FEEDBACK_MAX_REQUEST_BYTES/);
+});
+
+test('AI_INSTANCE_DAILY_LIMIT is optional, and zero is a boot failure that says why', () => {
+  // THE CONTROL FIRST: a real value parses and is carried whole, so the
+  // assertions below cannot pass by the parser refusing everything.
+  assert.equal(parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: '1500' })).aiInstanceDailyLimit, 1500);
+  // Unset and empty both mean NO ceiling, which is not the same as a number.
+  assert.equal(parseConfig(baseEnv()).aiInstanceDailyLimit, null);
+  assert.equal(parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: '   ' })).aiInstanceDailyLimit, null);
+
+  // ZERO IS THE DANGEROUS ONE. It reads like "no ceiling" and means the
+  // opposite: every request refused on an instance that still has a provider
+  // key, which an operator debugs as a provider outage. The message has to
+  // name the remedy, so a person reading a boot log knows what to unset.
+  const zero = (): void => {
+    parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: '0' }));
+  };
+  assert.throws(zero, /AI_INSTANCE_DAILY_LIMIT/);
+  // The remedy is named, so a person reading a boot log knows what to unset.
+  assert.throws(zero, /UPSTREAM_API_KEY/);
+  // And nothing else silently becomes a number either.
+  assert.throws(() => parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: '-1' })), /AI_INSTANCE_DAILY_LIMIT/);
+  assert.throws(() => parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: '1.5' })), /AI_INSTANCE_DAILY_LIMIT/);
+  assert.throws(() => parseConfig(baseEnv({ AI_INSTANCE_DAILY_LIMIT: 'lots' })), /AI_INSTANCE_DAILY_LIMIT/);
 });
 
 test('an instance with nothing to say publishes no notice at all', () => {

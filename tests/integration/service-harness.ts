@@ -175,6 +175,14 @@ export interface StartServiceOptions {
     perMinute?: number;
     advertisedModel?: string;
     maxRequestBytes?: number;
+    /**
+     * The whole instance's ceiling in requests per UTC day
+     * (`AI_INSTANCE_DAILY_LIMIT`). Absent means NO ceiling, which is what
+     * every deployment that has not opted in runs on, and what makes the
+     * unconfigured path testable: no row is written in `ai_instance_days` at
+     * all. `ai-proxy.test.ts` opts in with a small number deliberately.
+     */
+    instanceDailyLimit?: number | null;
   } | null;
   /**
    * Absent (the default) boots the service the way every deployment boots
@@ -232,6 +240,12 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           // lockout.
           perMinute: options.ai.perMinute ?? 10_000,
           maxRequestBytes: options.ai.maxRequestBytes ?? DEFAULT_AI_MAX_REQUEST_BYTES,
+          // `null` by default, NOT a high number: "no ceiling" and "a ceiling
+          // nobody reaches" are different states, and only the first one is
+          // what an existing deployment upgrades into. A default of, say,
+          // 10_000 would write a row on every proxied request and no test
+          // could tell the unconfigured path from the configured one.
+          instanceDailyLimit: options.ai.instanceDailyLimit ?? null,
         };
 
   const feedbackSurface =
