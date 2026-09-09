@@ -931,6 +931,16 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       }
 
       // THE SHARED ERASURE PATH. See the module header.
+      //
+      // erasure is one cascade. This route does not call openplate-billing on
+      // the delete path (M213/04): the gateway must not know a ledger
+      // exists, and a synchronous call here would make erasure depend on a
+      // remote. openplate-billing's nightly reconciliation (M213/06) finds a
+      // subscription with no covering account and cancels it, bounding the
+      // exposure to one night. The billing principal calling
+      // `GET /v1/admin/accounts/:id` for an erased id gets the ordinary 404
+      // above (see the comment at the GET route), and that 404 is the
+      // signal, not a field on this response.
       await accounts.deleteAccount(accountId);
       // The account id is the correlation handle; the address is not logged,
       // here or anywhere (`logger.ts`).
