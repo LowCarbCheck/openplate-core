@@ -5,7 +5,7 @@ All notable changes to `openplate-core` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
-## [Unreleased]
+## [0.10.0] - 2026-09-09
 
 ### Changed
 
