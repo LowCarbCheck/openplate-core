@@ -5,6 +5,17 @@ All notable changes to `openplate-core` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.12.0] - 2026-09-09
+
+### Added
+
+- **A billing principal reaches two fields and nothing else.** `BILLING_TOKEN`
+  authenticates a caller scoped to reading and writing only `dailyAiLimit` and
+  `allowanceExpiresAt` on one account, off unless you set it.
+- **`/v1/plans` passes an authenticated caller through to one upstream.**
+  `PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET` turn it on; unset, the
+  whole subtree answers the ordinary unknown-path 404.
+
 ## [0.11.0] - 2026-09-09
 
 ### Added
