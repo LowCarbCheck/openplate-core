@@ -5,6 +5,21 @@ All notable changes to `openplate-core` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [0.11.0] - 2026-09-09
+
+### Added
+
+- **An account's AI allowance can carry an expiry date.** `allowanceExpiresAt` is
+  nullable and stays off unless an admin sets one on an account; sync never
+  gates on it, only the AI proxy does.
+- **The instance can cap its own total AI spend.** `AI_INSTANCE_DAILY_LIMIT`
+  bounds every account together in requests per UTC day, and it is off unless
+  you set it.
+- **A member can invite up to five people on the instance's own terms.**
+  `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS` set the
+  allowance a member's invitation carries, and the whole feature is off unless
+  both are configured.
+
 ## [0.10.0] - 2026-09-09
 
 ### Changed
