@@ -148,6 +148,11 @@ jobs:
       # A copy carries the source's OCI labels, whose version says the `sha-` tag.
       # `--annotation` rewrites that one value on the new index so the semver tag
       # states its own version.
+      #
+      # No wait is needed here, unlike in `openplate`: this one job does the
+      # whole build and it holds the plain group itself, so the tag run cannot
+      # start until the branch run has finished and the lookup below is already
+      # a settled answer.
       - name: Reuse the branch image if it published
         id: reuse
         if: startsWith(github.ref, 'refs/tags/')
