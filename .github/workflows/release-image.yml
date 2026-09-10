@@ -119,9 +119,69 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,prefix=sha-,format=short
 
+      # ── Copy, do not rebuild ──────────────────────────────────
+      # A coordinated release pushes `main` and then the `v*` tag at the same commit,
+      # and the concurrency group makes the tag run start only after the branch run
+      # has finished or failed. So whatever the branch run published is a SETTLED
+      # fact by the time this runs, never a race, and a registry lookup here is
+      # exact. That is what makes copying safe at all.
+      #
+      # If the commit already has a two platform `sha-` image, the semver tag becomes
+      # a manifest COPY of it: seconds, no layers pushed, no cache exported. Every
+      # other case falls through to the build below and behaves exactly as it does
+      # today: no image, a pruned image, a single platform image, or a copy that
+      # failed. A SINGLE PLATFORM source is never copied, because that would silently
+      # drop `linux/arm64` from the release, and self-hosters on a Raspberry Pi or an
+      # ARM VPS pull that platform.
+      #
+      # Tagging an OLD commit lands here too, and copying is the more faithful answer
+      # than a fresh build: the `sha-` image is what that commit actually produced,
+      # against the base image of that day.
+      #
+      # The source is keyed on the RESOLVED commit, never on `github.sha`, for the
+      # same reason the group is: an annotated tag's `github.sha` is the tag OBJECT,
+      # and no `sha-` image is ever published under it.
+      #
+      # `latest` is untouched. It is emitted only with `enable={{is_default_branch}}`,
+      # so a tag run never moved it and still does not.
+      #
+      # A copy carries the source's OCI labels, whose version says the `sha-` tag.
+      # `--annotation` rewrites that one value on the new index so the semver tag
+      # states its own version.
+      - name: Reuse the branch image if it published
+        id: reuse
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          SHA: ${{ needs.resolve-commit.outputs.sha }}
+        run: |
+          set -uo pipefail
+          src="$IMAGE:sha-${SHA:0:7}"
+          version="${GITHUB_REF_NAME#v}"
+          plats=$(docker buildx imagetools inspect "$src" \
+            --format '{{range .Manifest.Manifests}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}' 2>/dev/null || true)
+          echo "source $src carries: ${plats:-<no image>}"
+          case "$plats" in
+            *linux/amd64*linux/arm64*|*linux/arm64*linux/amd64*) ;;
+            *)
+              echo "::notice::no two platform image at $src, so this release builds instead"
+              echo "done=false" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
+          if docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.version=$version" \
+            -t "$IMAGE:$version" "$src"; then
+            docker buildx imagetools inspect "$IMAGE:$version"
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::the copy of $src failed, so this release builds instead"
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # arm64 matters here: a meaningful share of self-hosters run this on a
       # Raspberry Pi or an ARM VPS.
       - name: Build and push (linux/amd64, linux/arm64)
+        if: steps.reuse.outputs.done != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
