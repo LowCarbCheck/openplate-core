@@ -16,6 +16,7 @@ import { INSTANCE_LANGUAGES, isInstanceLanguage, type InstanceLanguage, type Ope
 import type { HttpMailConfig } from './mail/mailer.js';
 import type { AiUpstreamConfig } from './ai/proxy.js';
 import type { PlansUpstreamConfig } from './server/plans-proxy.js';
+import type { VapidCredentials } from './push/web-push-sender.js';
 import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
 import { MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 
@@ -34,7 +35,7 @@ export const MIN_SERVER_SECRET_LENGTH = 32;
  * instance and erases any of them, so it is worth more to an attacker than
  * any single user's session: it must be GENERATED, not chosen, and 24
  * characters is the shortest length at which a generated value is not worth
- * guessing. A too-short value is a boot failure rather than a warning — see
+ * guessing. A too-short value is a boot failure rather than a warning, see
  * the module header.
  */
 export const MIN_ADMIN_TOKEN_LENGTH = 24;
@@ -104,7 +105,7 @@ export interface ServiceConfig {
    */
   clientBaseUrl: string | null;
   /**
-   * Mail configuration, or `null` for an instance that sends none — the
+   * Mail configuration, or `null` for an instance that sends none, the
    * default, and what every deployment gets until an operator points it at a
    * relay.
    *
@@ -115,7 +116,7 @@ export interface ServiceConfig {
    */
   mail: HttpMailConfig | null;
   /**
-   * The AI proxy's upstream, or `null` for an instance that offers no AI —
+   * The AI proxy's upstream, or `null` for an instance that offers no AI ,
    * the default, and what every deployment gets until an operator sets a key.
    *
    * `null` is not "mounted but refusing": `POST /v1/chat/completions` answers
@@ -173,7 +174,7 @@ export interface ServiceConfig {
    * `AI_MAX_REQUEST_BYTES`, default 8 MB.
    *
    * IT IS NOT THE BLOB LIMIT, and the first version of this route wrongly
-   * derived it from one. `MAX_BLOB_BYTES` bounds a diary — a compressed,
+   * derived it from one. `MAX_BLOB_BYTES` bounds a diary, a compressed,
    * encrypted document this service stores. A completion body carries a
    * PHOTOGRAPH this service only forwards: a modern phone camera produces 3
    * to 6 MB of JPEG, base64 inflates it by 4/3, and the blob-derived figure
@@ -189,7 +190,7 @@ export interface ServiceConfig {
   trustProxy: boolean | number;
   /**
    * The operator's admin credential, or `null` when the admin API is not
-   * enabled on this instance — which is the default, and the state every
+   * enabled on this instance, which is the default, and the state every
    * deployment is in until somebody deliberately sets the variable.
    *
    * `null` does not mean "mounted but locked". It means the entire
@@ -236,10 +237,25 @@ export interface ServiceConfig {
    */
   plans: PlansUpstreamConfig | null;
   /**
+   * The VAPID credentials web push signs with, or `null` for an instance that
+   * sends no notifications, which is the default and what every deployment
+   * gets until an operator generates a pair.
+   *
+   * `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` AND `VAPID_SUBJECT`, ALL OR NONE,
+   * exactly as the mail, AI and plans blocks are. A half-configured block is an
+   * operator who believes their users are getting a morning catch-up, so it is
+   * a boot failure that names the missing variable and never a value.
+   *
+   * `null` IS NOT "MOUNTED BUT REFUSING". The whole `/v1/push` subtree answers
+   * the ordinary unknown-path 404, and `/health` advertises `push: false`. See
+   * `docs/adr/0008-push-is-a-scheduling-exception.md`.
+   */
+  push: VapidCredentials | null;
+  /**
    * Whether this instance implements ADR-0002's clinician sharing.
    *
-   * `false` — the default, and what every deployment gets until an operator
-   * deliberately turns it on — is not "mounted but refusing". Both share
+   * `false`, the default, and what every deployment gets until an operator
+   * deliberately turns it on, is not "mounted but refusing". Both share
    * subtrees answer the ordinary unknown-path 404, to everybody
    * (`server/create-app.ts`), for the same reason the admin API does: this
    * service auto-deploys on push, so the commit that adds a route is the
@@ -250,7 +266,7 @@ export interface ServiceConfig {
   /**
    * Whether this instance implements ADR-0003's research contributions.
    *
-   * INDEPENDENT OF {@link ServiceConfig.sharingEnabled} — neither flag implies
+   * INDEPENDENT OF {@link ServiceConfig.sharingEnabled}, neither flag implies
    * the other. A clinic instance may want sharing and no cohort graph; a study
    * host may want the reverse. `false`, the default, is not "mounted but
    * refusing": both contribution subtrees answer the ordinary unknown-path 404
@@ -290,7 +306,7 @@ export interface ServiceConfig {
    */
   feedbackMaxRequestBytes: number;
   /**
-   * The operator's message to every client, or `null` — the default, and what
+   * The operator's message to every client, or `null`, the default, and what
    * an instance with nothing to say has.
    *
    * This is the whole of M181's notice channel, and it is deliberately static
@@ -300,7 +316,7 @@ export interface ServiceConfig {
    * change it redeploys, exactly as they do for every other setting here.
    *
    * It is not a notification system: nobody who does not open the app will
-   * ever see it, and the service cannot know who did. See `README.md` — an
+   * ever see it, and the service cannot know who did. See `README.md`, an
    * operator who needs to be able to REACH their users keeps that list
    * themselves, outside this service.
    */
@@ -310,7 +326,7 @@ export interface ServiceConfig {
 
 /**
  * `ADMIN_TOKEN` is optional; when present it must be long enough to be worth
- * having. An absent value is not a misconfiguration — it is the default, and
+ * having. An absent value is not a misconfiguration, it is the default, and
  * it leaves the admin API unmounted.
  */
 function parseAdminToken(env: NodeJS.ProcessEnv): string | null {
@@ -318,7 +334,7 @@ function parseAdminToken(env: NodeJS.ProcessEnv): string | null {
   if (raw === undefined || raw === '') return null;
   if (raw.length < MIN_ADMIN_TOKEN_LENGTH) {
     throw new Error(
-      `ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters — generate it, do not choose it (see .env.example)`,
+      `ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters, generate it, do not choose it (see .env.example)`,
     );
   }
   return raw;
@@ -398,6 +414,61 @@ function parsePlans(env: NodeJS.ProcessEnv): PlansUpstreamConfig | null {
   };
 }
 
+/** The three names that make up the push block. Listed once so every message below can name all of them. */
+const VAPID_VARIABLES = ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'VAPID_SUBJECT'] as const;
+
+/** Schemes a `VAPID_SUBJECT` may use. RFC 8292 asks for a way to reach the operator, not for a web page. */
+const VAPID_SUBJECT_SCHEMES = ['mailto:', 'https:'];
+
+/**
+ * `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` + `VAPID_SUBJECT`, all or none.
+ *
+ * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
+ * and never a value: the private key is a signing credential and a signing
+ * credential in a startup log is a signing credential in a log. Two of three is
+ * an operator who has generated a pair, pasted one line, and believes push
+ * works; the failure that would follow is silent, because nothing about a
+ * notification that never arrives reaches the person expecting it.
+ *
+ * NONE SET IS THE DEFAULT AND IT IS NOT A MISCONFIGURATION. It means this
+ * instance sends no notifications, the whole `/v1/push` subtree answers the
+ * ordinary unknown-path 404, and `/health` says `push: false`.
+ */
+function parsePush(env: NodeJS.ProcessEnv): VapidCredentials | null {
+  const present = VAPID_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = VAPID_VARIABLES.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete push configuration: ${missing.join(', ')} is not set. ` +
+        `${VAPID_VARIABLES.join(', ')} are all-or-nothing, set all three, or none and this instance sends no notifications. ` +
+        'Generate a pair with `pnpm sync-api push keygen`.',
+    );
+  }
+
+  const subject = env.VAPID_SUBJECT?.trim() ?? '';
+  let parsed: URL;
+  try {
+    parsed = new URL(subject);
+  } catch {
+    throw new Error(
+      `Invalid VAPID_SUBJECT: expected a mailto: address or an absolute https URL, got "${subject}"`,
+    );
+  }
+  if (!VAPID_SUBJECT_SCHEMES.includes(parsed.protocol)) {
+    throw new Error(
+      `Invalid VAPID_SUBJECT scheme "${parsed.protocol}": only ${VAPID_SUBJECT_SCHEMES.join(' and ')} are accepted`,
+    );
+  }
+
+  return {
+    publicKey: env.VAPID_PUBLIC_KEY?.trim() ?? '',
+    privateKey: env.VAPID_PRIVATE_KEY?.trim() ?? '',
+    subject,
+  };
+}
+
 /**
  * `HOST`, the address the listener binds to. Unset, empty or whitespace-only
  * all mean `null`, which binds every interface: the behaviour this service has
@@ -415,7 +486,7 @@ function parseOptionalHost(env: NodeJS.ProcessEnv): string | null {
   return raw;
 }
 
-/** `INSTANCE_NAME` — what an instance calls itself in its mail and on the handshake. */
+/** `INSTANCE_NAME`, what an instance calls itself in its mail and on the handshake. */
 const DEFAULT_INSTANCE_NAME = 'openplate';
 
 /**
@@ -434,7 +505,7 @@ function parseInstanceName(env: NodeJS.ProcessEnv): string {
   return raw;
 }
 
-/** `INSTANCE_LANGUAGE` — which of the two languages the invite and reset mails are written in. */
+/** `INSTANCE_LANGUAGE`, which of the two languages the invite and reset mails are written in. */
 function parseInstanceLanguage(env: NodeJS.ProcessEnv): InstanceLanguage {
   const raw = env.INSTANCE_LANGUAGE?.trim().toLowerCase();
   if (raw === undefined || raw === '') return 'en';
@@ -470,12 +541,12 @@ function parseOptionalBaseUrl(env: NodeJS.ProcessEnv, key: string): string | nul
 }
 
 /**
- * `SYNC_NOTICE` (and the optional `SYNC_NOTICE_URL` beside it) — the message
+ * `SYNC_NOTICE` (and the optional `SYNC_NOTICE_URL` beside it), the message
  * every client shows on connect. Absent, which is the default, means the
  * handshake carries no notice field at all and an older client is unaffected.
  *
  * Three things are refused at boot rather than shipped:
- *  - a notice longer than {@link MAX_SYNC_NOTICE_LENGTH} — see that constant;
+ *  - a notice longer than {@link MAX_SYNC_NOTICE_LENGTH}, see that constant;
  *  - a URL whose scheme is not `https:`/`http:`, because the client will not
  *    render it either and a `javascript:` value in an operator's env is worth
  *    saying out loud;
@@ -492,7 +563,7 @@ function parseNotice(env: NodeJS.ProcessEnv): OperatorNotice | null {
   }
   if (text.length > MAX_SYNC_NOTICE_LENGTH) {
     throw new Error(
-      `SYNC_NOTICE must be at most ${MAX_SYNC_NOTICE_LENGTH} characters (got ${text.length}) — it is published on /health, which the container healthcheck polls continuously`,
+      `SYNC_NOTICE must be at most ${MAX_SYNC_NOTICE_LENGTH} characters (got ${text.length}), it is published on /health, which the container healthcheck polls continuously`,
     );
   }
   if (url === '') return { text };
@@ -562,7 +633,7 @@ const MAIL_VARIABLES = ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM'] as cons
  *
  * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
  * and never a value: a key or a URL in a startup log is a credential in a log.
- * The alternative — starting with mail half-configured — is an operator who
+ * The alternative, starting with mail half-configured, is an operator who
  * believes invitations are being delivered while every one of them silently
  * comes back as a link nobody looks at.
  *
@@ -581,7 +652,7 @@ function parseMail(
   if (missing.length > 0) {
     throw new Error(
       `Incomplete mail configuration: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set. ` +
-        `${MAIL_VARIABLES.join(', ')} are all-or-nothing — set all three, or none and hand out links yourself.`,
+        `${MAIL_VARIABLES.join(', ')} are all-or-nothing, set all three, or none and hand out links yourself.`,
     );
   }
 
@@ -648,7 +719,7 @@ function parseAi(env: NodeJS.ProcessEnv): AiUpstreamConfig | null {
   if (missing.length > 0) {
     throw new Error(
       `Incomplete AI configuration: ${missing.join(', ')} is not set. ` +
-        `${AI_VARIABLES.join(' and ')} are all-or-nothing — set both, or neither and this instance offers no AI.`,
+        `${AI_VARIABLES.join(' and ')} are all-or-nothing, set both, or neither and this instance offers no AI.`,
     );
   }
 
@@ -767,7 +838,7 @@ function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {
  * THE ASYMMETRY IS THE ARGUMENT, and it is the one M166 first wrote down for
  * `SIGNUPS_OPEN`. A container that refuses to boot is loud and costs one
  * deploy. A variable that is quietly ignored lets an operator believe a door
- * is shut when it is open, or that mail is configured when it is not — a false
+ * is shut when it is open, or that mail is configured when it is not, a false
  * belief discovered by whoever needs it most, on the day they need it.
  */
 function throwIfRemoved(env: NodeJS.ProcessEnv, name: string, because: string): void {
@@ -779,7 +850,7 @@ function throwIfRemoved(env: NodeJS.ProcessEnv, name: string, because: string): 
 
 /** Why the SMTP and pigeon-shaped variables went: M181 deleted those transports and M192 did not bring them back. */
 const MAILER_DELETED =
-  "openplate-core speaks only pigeon's HTTP API, configured as MAIL_API_URL, MAIL_API_KEY and MAIL_API_FROM — SMTP is a non-goal";
+  "openplate-core speaks only pigeon's HTTP API, configured as MAIL_API_URL, MAIL_API_KEY and MAIL_API_FROM, SMTP is a non-goal";
 
 /**
  * Every variable this service refuses, one by one.
@@ -789,7 +860,7 @@ const MAILER_DELETED =
  * invite an operator minted, and there is no other door. An instance that
  * booted with a stale `SIGNUP_MODE=open` in its environment would be an
  * operator believing public registration is on, on a service where it is not
- * implemented at all — and, worse, an operator believing they had turned it
+ * implemented at all, and, worse, an operator believing they had turned it
  * OFF with `closed` when the variable is simply unread.
  */
 function rejectRemovedEnvVars(env: NodeJS.ProcessEnv): void {
@@ -806,7 +877,7 @@ function rejectRemovedEnvVars(env: NodeJS.ProcessEnv): void {
   throwIfRemoved(
     env,
     'REQUIRE_EMAIL_VERIFICATION',
-    'the invitation IS the verification — an account is created by redeeming an invite addressed to that mailbox, so there is nothing left to confirm afterwards',
+    'the invitation IS the verification, an account is created by redeeming an invite addressed to that mailbox, so there is nothing left to confirm afterwards',
   );
   throwIfRemoved(env, 'EMAIL_FROM', 'the sending address is MAIL_API_FROM');
   throwIfRemoved(env, 'SMTP_HOST', MAILER_DELETED);
@@ -818,7 +889,7 @@ function rejectRemovedEnvVars(env: NodeJS.ProcessEnv): void {
   throwIfRemoved(env, 'PIGEON_BASE_URL', 'the mail endpoint is MAIL_API_URL');
 }
 
-/** Pure: builds the config from an arbitrary env bag. Throws on anything invalid — see the module header. */
+/** Pure: builds the config from an arbitrary env bag. Throws on anything invalid, see the module header. */
 export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   rejectRemovedEnvVars(env);
 
@@ -853,6 +924,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     adminToken: parseAdminToken(env),
     billingToken: parseBillingToken(env),
     plans: parsePlans(env),
+    push: parsePush(env),
     sharingEnabled: parseBoolean(env, 'SYNC_SHARING', false),
     researchEnabled: parseBoolean(env, 'SYNC_RESEARCH', false),
     feedbackEnabled: parseBoolean(env, 'SYNC_FEEDBACK', false),

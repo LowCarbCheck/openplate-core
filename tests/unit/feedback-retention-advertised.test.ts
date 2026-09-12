@@ -17,7 +17,7 @@
  * deletion happens on, whatever it is.
  *
  * THE ABSENCE BRANCH IS THE OTHER HALF. An instance with `SYNC_FEEDBACK` unset
- * has no promise to make, so it must send no field at all — the same bargain
+ * has no promise to make, so it must send no field at all, the same bargain
  * its 404 makes for the `/v1/feedback` tree, and what keeps it
  * indistinguishable from an instance built before any of this existed.
  */
@@ -70,6 +70,7 @@ function instanceInfo({ feedbackEnabled }: { feedbackEnabled: boolean }): Instan
     mail: false,
     memberInvites: false,
     ai: null,
+    push: false,
     plans: false,
   };
   if (feedbackEnabled) instance.feedback = feedbackRetentionAdvertisement();
@@ -177,7 +178,15 @@ test('an instance that accepts no reports advertises no window at all', async ()
   assert.ok(!('feedback' in instance), 'an instance with the feature off must add no key to the healthcheck body');
   // And the rest of the handshake is untouched: additive or nothing.
   assert.ok(isProtocolHandshake(body), 'the body must still decode as a handshake');
-  assert.deepEqual(instance, { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans: false });
+  assert.deepEqual(instance, {
+    name: 'openplate',
+    language: 'en',
+    mail: false,
+    memberInvites: false,
+    ai: null,
+    push: false,
+    plans: false,
+  });
 });
 
 test('the service wires the advertisement from the retention module, under the feedback gate', () => {

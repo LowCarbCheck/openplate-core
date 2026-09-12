@@ -25,6 +25,7 @@ import { createDrizzleAdminStore } from '../../src/db/admin-store.js';
 import { createDrizzleShareStore } from '../../src/db/share-store.js';
 import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
 import { createDrizzlePulseStore } from '../../src/pulse/pulse-store.js';
+import { createDrizzlePushStore } from '../../src/push/push-store.js';
 import { createDrizzleResearchStore } from '../../src/db/research-store.js';
 import { createDrizzleAiQuotaStore } from '../../src/ai/quota-store.js';
 import { createDrizzleFeedbackStore } from '../../src/feedback/feedback-store.js';
@@ -130,7 +131,7 @@ export interface ServiceHarness {
    * reads it: out of the LIST response, over the wire.
    *
    * EVERY KEY-RECORD PUT IS A ROTATION NOW. Since M192 signup writes both
-   * records itself, so `expectedUpdatedAt: null` — the first-time assertion —
+   * records itself, so `expectedUpdatedAt: null`, the first-time assertion ,
    * is a genuine `409` on any account this harness created. A fixture that
    * wants to replace a wrap with a named one has to present the current token,
    * exactly as the client does.
@@ -181,7 +182,7 @@ export interface StartServiceOptions {
    * Absent (the default) boots the service the way every deployment boots
    * today: `SYNC_RESEARCH` unset, and both contribution subtrees answering
    * the ordinary unknown-path 404. `research.test.ts` opts in. Independent of
-   * `sharing` — neither implies the other.
+   * `sharing`, neither implies the other.
    */
   research?: boolean;
   /**
@@ -239,7 +240,20 @@ export interface StartServiceOptions {
    * test names.
    */
   memberInvites?: { dailyAiLimit?: number; allowanceDays?: number } | null;
+  /**
+   * Absent (the default) boots the service the way every deployment boots
+   * today: no `VAPID_*` variables, and the whole `/v1/push` subtree answering
+   * the ordinary unknown-path 404. `push-routes.test.ts` opts in.
+   *
+   * A KEY IS ALL IT TAKES, because nothing in this harness sends: the minute
+   * tick lives in `main.ts` and is unit tested against a fake sender, and what
+   * the routes need is a store and a string to hand a browser.
+   */
+  push?: { publicKey?: string } | null;
 }
+
+/** The application server key the harness advertises when a suite opts in. Public by definition, and not a real one. */
+export const TEST_VAPID_PUBLIC_KEY = 'BHarnessPublicKeyForIntegrationTestsOnly';
 
 export async function startService(options: StartServiceOptions): Promise<ServiceHarness> {
   let clock = Date.now();
@@ -308,6 +322,11 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           maxRequestBytes: options.feedback.maxRequestBytes ?? DEFAULT_FEEDBACK_MAX_REQUEST_BYTES,
         };
 
+  const pushSurface =
+    options.push == null
+      ? null
+      : { store: createDrizzlePushStore(options.db), publicKey: options.push.publicKey ?? TEST_VAPID_PUBLIC_KEY };
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(options.db),
@@ -330,6 +349,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     research: options.research === true ? createDrizzleResearchStore(options.db) : null,
     feedback: feedbackSurface,
     ai: aiSurface,
+    // `null` by default, which takes the whole `/v1/push` subtree away, see
+    // `StartServiceOptions.push`.
+    push: pushSurface,
     // `main.ts` builds this the same way, and the harness mirrors it rather
     // than omitting it: `/health` is the ONLY way a client learns whether this
     // instance can scan a plate at all, so a fixture that left it off would
@@ -346,6 +368,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       // subtree is the ordinary unknown-path 404 there. `tests/unit` owns both
       // halves of that field, see `plans-404-when-unset.test.ts`.
       plans: false,
+      // Reported from the SAME surface the routes are mounted on, as `main.ts`
+      // does it, so a `create-app` that forgot to report it fails a suite.
+      push: pushSurface !== null,
     },
   });
 
@@ -428,7 +453,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       });
 
       // 204 has no body; everything else in this service is JSON by contract.
-      // SAFETY: the caller names the response type it is asserting against —
+      // SAFETY: the caller names the response type it is asserting against ,
       // this harness cannot know it, and a wrong `T` fails the assertion that
       // follows, which is the point of the test.
       const body = (response.status === 204 ? undefined : await response.json()) as T;
@@ -483,8 +508,8 @@ export function sampleShareWrap(seed = 5): string {
 
 /**
  * A structurally plausible research envelope: ADR-0003's
- * `ephPub(65) ‖ iv(12) ‖ AES-256-GCM(payload)`, which has no fixed size —
- * unlike the share wrap — because the payload is a window of days. The
+ * `ephPub(65) ‖ iv(12) ‖ AES-256-GCM(payload)`, which has no fixed size ,
+ * unlike the share wrap, because the payload is a window of days. The
  * service checks only the floor.
  */
 export function sampleContributionBody(seed = 11, bytes = RESEARCH_BODY_MIN_BYTES + 64): string {

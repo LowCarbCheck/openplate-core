@@ -7,7 +7,7 @@
  * proves the letter is right and `mailer.test.ts` proves the POST is right,
  * but neither can prove they are WIRED to each other: an admin route that
  * built a message and forgot to send it, or sent it with the wrong token,
- * passes both. The assertion that closes that gap is the one below — the
+ * passes both. The assertion that closes that gap is the one below, the
  * token in the letter that arrived at the fake mail API creates an account.
  *
  * The fake mail API is a real listening server on an ephemeral port, so the
@@ -139,7 +139,7 @@ before(async () => {
     trustProxy: false,
     mailer,
     mailConfigured: true,
-    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null, plans: false },
+    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null, plans: false, push: false },
     admin: {
       token: ADMIN_TOKEN,
       metadata: createDrizzleAdminStore(database.db),
@@ -149,7 +149,7 @@ before(async () => {
   });
   service = app.listen(0);
   await new Promise<void>((resolve) => service.once('listening', resolve));
-  // SAFETY: as above — an ephemeral TCP port, never a Unix domain socket.
+  // SAFETY: as above, an ephemeral TCP port, never a Unix domain socket.
   const { port } = service.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${port}`;
 });

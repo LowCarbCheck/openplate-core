@@ -1,15 +1,15 @@
-# openplate-core — self-hostable account + E2EE blob-sync service.
+# openplate-core, self-hostable account + E2EE blob-sync service.
 #
 # Builds from tracked source and public npm only. There is no build secret,
-# no private `.npmrc` and no `@sprqvntrs/*` dependency anywhere in the tree —
+# no private `.npmrc` and no `@sprqvntrs/*` dependency anywhere in the tree ,
 # that is a release invariant of this repo, not an accident of the current
 # dependency list, and it is what makes this image reproducible by anyone.
 #
-# The runtime layer carries the esbuild bundle plus exactly three real
-# dependencies (`express`, `pg`, `dotenv` — see `scripts/build.ts` for why
-# those are external), and the committed migrations, which the service applies
-# itself at boot. A self-hoster pulling a newer tag never runs a second
-# command.
+# The runtime layer carries the esbuild bundle plus exactly five real
+# dependencies (`express`, `pg`, `dotenv`, `undici`, `web-push`, see
+# `scripts/build.ts` for why those are external), and the committed migrations,
+# which the service applies itself at boot. A self-hoster pulling a newer tag
+# never runs a second command.
 
 FROM node:22-alpine AS base
 RUN npm i -g pnpm@11

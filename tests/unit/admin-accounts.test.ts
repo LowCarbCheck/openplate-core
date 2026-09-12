@@ -12,7 +12,7 @@
  * THE SELF-CHANGE GUARD IS THE LOAD-BEARING ONE. An organization with one
  * administrator who demotes or suspends their own account has locked everybody
  * out of `/v1/admin`, and the remedy is a shell on the container. The static
- * `ADMIN_TOKEN` is exempt because it has no self — it is the break-glass
+ * `ADMIN_TOKEN` is exempt because it has no self, it is the break-glass
  * credential that exists for exactly that situation.
  */
 import { test, before, after, beforeEach } from 'node:test';
@@ -214,7 +214,7 @@ test('PATCH sets the allowance end date, reads it back, and clears it with null'
     new Date('2026-12-01T00:00:00.000Z'),
   );
 
-  // `null` CLEARS it, which is a value and not an omission — the same rule
+  // `null` CLEARS it, which is a value and not an omission, the same rule
   // `displayName: null` follows.
   assert.equal((await patchAccount({ id, body: { allowanceExpiresAt: null } })).status, 200);
   assert.equal((await harness.fakeAccounts.findAccountById(id))?.allowanceExpiresAt, null);
@@ -457,6 +457,8 @@ test('stats reports the three fields the console shows beside the counts', async
     // M222: today's community pulse, the same six numbers every member can
     // already read at `GET /v1/pulse/today`.
     'pulse',
+    // M223: two integers about web push, and never a subscription row.
+    'push',
   ]);
   assert.equal(asNumber(stats?.admins), 1);
   // THIS HARNESS HAS NO AI SURFACE, so there is no ceiling to report and the

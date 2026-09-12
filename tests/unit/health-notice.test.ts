@@ -3,8 +3,8 @@
  * instance block (M192).
  *
  * Boots the REAL app with fake stores, because the property under test is a
- * PUBLICATION property — "an instance with nothing to say sends no field at
- * all" — and a test that built the response object itself could not observe
+ * PUBLICATION property, "an instance with nothing to say sends no field at
+ * all", and a test that built the response object itself could not observe
  * it. The absence branch is the one that matters: a client older than this
  * field must parse the body exactly as before, and an `undefined` that
  * survives `JSON.stringify` is the difference between that and a `null` an
@@ -30,7 +30,7 @@ const servers: Server[] = [];
 
 /** A minimal instance block with one field under test, so a case names only what it is about. */
 function instanceInfo({ plans }: { plans: boolean }): InstanceInfo {
-  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans };
+  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans, push: false };
 }
 
 after(async () => {
@@ -78,7 +78,7 @@ test('an instance with no notice sends no notice field, and stays readable to an
   const body = await readHandshake(null);
 
   assert.ok(!('notice' in body), 'a configured-nothing instance must not add a field to the healthcheck body');
-  // The rest of the handshake is untouched — this is an additive change or it
+  // The rest of the handshake is untouched, this is an additive change or it
   // is a compatibility break wearing its clothes. `isProtocolHandshake` is the
   // decoder a real client applies, so this asserts what a client would accept
   // rather than re-deriving the shape here.
@@ -146,6 +146,7 @@ test('an instance block is published whole, and omitted entirely when there is n
     mail: false,
     memberInvites: false,
     ai: null,
+    push: false,
     plans: false,
   };
   const body = await readHandshake(null, instance);

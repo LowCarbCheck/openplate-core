@@ -6,7 +6,7 @@
  * or ciphertext appears in any admin response, and an assertion like that is
  * vacuous if the fixture never held such a value in the first place. So each
  * seeded account carries its secrets on the fixture (`AdminSeedSecrets`) where
- * a test can assert their ABSENCE by exact string — while the store itself,
+ * a test can assert their ABSENCE by exact string, while the store itself,
  * mirroring the real one, has no way to return them.
  */
 import type {
@@ -31,7 +31,7 @@ export interface AdminSeedSecrets {
   wrappedDek: string;
   ciphertext: string;
   tokenHash: string;
-  /** The plaintext recovery code behind `accounts.recovery_code_escrow` — the newest thing that must never be emitted. */
+  /** The plaintext recovery code behind `accounts.recovery_code_escrow`, the newest thing that must never be emitted. */
   recoveryCode: string;
 }
 
@@ -195,6 +195,10 @@ export function createFakeAdminStore(): FakeAdminStore {
         // the numbers the real store reports for an instance nobody opted in
         // on. `tests/integration/pulse-today.test.ts` owns the non-zero case.
         pulse: { day: '1970-01-01', meals: 0, photos: 0, kcal: 0, protein: 0, contributors: 0, fastingNow: 0 },
+        // ZEROES, honestly again: this fake holds no subscriptions, so these
+        // are the numbers the real store reports for an instance with no VAPID
+        // keys. `tests/integration/push-routes.test.ts` owns the non-zero case.
+        push: { subscriptions: 0, sentToday: 0 },
       };
     },
   };

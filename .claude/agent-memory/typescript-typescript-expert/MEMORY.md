@@ -13,6 +13,18 @@
 - [The invite bounds left the admin router](project_the_invite_bounds_left_the_admin_router.md): MAX_DAILY_AI_LIMIT and DEFAULT_INVITE_TTL_MS moved to admin/invite-store.ts for config.ts
 - [The admin tree has a third principal](project_the_admin_tree_has_a_third_principal.md): BILLING_TOKEN, default deny at the mount, 17 routes, and two fakes over one row
 - [The integration TRUNCATE list is hand-maintained](project_the_integration_truncate_list_is_hand_maintained.md): a new table with no foreign key leaks between tests
+- [A new CommonJS dependency must be external](project_a_new_commonjs_dependency_must_be_external.md): pnpm build greps the bundle for esbuild's dynamic-require shim
+- [A required InstanceInfo field reddens five fixtures](project_a_required_instanceinfo_field_reddens_five_fixtures.md): five literals plus one deepEqual tsc cannot see
+- [A collapse topic length is never 1 mod 4](project_a_collapse_topic_length_is_never_1_mod_4.md): Apple decodes the push topic as base64, FCM does not, so the bug is iPhone only
+
+- [oxlint bites plain JS in openplate too](project_openplate_oxlint_bites_plain_js_too.md): public/*.js is linted, typeof is banned, and clearTimeout reads as a second resolve
+- [The openplate worker copies its pure logic](project_openplate_worker_copies_its_pure_logic.md): a classic service worker cannot import app code, so parity is a behavioural test with a mutation control
+
+## Project (the sibling openplate app repo)
+
+- [openplate app gate gotchas](project_openplate_app_gate_gotchas.md): an English-only i18n key reddens the gate, and the settings hub fixture is frozen
+- [openplate app anti-slop lint](project_openplate_app_anti_slop_lint.md): Record<K,string> annotations and Record<string,unknown> are lint errors, in tests too
+- [An openplate-notify grep counts peer comments](project_openplate_notify_grep_check_reads_peer_comments.md): push-decision.ts names the literal in prose and breaks the check
 
 ## Feedback
 

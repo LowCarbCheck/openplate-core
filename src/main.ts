@@ -1,18 +1,18 @@
 /**
- * Service entry point — the only module in `src/` that reads `process.env`,
+ * Service entry point, the only module in `src/` that reads `process.env`,
  * opens sockets, or decides when the process should die.
  *
  * Boot order is deliberate and strict:
  *   1. Parse config. A misconfiguration must kill the process here, before
  *      anything downstream has a chance to half-work.
- *   2. Wait for Postgres (bounded retry — a `docker compose up` starts both
+ *   2. Wait for Postgres (bounded retry, a `docker compose up` starts both
  *      at once and the database is not ready for a second or two).
  *   3. Run migrations. A self-hoster pulling a newer image must never have to
  *      run a second command, and a half-migrated schema must never serve a
  *      request.
  *   4. Only then open the listener.
  *
- * Anything that fails in 1–3 exits non-zero with a scrubbed message, so a
+ * Anything that fails in 1-3 exits non-zero with a scrubbed message, so a
  * container orchestrator restarts (or, for a genuinely bad config, backs off
  * and reports) rather than a broken instance quietly accepting signups.
  */
@@ -44,6 +44,9 @@ import {
 } from './feedback/feedback-retention.js';
 import { createDrizzlePulseStore } from './pulse/pulse-store.js';
 import { PULSE_RETENTION_DAYS, startPulseRetention } from './pulse/pulse-retention.js';
+import { createDrizzlePushStore } from './push/push-store.js';
+import { createWebPushSender } from './push/web-push-sender.js';
+import { PUSH_DAILY_SEND_CAP, startPushScheduler } from './push/push-scheduler.js';
 import { createApp } from './server/create-app.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
@@ -108,7 +111,7 @@ async function main(): Promise<void> {
   // ALWAYS PRESENT, because signup is invite-only and the invite store is the
   // only door onto this service. `token: null` means no static break-glass
   // credential, which leaves the tree answering the ordinary unknown-path 404
-  // until an admin account signs in — see `server/admin-auth.ts`.
+  // until an admin account signs in, see `server/admin-auth.ts`.
   const admin = {
     token: config.adminToken,
     // The biller's scoped credential (M213). `null` on every instance that has
@@ -124,7 +127,7 @@ async function main(): Promise<void> {
 
   // An instance with no static token and no admin account can never mint an
   // invite, so nobody can ever register on it. That is a misconfiguration worth
-  // shouting about — and deliberately NOT fatal: an admin account created
+  // shouting about, and deliberately NOT fatal: an admin account created
   // before the token was removed still works, and refusing to boot would lock
   // out the very person who could fix it.
   if (config.adminToken === null) {
@@ -135,7 +138,7 @@ async function main(): Promise<void> {
   }
 
   // `null` unless UPSTREAM_API_KEY is set, which leaves
-  // `POST /v1/chat/completions` answering the ordinary unknown-path 404 — see
+  // `POST /v1/chat/completions` answering the ordinary unknown-path 404, see
   // `server/create-app.ts`.
   // BUILT UNCONDITIONALLY, unlike the `ai` surface below. This store owns
   // `ai_usage_days` at both ends, and the retention sweep at the bottom of this
@@ -187,14 +190,21 @@ async function main(): Promise<void> {
     // advertise a door it does not have. `false` means `/v1/plans/*` answers
     // the ordinary unknown-path 404 here, and a client draws no plan door.
     plans: config.plans !== null,
+    // DESCRIPTIVE, NEVER A GRANT, and built from the SAME config binding that
+    // decides whether the subtree is mounted at all, so an instance cannot
+    // advertise a door it does not have. `false` means `/v1/push/*` answers the
+    // ordinary unknown-path 404 here, and a client draws no notification
+    // settings. It says nothing about what a push contains, because a push
+    // contains a kind. See ADR-0008.
+    push: config.push !== null,
   };
 
   // `null` unless SYNC_SHARING is on, which leaves both share subtrees
-  // answering the ordinary unknown-path 404 — see `server/create-app.ts`.
+  // answering the ordinary unknown-path 404, see `server/create-app.ts`.
   const shares = config.sharingEnabled ? createDrizzleShareStore(database.db) : null;
 
   // `null` unless SYNC_RESEARCH is on, which leaves both contribution
-  // subtrees answering the ordinary unknown-path 404 — see
+  // subtrees answering the ordinary unknown-path 404, see
   // `server/create-app.ts`. Decided independently of `shares`: neither flag
   // implies the other.
   const research = config.researchEnabled ? createDrizzleResearchStore(database.db) : null;
@@ -233,6 +243,15 @@ async function main(): Promise<void> {
   // whatever anybody's device is doing today. See ADR-0007.
   const pulse = createDrizzlePulseStore(database.db);
 
+  // WEB PUSH (M223). `null` unless all three `VAPID_*` variables are set, which
+  // leaves the whole `/v1/push` subtree answering the ordinary unknown-path
+  // 404, see `server/create-app.ts`. The store is built only when there is a
+  // key to sign with: unlike the AI quota store above there is no counter here
+  // that outlives the feature being on, so an instance with no keys has nothing
+  // to read and nothing to sweep.
+  const push =
+    config.push === null ? null : { store: createDrizzlePushStore(database.db), publicKey: config.push.publicKey };
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
@@ -254,6 +273,7 @@ async function main(): Promise<void> {
     research,
     feedback,
     pulse,
+    push,
   });
 
   // NO HOST MEANS EVERY INTERFACE, and that is the production default on
@@ -288,6 +308,8 @@ async function main(): Promise<void> {
       // Whether a biller stands behind this instance, never its URL and never
       // its shared secret.
       plans: config.plans !== null,
+      // Whether this instance can send a notification, never a key and never the subject.
+      push: config.push !== null,
     });
   });
 
@@ -329,6 +351,24 @@ async function main(): Promise<void> {
   const pulseRetention = startPulseRetention({ pulse, logger, now: () => new Date() });
   logger.info('Community pulse retention sweep started', { retentionDays: PULSE_RETENTION_DAYS });
 
+  // THE MINUTE TICK, and only on an instance that can send. Unlike every sweep
+  // above it is not a retention job: it has nothing to expire, and a tick on an
+  // instance with no keys would be a timer that finds work it cannot do. A
+  // catch-up due at 08:00 is why the period is a minute rather than the hour
+  // the sweeps use. See `push/push-scheduler.ts` and ADR-0008.
+  const pushScheduler =
+    push === null || config.push === null
+      ? null
+      : startPushScheduler({
+          store: push.store,
+          sender: createWebPushSender(config.push),
+          logger,
+          now: () => new Date(),
+        });
+  if (pushScheduler !== null) {
+    logger.info('Push scheduler started', { dailySendCap: PUSH_DAILY_SEND_CAP });
+  }
+
   const accountStore = authContext.store;
   const sweeper = setInterval(() => {
     void (async () => {
@@ -351,6 +391,7 @@ async function main(): Promise<void> {
     feedbackRetention?.stop();
     aiUsageRetention.stop();
     pulseRetention.stop();
+    pushScheduler?.stop();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await database.close();
     process.exit(0);

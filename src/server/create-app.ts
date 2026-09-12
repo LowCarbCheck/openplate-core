@@ -14,7 +14,7 @@
  *  2. The bearer middleware is mounted on the sync prefix BEFORE the sync
  *     router, so an unauthenticated caller gets `401` instead of falling
  *     through to `resolveEntitledUser`'s `403`.
- *  3. The 404 and the error handler are last — Express only reaches a
+ *  3. The 404 and the error handler are last, Express only reaches a
  *     four-argument handler after everything before it has passed along.
  *
  * THE ADMIN API IS ALWAYS MOUNTED, AND ITS MIDDLEWARE DECIDES WHAT TO ADMIT
@@ -23,7 +23,7 @@
  * now a second credential, and whether one exists is not something a
  * mount-time branch can know. `server/admin-auth.ts` therefore answers the
  * ordinary unknown-path 404 when no static token is configured AND the caller
- * is not an admin account — the same answer `/wp-admin` gets, and the same
+ * is not an admin account, the same answer `/wp-admin` gets, and the same
  * property ADR-0001 bought. Not 401: a 401 confirms that an admin surface
  * exists here and is merely locked, on a service whose threat model assumes
  * the attacker can reach it. This service auto-deploys on push, so the commit
@@ -42,7 +42,7 @@
  * `SYNC_RESEARCH` unset means `/v1/sync/contributions*` and
  * `/v1/sync/study*` answer the ordinary unknown-path 404, to everybody, with
  * the terminator mounted BEFORE the bearer middleware for the same reason.
- * It is INDEPENDENT of `SYNC_SHARING` — neither flag implies the other, and
+ * It is INDEPENDENT of `SYNC_SHARING`, neither flag implies the other, and
  * a deployment may reasonably run either alone. See
  * `docs/adr/0003-research-contributions-pseudonymous-but-never-anonymous.md`.
  *
@@ -94,6 +94,8 @@ import { CHAT_COMPLETIONS_PATH, registerAiRoute } from '../ai/register-ai-route.
 import { FEEDBACK_API_PREFIX, registerFeedbackRoute } from '../feedback/register-feedback-route.js';
 import { registerPulseRoutes } from './register-pulse-routes.js';
 import type { PulseStore } from '../pulse/pulse-store.js';
+import { PUSH_API_PREFIX, registerPushRoutes } from './register-push-routes.js';
+import type { PushStore } from '../push/push-store.js';
 import { registerPlansRoutes, type PlansUpstreamConfig } from './plans-proxy.js';
 import type { FeedbackAdminStore } from '../feedback/feedback-admin-store.js';
 import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
@@ -132,7 +134,7 @@ export interface AdminSurfaceOptions {
   billingToken?: string | null;
   /** Metadata reads. Erasure goes through `authContext.store`, the same method the self-service path calls. */
   metadata: AdminMetadataStore;
-  /** Invite minting and revocation — the only door onto this service. */
+  /** Invite minting and revocation, the only door onto this service. */
   invites: InviteStore;
   /** Where a join link points, or `null` when this instance cannot build one. */
   links?: AdminLinkBases | null;
@@ -181,12 +183,24 @@ export interface AiSurfaceOptions {
   instanceDailyLimit: number | null;
 }
 
+/**
+ * What web push needs to exist. Absent is a 404 on the whole subtree, exactly
+ * as an absent biller is, and for the same reason: this service auto-deploys on
+ * push, so the commit that adds a route is the commit that puts it in
+ * production.
+ */
+export interface PushSurfaceOptions {
+  store: PushStore;
+  /** The VAPID application server key `GET /v1/push/config` hands a browser. Public by definition. */
+  publicKey: string;
+}
+
 export interface CreateAppOptions {
   authContext: AuthContext;
   storage: SyncStorageAdapter;
   /**
    * The atomic DEK rotation of PROTOCOL.md §5.17. Required on every instance,
-   * deliberately unlike `shares` — see below, and `server/rotate-dek-route.ts`.
+   * deliberately unlike `shares`, see below, and `server/rotate-dek-route.ts`.
    */
   rotation: SyncRotationStore;
   throttle: ThrottleStore;
@@ -195,11 +209,11 @@ export interface CreateAppOptions {
   trustProxy: boolean | number;
   /**
    * The operator's message, published on the health handshake, or
-   * `null`/absent for an instance with nothing to say — the default. Static
+   * `null`/absent for an instance with nothing to say, the default. Static
    * config (`SYNC_NOTICE`), never a stored record: see `config.ts`.
    */
   notice?: OperatorNotice | null;
-  /** The operator's API. Required — see {@link AdminSurfaceOptions}. */
+  /** The operator's API. Required, see {@link AdminSurfaceOptions}. */
   admin: AdminSurfaceOptions;
   /**
    * What this instance calls itself on the handshake. Absent means the
@@ -209,7 +223,7 @@ export interface CreateAppOptions {
   instance?: InstanceInfo | null;
   /**
    * The two letters this service sends. Absent means a no-op mailer, which is
-   * what an instance with no mail configuration gets — invites come back as
+   * what an instance with no mail configuration gets, invites come back as
    * links instead (`mail/mailer.ts`).
    */
   mailer?: Mailer;
@@ -222,7 +236,7 @@ export interface CreateAppOptions {
   /** Injected, like every clock in this repo, so a test can pin "today" for a quota and an invite's status. */
   now?: () => Date;
   /**
-   * The AI proxy, or `null`/absent for "this instance offers no AI" — the
+   * The AI proxy, or `null`/absent for "this instance offers no AI", the
    * default, and what every deployment without `UPSTREAM_API_KEY` gets.
    * Absence is a 404 on `POST /v1/chat/completions`, not a mounted-but-refusing
    * surface: see the module header on the same bargain for the admin and share
@@ -231,14 +245,14 @@ export interface CreateAppOptions {
   ai?: AiSurfaceOptions | null;
   /**
    * The share graph's storage, or `null`/absent for "this instance does not
-   * do sharing" — which is the default and what every deployment without
+   * do sharing", which is the default and what every deployment without
    * `SYNC_SHARING` gets. Absence is a 404 on both share subtrees, not a
    * mounted-but-refusing surface.
    */
   shares?: SyncShareStore | null;
   /**
    * The study graph's storage, or `null`/absent for "this instance does not
-   * host research contributions" — the default, and what every deployment
+   * host research contributions", the default, and what every deployment
    * without `SYNC_RESEARCH` gets. Absence is a 404 on both contribution
    * subtrees, not a mounted-but-refusing surface, and it is decided
    * independently of `shares`.
@@ -265,6 +279,19 @@ export interface CreateAppOptions {
    */
   pulse: PulseStore;
   /**
+   * Web push (M223), or `null`/absent for "this instance sends no
+   * notifications", the default, and what every deployment without the three
+   * `VAPID_*` variables gets. Absence is a 404 on the whole `/v1/push`
+   * subtree, not a mounted-but-refusing surface.
+   *
+   * THE STORE AND THE PUBLIC KEY TRAVEL TOGETHER, because the routes are
+   * useless without either: a subscription nobody can send to is a row, and a
+   * key with nowhere to record a device is a string. `main.ts` builds this from
+   * the SAME config binding that decides `instance.push`, so an instance cannot
+   * advertise a door it does not have.
+   */
+  push?: PushSurfaceOptions | null;
+  /**
    * The biller `/v1/plans/*` is forwarded to, or `null`/absent for "no biller
    * stands behind this instance", the default, and what every deployment
    * without `PLANS_UPSTREAM_URL` gets. Absence is a 404 on the whole subtree,
@@ -286,7 +313,7 @@ export function createApp(options: CreateAppOptions): Express {
   app.use(createCorsMiddleware());
 
   /**
-   * `GET /health` — the version handshake of PROTOCOL.md §6, and the container
+   * `GET /health`, the version handshake of PROTOCOL.md §6, and the container
    * healthcheck. Unauthenticated on purpose: a client must be able to discover
    * that it is incompatible BEFORE it has credentials, and a healthcheck that
    * needed a token would report on the token, not the service.
@@ -305,7 +332,7 @@ export function createApp(options: CreateAppOptions): Express {
     // The operator's notice rides on this same /health body, and only when
     // there is one: an instance with nothing to say sends no field at all, so
     // a client older than M181 parses the response exactly as before. It is
-    // PULL — this service holds no addresses and never initiates.
+    // PULL, this service holds no addresses and never initiates.
     if (options.notice != null) handshake.notice = options.notice;
     res.status(200).json(handshake);
   });
@@ -317,13 +344,13 @@ export function createApp(options: CreateAppOptions): Express {
   //
   // `SYNC_SHARING` is unset on every deployment that has not deliberately
   // turned sharing on. Both share subtrees then answer the ordinary
-  // unknown-path 404, to everybody, credentialed or not — the same bargain
+  // unknown-path 404, to everybody, credentialed or not, the same bargain
   // the admin tree makes, for the same reason (this service auto-deploys on
   // push).
   //
   // The ORDER is the load-bearing part. These paths live inside
   // `SYNC_API_PREFIX`, so the bearer middleware mounted just below would
-  // otherwise reach them first and answer 401 to an anonymous caller — which
+  // otherwise reach them first and answer 401 to an anonymous caller, which
   // announces that a credential exists here worth guessing. Mounting the
   // terminator ahead of authentication is what makes an unconfigured instance
   // indistinguishable from one where the feature was never written.
@@ -335,7 +362,7 @@ export function createApp(options: CreateAppOptions): Express {
     }
   }
 
-  // THE RESEARCH TERMINATOR — same placement, same reason, SEPARATE FLAG.
+  // THE RESEARCH TERMINATOR, same placement, same reason, SEPARATE FLAG.
   //
   // `SYNC_RESEARCH` is unset on every deployment that has not deliberately
   // turned research contributions on, and it is decided independently of
@@ -346,7 +373,7 @@ export function createApp(options: CreateAppOptions): Express {
   // Mounted HERE, ahead of the bearer middleware below, for exactly the
   // reason the share terminator is: these paths live inside
   // `SYNC_API_PREFIX`, so a merely-unmounted tree would be reached by
-  // `requireAuth` first and answer 401 to an anonymous probe — announcing
+  // `requireAuth` first and answer 401 to an anonymous probe, announcing
   // that a credential exists worth guessing, on a tree whose very existence
   // would tell a prober this deployment holds a cohort.
   const research = options.research ?? null;
@@ -376,8 +403,25 @@ export function createApp(options: CreateAppOptions): Express {
     app.use(PLANS_API_PREFIX, handleNotFound);
   }
 
+  // THE PUSH TERMINATOR, AND IT IS UP HERE FOR THE PLANS SUBTREE'S REASON.
+  //
+  // The three `VAPID_*` variables are unset on every deployment whose operator
+  // has not generated a pair. The whole `/v1/push` subtree then answers the
+  // ordinary unknown-path 404, to everybody, credentialed or not.
+  //
+  // `/v1/push` sits OUTSIDE `SYNC_API_PREFIX`, so no bearer middleware reaches
+  // it by inheritance; but the configured subtree mounts its own `requireAuth`
+  // further down, and a terminator placed after that mount would sit behind a
+  // gate and answer 401 to an anonymous probe. Ahead of it, an instance that
+  // sends no notifications stays indistinguishable from one where the feature
+  // was never written. See ADR-0008.
+  const push = options.push ?? null;
+  if (push === null) {
+    app.use(PUSH_API_PREFIX, handleNotFound);
+  }
+
   // Every blob/key-record route is behind the bearer gate. `registerSyncRoutes`
-  // still does its own `resolveEntitledUser` check — defence in depth, and the
+  // still does its own `resolveEntitledUser` check, defence in depth, and the
   // seam a future entitlement rule would use.
   app.use(SYNC_API_PREFIX, requireAuth);
   const resolveEntitledUser = createEntitledUserResolver();
@@ -387,7 +431,7 @@ export function createApp(options: CreateAppOptions): Express {
     logger: options.logger,
   });
 
-  // `POST /v1/sync/rotate-dek`, on EVERY instance — it is not part of the
+  // `POST /v1/sync/rotate-dek`, on EVERY instance, it is not part of the
   // dark share surface. It rewrites the caller's own blob and their own two
   // key records, rows that exist on every account everywhere, and an owner
   // who has never shared anything still needs a way to retire a DEK they
@@ -407,7 +451,7 @@ export function createApp(options: CreateAppOptions): Express {
 
   // The share family, when this instance has one. It is handed the same
   // caller resolver, and deliberately NOT a way to turn a caller into a
-  // target — see `share-routes.ts`'s header on the confused deputy that
+  // target, see `share-routes.ts`'s header on the confused deputy that
   // reusing this resolver for target selection would create.
   if (shares !== null) {
     registerShareRoutes(app, { shares, storage: options.storage, resolveEntitledUser });
@@ -416,7 +460,7 @@ export function createApp(options: CreateAppOptions): Express {
   // The research family, when this instance has one. It is deliberately NOT
   // handed `storage`: this lane never reads a blob, and giving it the adapter
   // would create the one seam a study-side route could use to reach a
-  // contributor's diary — the "share with a smaller UI" ADR-0003 forbids.
+  // contributor's diary, the "share with a smaller UI" ADR-0003 forbids.
   if (research !== null) {
     registerResearchRoutes(app, { research, resolveEntitledUser });
   }
@@ -425,7 +469,7 @@ export function createApp(options: CreateAppOptions): Express {
   //
   // `UPSTREAM_API_KEY` is unset on every deployment that has not deliberately
   // pointed this service at a provider. `POST /v1/chat/completions` then
-  // answers the ordinary unknown-path 404, to everybody, credentialed or not —
+  // answers the ordinary unknown-path 404, to everybody, credentialed or not ,
   // the same bargain the admin and share trees make, for the same reason (this
   // service auto-deploys on push).
   //
@@ -495,6 +539,20 @@ export function createApp(options: CreateAppOptions): Express {
     now,
   });
 
+  // WEB PUSH, when this instance has keys to sign with. The unconfigured case
+  // was pinned to a 404 above, ahead of everything. The routes carry their own
+  // scoped body parser and their own access log, which writes no account id;
+  // see `server/register-push-routes.ts`.
+  if (push !== null) {
+    registerPushRoutes(app, {
+      store: push.store,
+      publicKey: push.publicKey,
+      requireAuth,
+      logger: options.logger,
+      now,
+    });
+  }
+
   // THE PLANS PASS-THROUGH, when a biller stands behind this instance. It is
   // handed the account store because `X-Account-Email` is read from the row
   // and never from the request, and the bearer middleware because the subtree
@@ -510,7 +568,7 @@ export function createApp(options: CreateAppOptions): Express {
     });
   }
 
-  // The admin API — ALWAYS mounted, and its middleware decides what to admit
+  // The admin API, ALWAYS mounted, and its middleware decides what to admit
   // to. An instance with no `ADMIN_TOKEN` and no admin account is
   // indistinguishable from one where the feature was never written, because
   // `createAdminAuthMiddleware` answers the ordinary unknown-path 404 in that

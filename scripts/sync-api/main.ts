@@ -1,9 +1,9 @@
 /**
- * `pnpm sync-api` — the operator's command line over `/v1/admin`.
+ * `pnpm sync-api`, the operator's command line over `/v1/admin`.
  *
  * A THIN HTTP CLIENT AND NOTHING ELSE. It imports no store, no config module
  * and no database driver, so it runs from a laptop that has never seen
- * Postgres — the same shape `shw-api`, `np-api` and `lcc-api` have in this
+ * Postgres, the same shape `shw-api`, `np-api` and `lcc-api` have in this
  * workspace. `tests/unit/sync-api-no-db-imports.test.ts` walks the static
  * import graph from this file and fails if that stops being true.
  *
@@ -11,7 +11,7 @@
  * `ADMIN_TOKEN`. There is deliberately no `--token` flag: a credential on a
  * command line lands in shell history and is visible in `ps` to every other
  * user on the box for as long as the command runs. There is no dotenv loading
- * and no `~/.config` file either — this is a credential that lists and erases
+ * and no `~/.config` file either, this is a credential that lists and erases
  * accounts, and the fewer places it can come to rest, the better. Missing it
  * is an error that names the variable, raised BEFORE any request is built.
  *
@@ -30,6 +30,7 @@
  */
 import { parseArgs } from 'node:util';
 import { AdminClient, CliError, type AccountPatchBody, type MintInviteRequestBody } from './client.js';
+import { generateVapidKeys } from '../../src/push/vapid-keys.js';
 import {
   decodeAccountPage,
   decodeHandshake,
@@ -47,7 +48,7 @@ import {
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 
-const USAGE = `sync-api — the openplate-core admin CLI
+const USAGE = `sync-api, the openplate-core admin CLI
 
   Usage: pnpm sync-api <command> [options]
 
@@ -68,6 +69,7 @@ const USAGE = `sync-api — the openplate-core admin CLI
     invites resend <id>        Mint a NEW token for the same invite and send it
     invites revoke <id> --yes  Withdraw an unredeemed invite
     accounts reset-mail <id>   Send this account a password-reset letter
+    push keygen                Print a fresh VAPID key pair for the environment
 
   Options:
     --url <base>   Service base URL (default: SYNC_SERVER_URL, else ${DEFAULT_BASE_URL})
@@ -81,11 +83,14 @@ const USAGE = `sync-api — the openplate-core admin CLI
     --daily-ai-limit <n>   AI requests a day for the redeemed account (default 0)
     --allowance-expires <iso|none>  When an account's AI allowance ends.
                            "none" clears the date, so the allowance never ends
-    --expires-in-days <n>  Invite lifetime, 1–30 (default 7)
+    --expires-in-days <n>  Invite lifetime, 1-30 (default 7)
 
   Authentication:
     ADMIN_TOKEN must be set in the environment. There is no --token flag, on
     purpose: a credential in argv is a credential in your shell history.
+
+    "push keygen" is the one exception, and it needs no credential: it talks to
+    nothing and prints locally generated key material.
 `;
 
 interface Invocation {
@@ -142,7 +147,7 @@ function parseInvocation(argv: string[]): Invocation {
   };
 }
 
-/** The credential, or a refusal. Called before any request is built — see the module header. */
+/** The credential, or a refusal. Called before any request is built, see the module header. */
 function requireAdminToken(): string {
   const token = process.env.ADMIN_TOKEN?.trim();
   if (token === undefined || token === '') {
@@ -366,13 +371,13 @@ async function runInvites(client: AdminClient, invocation: Invocation): Promise<
     if (invocation.expiresInDays !== null) {
       const days = Number(invocation.expiresInDays);
       if (!Number.isInteger(days) || days <= 0) {
-        throw new CliError('--expires-in-days must be a whole number of days, 1–30.');
+        throw new CliError('--expires-in-days must be a whole number of days, 1-30.');
       }
       body.expiresInDays = days;
     }
 
     const minted = decodeMintedInvite(await client.request({ method: 'POST', path: '/v1/admin/invites', body }));
-    // The capability IS printed — this is the one command whose whole purpose
+    // The capability IS printed, this is the one command whose whole purpose
     // is to hand the operator a secret. It is not logged by the service and
     // cannot be fetched again.
     print(invocation.json ? JSON.stringify(minted, null, 2) : formatMintedInvite(minted));
@@ -404,6 +409,45 @@ async function runInvites(client: AdminClient, invocation: Invocation): Promise<
   throw new CliError(`Unknown invites subcommand "${subcommand}". Try: list, create, resend, revoke.`);
 }
 
+/**
+ * `push keygen`, a fresh VAPID pair, printed once, for the operator's vault.
+ *
+ * THE ONE COMMAND HERE THAT CONTACTS NOTHING, and therefore the one that needs
+ * no `ADMIN_TOKEN`. It is dispatched above `requireAdminToken` for that reason:
+ * an operator setting an instance up for the first time does not yet have a
+ * running service to authenticate against, and asking them for a credential to
+ * generate a keypair would be a door with no room behind it.
+ *
+ * THE PRIVATE KEY IS PRINTED, exactly as `invites create` prints a token: this
+ * command exists to hand the operator a secret. It is generated here, never
+ * stored, and never sent anywhere.
+ */
+function runPush(invocation: Invocation): void {
+  const subcommand = invocation.command[1] ?? '';
+  if (subcommand !== 'keygen') {
+    throw new CliError(`Unknown push subcommand "${subcommand}". Try: keygen.`);
+  }
+
+  const pair = generateVapidKeys();
+  if (invocation.json) {
+    print(JSON.stringify(pair, null, 2));
+    return;
+  }
+  print(
+    [
+      'A fresh VAPID pair. Put all three lines in the service environment, and the',
+      'private key in your vault. This is the only time it is printed.',
+      '',
+      `VAPID_PUBLIC_KEY=${pair.publicKey}`,
+      `VAPID_PRIVATE_KEY=${pair.privateKey}`,
+      'VAPID_SUBJECT=mailto:you@example.org',
+      '',
+      'All three or none: two of the three is a boot failure, and none means this',
+      'instance sends no notifications at all.',
+    ].join('\n'),
+  );
+}
+
 async function runStatus(client: AdminClient, invocation: Invocation): Promise<void> {
   const handshake = decodeHandshake(await client.request({ method: 'GET', path: '/health' }));
   // The second call is the one that proves the ADMIN surface is reachable and
@@ -432,9 +476,17 @@ async function run(argv: string[]): Promise<void> {
     return;
   }
 
+  const command = invocation.command[0] ?? '';
+
+  // AHEAD OF THE CREDENTIAL CHECK, and it is the only command that may be. It
+  // sends nothing, so there is nothing to authenticate; see `runPush`.
+  if (command === 'push') {
+    runPush(invocation);
+    return;
+  }
+
   // Before the client exists, so a missing credential can never become a request.
   const client = new AdminClient({ baseUrl: invocation.baseUrl, adminToken: requireAdminToken() });
-  const command = invocation.command[0] ?? '';
 
   if (command === 'invites') {
     await runInvites(client, invocation);

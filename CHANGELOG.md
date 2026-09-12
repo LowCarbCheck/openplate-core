@@ -9,6 +9,21 @@ change moves the minor.
 
 ### Added
 
+- **Web push, carrying a kind and never a sentence.**
+  Four member routes under `/v1/push` let a device register where to reach it,
+  the minute of its own local day it wants a morning catch-up, and the instant
+  a fast reaches its target. A minute tick sends at most two pushes per
+  subscription per UTC day, pauses for anybody who has not opened the app in
+  seven local days, and deletes a subscription the push service answers 404 or
+  410 for. The payload is `{"kind":"catch-up"}` or `{"kind":"fast-target"}`:
+  the device writes the words, because this server cannot read the diary they
+  describe. Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`
+  together, or none of them and the whole subtree answers the ordinary 404 and
+  `/health` reports `push: false`. `pnpm sync-api push keygen` prints a pair.
+  ADR 0008 names push scheduling as the fourth exception to zero knowledge and
+  the `wake_at` correlation with the pulse's presence row.
+  `GET /v1/admin/stats` gains `push: { subscriptions, sentToday }`.
+
 - **An opt-in pulse: instance-wide counts for the day, and who is fasting right now.**
   Four member routes under `/v1/pulse` take small rounded deltas from devices
   whose owner turned the pulse on (a meal with its calories rounded to 50 and
@@ -199,7 +214,7 @@ gateway. The gateway is retired.
 - **`SIGNUP_MODE` is removed and is a boot failure**, along with the older
   `SIGNUPS_OPEN`. Signup is invite-only, always; there is no mode to set and
   therefore no mode to get wrong. `EMAIL_FROM`, `SMTP_*`, `PIGEON_*` and
-  `REQUIRE_EMAIL_VERIFICATION` remain boot failures — mail is `MAIL_API_*` now.
+  `REQUIRE_EMAIL_VERIFICATION` remain boot failures, mail is `MAIL_API_*` now.
 - **`POST /v1/sync/rotate-dek` requires `newRecoveryAuthHash` and
   `recoveryCode`.** The recovery verifier and the escrow are replaced in the
   same transaction as the wraps. Without that, a rotation left the old recovery
@@ -257,10 +272,10 @@ gateway. The gateway is retired.
   `accounts reactivate`, `accounts reset-mail`, `invites resend`, and
   `--daily-limit` on `invites create`.
 - **`/health` reports `instance`**: the instance name, its language, whether it
-  can send mail, and `ai` — `{ "model": … }` when an upstream is configured and
+  can send mail, and `ai`, `{ "model": … }` when an upstream is configured and
   `null` otherwise. Descriptive, never a grant: an account with an allowance of
   zero gets a 403 whatever it says.
-- **`AI_MAX_REQUEST_BYTES`, default 8 MB** — the proxy route's body limit,
+- **`AI_MAX_REQUEST_BYTES`, default 8 MB**, the proxy route's body limit,
   sized for a camera photograph after base64 rather than for a stored blob. In
   the same change, every router's `express.json()` was scoped to its own path
   prefix: they are all mounted at the root, so an unscoped parser applied to
@@ -299,7 +314,7 @@ gateway. The gateway is retired.
    to run this.
 5. **Retire the gateway.** Move `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY` onto
    this service, give each account an allowance
-   (`pnpm sync-api accounts set-limit <id> <n>` — it defaults to 0), and stop
+   (`pnpm sync-api accounts set-limit <id> <n>`, it defaults to 0), and stop
    the gateway container. Its family invites have no equivalent here: a person
    gets a signup invitation instead, and one account covers both sync and AI.
 6. **If you run your own Compose file**, add the new variables to its

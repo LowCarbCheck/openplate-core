@@ -6,7 +6,7 @@
  * that shape this file:
  *
  * ── 404 WHEN THERE IS NO ADMIN CREDENTIAL, NOT 401 ──────────────────────────
- * That decision is not made here — it belongs to `server/admin-auth.ts`, which
+ * That decision is not made here, it belongs to `server/admin-auth.ts`, which
  * answers the ordinary unknown-path 404 for the whole `/v1/admin` tree when no
  * `ADMIN_TOKEN` is configured and the caller is not an admin ACCOUNT. A 401
  * would confirm that an admin surface exists on this host and is merely
@@ -22,7 +22,7 @@
  * ── NOTHING SECRET IS EVER IN A RESPONSE, BY PROJECTION ─────────────────────
  * No ciphertext, no verifier, no KDF descriptor, no wrapped DEK, no token and
  * no token digest. `toAccountView` is the only thing that builds an account
- * body, and it names every field it emits — the way `toMemberView` does in the
+ * body, and it names every field it emits, the way `toMemberView` does in the
  * gateway. The store beneath it (`db/admin-store.ts`) never SELECTs the
  * forbidden columns in the first place, so this is a second wall rather than
  * the only one. `tests/unit/admin-no-forbidden-fields.test.ts` walks the full
@@ -36,12 +36,12 @@
  *
  * ── DELETION REUSES THE STORE, NOT THE HANDLER ──────────────────────────────
  * `AccountStore.deleteAccount` is called here, and it is the SAME method
- * `handleDeleteAccount` calls for a self-service deletion — so DSAR erasure
+ * `handleDeleteAccount` calls for a self-service deletion, so DSAR erasure
  * and self-erasure cannot drift apart and be found to differ during an audit.
  *
  * The self-service handler itself cannot be reused, and the reason is the
  * interesting part: it requires the caller's `authHash` and checks it with
- * `verifierMatches` first. An admin cannot supply that — not for want of a
+ * `verifierMatches` first. An admin cannot supply that, not for want of a
  * permission, but because the admin genuinely does not know the passphrase,
  * which is the property this whole service is built on. Adding a bypass flag
  * to that handler was considered and rejected in the ADR: it would put the
@@ -55,7 +55,7 @@
  * logs in and decrypts nothing. What M192 adds is a mailed reset the ACCOUNT
  * HOLDER runs (`POST /v1/auth/reset/request`), which hands them the escrowed
  * recovery code so they can run the ordinary ceremony themselves. The admin's
- * part of it is `POST /accounts/:id/reset-mail` — spec 03 — and it sends the
+ * part of it is `POST /accounts/:id/reset-mail`, spec 03, and it sends the
  * letter rather than changing anything.
  */
 import express from 'express';
@@ -117,7 +117,7 @@ export const PAGING_REFUSAL = `limit must be 0-${MAX_ADMIN_PAGE_LIMIT} and offse
  * It EXTENDS the protocol's `AccountView` rather than redefining it, so the
  * contract's "`accounts: AccountView[]`" is satisfied by construction and a
  * field added to one is a compile error until it is added here too. The two
- * extra fields are ADR-0001's operator facts — see `admin/admin-store.ts`.
+ * extra fields are ADR-0001's operator facts, see `admin/admin-store.ts`.
  */
 interface AdminAccountView extends AccountView {
   blob: { sizeBytes: number; updatedAt: string } | null;
@@ -200,6 +200,16 @@ interface AdminStatsView {
     protein: number;
     contributors: number;
     fastingNow: number;
+  };
+  /**
+   * Web push (M223): subscribed devices, and notifications sent today.
+   *
+   * NEVER AN ENDPOINT AND NEVER A KEY, which is why this is two integers rather
+   * than a list. See ADR-0008.
+   */
+  push: {
+    subscriptions: number;
+    sentToday: number;
   };
 }
 
@@ -299,6 +309,11 @@ function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | 
       contributors: stats.pulse.contributors,
       fastingNow: stats.pulse.fastingNow,
     },
+    // PROJECTED, not spread, for the reason the pulse block above is.
+    push: {
+      subscriptions: stats.push.subscriptions,
+      sentToday: stats.push.sentToday,
+    },
   };
 }
 
@@ -309,7 +324,7 @@ function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | 
  * nested objects depending on what the caller sent, which is exactly the
  * "unproven shape" `lib/json.ts` exists to keep out of the code. Re-parsing
  * the URL gives a `URLSearchParams`, whose `get` is `string | null` by
- * contract — a decoded value, not a representation to inspect. A repeated
+ * contract, a decoded value, not a representation to inspect. A repeated
  * parameter yields its first occurrence, which is the same answer as picking
  * one out of an array and needs no branch.
  */
@@ -383,7 +398,7 @@ export const DEFAULT_INVITE_DAILY_AI_LIMIT = 0;
 
 /**
  * The wire shape of one invite. Every field is named here, and `tokenHash` is
- * not among them — nor is it fetched (`db/invite-store.ts`).
+ * not among them, nor is it fetched (`db/invite-store.ts`).
  */
 interface AdminInviteView {
   id: number;
@@ -423,7 +438,7 @@ function toInviteView(invite: InviteSummary, now: Date): AdminInviteView {
  * as much as how long it lives.
  *
  * `null` when the operator configured neither a public URL for this service nor
- * a base URL for the client — a self-hosted instance may legitimately have
+ * a base URL for the client, a self-hosted instance may legitimately have
  * neither, and inventing one would produce a link that goes nowhere. The raw
  * token is returned in its own field then, so the capability always reaches
  * somebody.
@@ -447,13 +462,13 @@ function buildResetLink(input: { links: AdminLinkBases | null; token: string }):
   return `${input.links.clientBaseUrl.replace(/\/+$/, '')}/reset#server=${server}&token=${input.token}`;
 }
 
-/** The two absolute URLs a join link is built from. Both or neither — see `config.ts`. */
+/** The two absolute URLs a join link is built from. Both or neither, see `config.ts`. */
 export interface AdminLinkBases {
   clientBaseUrl: string;
   serverPublicUrl: string;
 }
 
-/** The mint response. `token` is present ONLY when `link` is `null` — see the route. */
+/** The mint response. `token` is present ONLY when `link` is `null`, see the route. */
 interface MintInviteResponse {
   invite: AdminInviteView;
   emailed: boolean;
@@ -549,7 +564,7 @@ function parseAccountPatch(body: JsonValue): ParseAccountPatchResult {
  * An admin ACCOUNT may not suspend, demote or delete itself: an organization
  * with one administrator who demotes their own account has locked everybody out
  * of `/v1/admin`, and the remedy is a shell on the container. Every other change
- * to their own row is allowed — a display name is not a lockout.
+ * to their own row is allowed, a display name is not a lockout.
  *
  * THE STATIC TOKEN IS EXEMPT BY CONSTRUCTION rather than by an exception: it
  * belongs to whoever runs the container, it is not an account, and it has no
@@ -563,9 +578,9 @@ function isSelfLockout(input: { req: Request; targetAccountId: number; lockingOu
 }
 
 export interface AdminRoutesOptions {
-  /** Metadata reads. Deliberately not the account store — see `admin/admin-store.ts`. */
+  /** Metadata reads. Deliberately not the account store, see `admin/admin-store.ts`. */
   metadata: AdminMetadataStore;
-  /** Invite minting, reissue and revocation — see `admin/invite-store.ts`. */
+  /** Invite minting, reissue and revocation, see `admin/invite-store.ts`. */
   invites: InviteStore;
   /** The SAME store the self-service delete path uses. `deleteAccount` and the reset-mail write. */
   accounts: AccountStore;
@@ -608,7 +623,7 @@ export interface AdminRoutesOptions {
 }
 
 /**
- * Builds the admin router. It does NOT include authentication — `create-app.ts`
+ * Builds the admin router. It does NOT include authentication, `create-app.ts`
  * mounts `createAdminAuthMiddleware` in front of it, in the same branch that
  * decides whether to mount anything at all.
  */
@@ -1115,7 +1130,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       });
 
       // THE ONE RESPONSE IN THIS SERVICE THAT CARRIES A FRESH SECRET. It is an
-      // operator-born capability, born here and stored only as a digest — see
+      // operator-born capability, born here and stored only as a digest, see
       // ADR-0001. The token is never logged, here or in `logger.ts`.
       logger.info('Signup invite minted', { inviteId: minted.minted.invite.id });
 

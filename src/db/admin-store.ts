@@ -1,16 +1,16 @@
 /**
- * Drizzle implementation of `AdminMetadataStore` — the only module that reads
+ * Drizzle implementation of `AdminMetadataStore`, the only module that reads
  * account rows on an operator's behalf.
  *
  * EVERY SELECT HERE NAMES ITS COLUMNS, AND THAT IS THE POINT. Not one query
  * below is a `select()` over a whole table. `accounts` carries the verifier
  * and the KDF descriptor, `sync_blobs` carries the ciphertext, and
- * `sync_key_records` carries the wrapped DEK — so a bare `select()` would put
+ * `sync_key_records` carries the wrapped DEK, so a bare `select()` would put
  * all three in a row object one careless spread away from a response body.
  * Naming the columns means the forbidden material is never read out of
  * Postgres at all, which is a stronger property than filtering it afterwards:
  * a value that was never fetched cannot be leaked by a later edit to a mapper.
- * (`db/account-store.ts` DOES select whole rows, correctly — the auth handlers
+ * (`db/account-store.ts` DOES select whole rows, correctly, the auth handlers
  * genuinely need the verifier to check a login. The admin surface never does.)
  *
  * THE BLOB IS DESCRIBED FROM `size_bytes`, NEVER FROM THE BYTES. That column
@@ -21,7 +21,7 @@
  * `recovery_code_escrow` JOINS THAT LIST OF COLUMNS NEVER NAMED HERE (M192).
  * It is the one field on `accounts` that a server-side key can turn back into
  * a credential, and an operator's legitimate need for it is served by the
- * mailed reset — which delivers it to the ACCOUNT HOLDER — rather than by an
+ * mailed reset, which delivers it to the ACCOUNT HOLDER, rather than by an
  * endpoint that would print it into a console.
  *
  * The per-account fan-out (blob summary, key-record kinds) is two extra
@@ -46,8 +46,9 @@ import type { Database } from './client.js';
 import { utcDayKey } from '../lib/utc-day.js';
 import { accounts, aiUsageDays, signupInvites, syncBlobs, syncKeyRecords } from './schema.js';
 import { createDrizzlePulseStore } from '../pulse/pulse-store.js';
+import { createDrizzlePushStore } from '../push/push-store.js';
 
-/** The identity columns — deliberately enumerated, never `select()`. See the module header. */
+/** The identity columns, deliberately enumerated, never `select()`. See the module header. */
 interface AccountIdentityRow {
   id: number;
   email: string;
@@ -62,8 +63,8 @@ interface AccountIdentityRow {
 
 /**
  * The columns an operator may see. Named once so the list and the detail read
- * cannot drift, and so the forbidden ones — `verifier`, `recovery_verifier`,
- * `kdf_descriptor`, `recovery_code_escrow` — are absent in one visible place
+ * cannot drift, and so the forbidden ones, `verifier`, `recovery_verifier`,
+ * `kdf_descriptor`, `recovery_code_escrow`, are absent in one visible place
  * rather than in two.
  */
 const IDENTITY_COLUMNS = {
@@ -116,7 +117,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
     return summaries;
   }
 
-  /** Today's AI spend per account, for the given ids. A count, never a log — see `db/schema.ts`. */
+  /** Today's AI spend per account, for the given ids. A count, never a log, see `db/schema.ts`. */
   async function aiUsage(accountIds: number[], day: string): Promise<Map<number, number>> {
     const usage = new Map<number, number>();
     if (accountIds.length === 0) return usage;
@@ -325,6 +326,10 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       // second place the contributor count could drift from the floor the
       // client draws from it.
       const pulse = await createDrizzlePulseStore(db).totals({ day: utcDayKey(input.now), now: input.now });
+      // DELEGATED FOR THE SAME REASON. `push/push-store.ts` owns that table,
+      // and a count written out again here would be a second place to forget
+      // that a subscription is a credential.
+      const push = await createDrizzlePushStore(db).stats({ day: utcDayKey(input.now) });
 
       const [accountTotals] = await db.select({ total: count() }).from(accounts);
       const [adminTotals] = await db.select({ total: count() }).from(accounts).where(eq(accounts.role, 'admin'));
@@ -371,6 +376,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         // contract, even when this one always will.
         aiRequestsToday: toByteCount(aiTotals?.total ?? null),
         pulse,
+        push,
       };
     },
   };

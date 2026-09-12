@@ -436,7 +436,9 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is `en` or `de` (the two languages its mail is written in), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), and `ai` is `null` when no upstream key is configured.
+
+`push` follows `plans` exactly: a boolean that says only whether a door exists. `false` means the whole `/v1/push` subtree answers the ordinary unknown-path `404`, so a client draws no notification settings. It says nothing about what a push contains, because a push contains a kind and nothing else (§5.24).
 
 `plans` is a **boolean and not an optional promise**, which is the opposite of the choice `instance.feedback` makes below, on purpose. That field is a promise about what happens to a photograph, and an instance with nothing to promise omits it. This one promises nothing: it says only whether a door exists, which is the same kind of statement `mail` and `memberInvites` make, so `false` is the honest answer both for an instance with no biller and for a service built before the field existed.
 
@@ -1335,6 +1337,80 @@ Seven properties a conforming implementation MUST hold:
 
 `GET /v1/admin/stats` (§5.20) reports today's pulse to the operator as `pulse: { meals, photos, kcal, protein, contributors, fastingNow }`, which is the same set every member can already read.
 
+### 5.24 `/v1/push/*`: web push (ADR-0008)
+
+**Off unless the operator set all three `VAPID_*` variables**, and then opt in per device. With none of them set the whole subtree answers the ordinary unknown-path `404` to everybody, credentialed or not, and `GET /health` reports `instance.push: false`.
+
+**The server writes no notification text.** Every push it sends is one field:
+
+```json
+{ "kind": "catch-up" }
+{ "kind": "fast-target" }
+```
+
+The device wakes, reads the diary only it can read, and writes the words. A conforming client MUST be able to render something for either kind without the payload telling it anything, because the payload never will.
+
+Four routes, all behind the account's ordinary **access token** (§4.1). An anonymous caller on a configured instance gets the ordinary `401`.
+
+```
+GET /v1/push/config
+Authorization: Bearer <accessToken>
+
+200 { "publicKey": "<VAPID application server key, base64url>" }
+```
+
+```
+PUT /v1/push/subscriptions
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "endpoint": "https://push.example.org/f7a1…",
+  "keys": { "p256dh": "<base64url>", "auth": "<base64url>" },
+  "replaces": "https://push.example.org/older…",
+  "timeZone": "Europe/Berlin",
+  "locale": "de",
+  "catchUpMinute": 480,
+  "fastTargetEnabled": true
+}
+
+201 { "subscribed": true }   a device seen for the first time
+200 { "subscribed": true }   the same endpoint again
+```
+
+```
+PATCH /v1/push/subscriptions
+{ "endpoint": "…", "timeZone": "…", "locale": "…", "catchUpMinute": 420, "fastTargetEnabled": false, "wakeAt": "2026-01-15T18:30:00Z" }
+
+200 { "updated": true }
+404 { "error": "no such subscription" }
+```
+
+```
+DELETE /v1/push/subscriptions
+{ "endpoint": "…" }
+
+200 { "unsubscribed": true }
+```
+
+Nine properties a conforming implementation MUST hold:
+
+1. **A subscription is identified by its endpoint**, which the push service minted and which is globally unique. `PUT` is an upsert on it: a device that registers the same endpoint again gets `200` and keeps the day it was first seen.
+2. **`replaces` names the endpoint this registration supersedes**, and it is deleted **only when it belongs to the same account**. A service worker re-registration mints a new endpoint without unsubscribing the old one, so without this the orphan would sit there answering `201` to nobody forever. A `replaces` equal to `endpoint` is a device naming itself and deletes nothing.
+3. **`timeZone` is an IANA name and is validated at write time.** An unknown zone is `400`. The whole catch-up is a local clock question, so a zone the server cannot read would be a notification at the wrong hour rather than an error.
+4. **`catchUpMinute` is a minute of the local day, 0 to 1439, or `null`** for "no catch-up on this device". `null` is the quiet default.
+5. **`wakeAt` is a one shot instant**, ISO 8601, or `null` to clear it. The server sends the fast target alert when it passes and clears the column in the same write, so it can never fire twice. An absent field in a `PATCH` leaves it exactly as it was.
+6. **The catch-up goes out once per LOCAL day**, when the subscription's own clock has passed its minute and it has not already gone out today there. A local day across a changeover is 23 or 25 hours, so a UTC period is not an implementation of this rule.
+7. **Seven days of silence pauses it.** A subscription whose last registration or schedule change was more than seven local days ago receives no catch-up until it comes back.
+8. **At most two pushes per subscription per UTC day.** A third is skipped, never queued.
+9. **A `404` or a `410` from the push service deletes the row.** Nothing else does: a `400`, a `401`, a `403`, a `429` and every `5xx` are transient or about the sender, and pruning on them would empty the table the first time a key was pasted wrong.
+
+The collapse topics are `openplate-catchups` and `openplate-fast`, the TTL is 6 hours, and the urgency is normal for the catch-up and high for the fast target. A topic MUST be URL-safe base64 characters, at most 32 of them, and a length that is **never 1 mod 4**: Apple decodes the topic and answers `400 BadWebPushTopic` otherwise, while other push services accept it, so the defect is invisible on everything but an iPhone.
+
+No route ever returns an endpoint or a device key, and the routes log a path, a method, a status and a byte count only: never the account id and never the endpoint, which is a capability.
+
+`GET /v1/admin/stats` (§5.20) reports `push: { subscriptions, sentToday }` to the operator, which is two integers and never a row.
+
 ## 6. Version handshake: required, and required to fail closed
 
 **A client MUST read this document from the service and check it before its first sync of a session.**
@@ -1402,6 +1478,7 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
 - **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
 - **AI usage**: one integer per account per UTC day, **kept for 90 days and then deleted** (§5.20). A count, never a log: no prompt, no response, no model, no timestamp beyond the day. An operator can read one account's counters as a day-by-day strip (`GET /v1/admin/accounts/:id/activity`), which is metadata about when a person used a health app and is bounded for exactly that reason.
 - **The community pulse**, for accounts that turned it on (§5.23, ADR-0007): instance-wide day sums of meals, photographs, calories and grams of protein, one row per contributing account per day, and a short lived presence row saying that an account is fasting right now. The sums are not attributable to anybody; the contributor row and the presence row are, and they say only "this account contributed today" and "this account is fasting". Day sums and contributor rows are **kept 30 days**, presence expires 30 minutes after the last heartbeat, and the routes log no account id. A person who never turned it on sends nothing and appears in none of it.
+- **A push subscription**, for a device whose owner turned notifications on (§5.24, ADR-0008): the push service endpoint, the two keys it encrypts to, a capped user agent string, an IANA time zone, a locale, the minute of the local day a catch-up is due, the local day one last went out, the local day the device was last seen, the instant it asked to be woken, and a count of what has been sent today. Together those say roughly when this person is awake, roughly where in the world they are, and, through `wake_at`, when a fast of theirs ends. **That last one lines up with the pulse's presence row**, which says the same fast is running; ADR-0008 names the correlation rather than leaving it to be discovered. What is NOT stored is a word of any notification's text: every push carries a kind. The row goes when the device unsubscribes, when the push service disowns it, or with the account.
 - **When a person last did something**: `accounts.last_seen_at`, written by a login and by a proxied completion, and deliberately not by a token refresh or a sync poll, so it means "somebody acted" rather than "a client was running". It is visible to an operator (§5.20) and goes with the account row on deletion.
 - **Session metadata**: how many active sessions exist, when each was created, and when tokens were last rotated or revoked. Token values themselves are stored only as digests.
 - **The study graph**, on a deployment with `SYNC_RESEARCH` set (§5.18): which

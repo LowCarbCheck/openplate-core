@@ -1,7 +1,7 @@
 /**
  * Integration-test database harness.
  *
- * Points at the SHARED local Postgres (`localhost:5433` by default — the
+ * Points at the SHARED local Postgres (`localhost:5433` by default, the
  * workspace's `projects-postgres-1`), never at a per-repo compose database.
  * `docker/compose.yml` exists for self-hosters; using it for tests would mean
  * every developer running a second Postgres for no reason. A contributor with
@@ -10,7 +10,7 @@
  *
  * The test database is created idempotently (a `42P04` "already exists" is
  * the expected outcome on every run after the first) and migrated with the
- * SAME committed migrations production uses — which is the point. A harness
+ * SAME committed migrations production uses, which is the point. A harness
  * that built its schema by any other route would let a broken migration pass
  * a green suite.
  *
@@ -22,7 +22,7 @@ import { sqlstate } from '../../src/lib/storage-conflict.js';
 
 const DEFAULT_TEST_DATABASE_URL = 'postgres://postgres:postgres@localhost:5433/openplate_sync_test';
 
-/** Postgres SQLSTATE for "database already exists" — the normal case, not an error. */
+/** Postgres SQLSTATE for "database already exists", the normal case, not an error. */
 const DUPLICATE_DATABASE = '42P04';
 
 export function testDatabaseUrl(): string {
@@ -80,7 +80,7 @@ export async function setupTestDatabase(): Promise<TestDatabase> {
       // still be there in the next one, and a ceiling or a floor test would
       // fail as a fixture problem.
       await handle.pool.query(
-        'TRUNCATE TABLE account_tokens, password_resets, ai_usage_days, ai_instance_days, pulse_days, pulse_day_contributors, pulse_presence, pulse_idempotency, sync_blobs, sync_key_records, sync_shares, research_contributions, research_withdrawals, feedback_images, feedback_reports, signup_invites, accounts RESTART IDENTITY CASCADE',
+        'TRUNCATE TABLE account_tokens, password_resets, ai_usage_days, ai_instance_days, pulse_days, pulse_day_contributors, pulse_presence, pulse_idempotency, push_subscriptions, sync_blobs, sync_key_records, sync_shares, research_contributions, research_withdrawals, feedback_images, feedback_reports, signup_invites, accounts RESTART IDENTITY CASCADE',
       );
     },
   };

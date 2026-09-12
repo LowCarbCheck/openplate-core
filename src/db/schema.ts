@@ -1,10 +1,10 @@
 /**
- * Table definitions — the source of truth for this service's schema.
+ * Table definitions, the source of truth for this service's schema.
  *
  * Every change here must ship a generated migration: run `pnpm drizzle:generate`
  * and commit the resulting `drizzle/migrations/<n>_<name>.sql` +
  * `meta/_journal.json` alongside the edit. `pnpm drizzle:push` is a dev-only
- * convenience for a throwaway local database — it never reaches
+ * convenience for a throwaway local database, it never reaches
  * `drizzle/migrations/`, so it never ships to anything that boots via the
  * migrator (which every deployment does; see `src/main.ts`). Never hand-edit
  * `when` timestamps in the journal: the migrator applies only migrations
@@ -15,7 +15,7 @@
  * app in M128 spec 02, together with the security-reviewed CAS adapter that
  * writes them (`db/storage-adapter.ts`). The migrations are a fresh baseline
  * rather than a port of the app's history: zero production blobs ever
- * existed, so there was nothing to migrate — only DDL to re-home.
+ * existed, so there was nothing to migrate, only DDL to re-home.
  */
 import { relations, sql, type InferInsertModel, type InferSelectModel } from 'drizzle-orm';
 import {
@@ -33,7 +33,7 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
+import type { AccountRole, InstanceLanguage, SyncKeyRecordKind } from '../protocol.js';
 import type { AccountTokenKind } from '../lib/tokens.js';
 import type { KdfDescriptor } from '../lib/kdf-descriptor.js';
 import type { JsonObject } from '../lib/json.js';
@@ -81,7 +81,7 @@ export const accounts = pgTable(
      * between still knows their address. The address is also what makes an
      * invitation and a password reset deliverable at all.
      *
-     * Stored already-normalized — NFKC, trim, lowercase, at most 254
+     * Stored already-normalized, NFKC, trim, lowercase, at most 254
      * characters, exactly one `@` (`accounts/auth-input.ts`'s `parseEmail`).
      * See the index below for why normalizing before the write is what makes
      * uniqueness true.
@@ -101,8 +101,8 @@ export const accounts = pgTable(
      */
     role: text('role').$type<AccountRole>().default('member').notNull(),
     /**
-     * How many AI requests this account may make per UTC day. `0` — the
-     * default, and what an invite that says nothing grants — means no AI at
+     * How many AI requests this account may make per UTC day. `0`, the
+     * default, and what an invite that says nothing grants, means no AI at
      * all, refused with `403 ai-not-allowed` rather than silently ignored.
      * Spend is counted in `ai_usage_days`.
      */
@@ -143,7 +143,7 @@ export const accounts = pgTable(
     suspendedAt: timestamp('suspended_at'),
     /**
      * The last time this account presented a live access token. Operator
-     * diagnostics only — never a rate limit, never an authorization input.
+     * diagnostics only, never a rate limit, never an authorization input.
      * Nullable because an account that has never signed in since the column
      * existed has no honest value to report.
      *
@@ -157,7 +157,7 @@ export const accounts = pgTable(
      */
     lastSeenAt: timestamp('last_seen_at'),
     /**
-     * THE RECOVERY CODE, SEALED — and the one column on this service that a
+     * THE RECOVERY CODE, SEALED, and the one column on this service that a
      * reader should stop and think about.
      *
      * `iv(12) ‖ AES-256-GCM(escrowKey, recoveryCode) ‖ tag(16)`, under a
@@ -179,7 +179,7 @@ export const accounts = pgTable(
      */
     recoveryCodeEscrow: bytea('recovery_code_escrow'),
     /**
-     * `HMAC-SHA-256(serverPepper, clientAuthHash)`, hex — never the auth-hash
+     * `HMAC-SHA-256(serverPepper, clientAuthHash)`, hex, never the auth-hash
      * itself and never anything that can decrypt a blob. See
      * `lib/verifier.ts` for why this is a fast keyed hash and not a second
      * slow KDF.
@@ -209,7 +209,7 @@ export const accounts = pgTable(
     recoveryVerifier: text('recovery_verifier'),
     /**
      * Argon2id salt + cost parameters, served UNAUTHENTICATED to a new device
-     * before login (PROTOCOL.md §5.7). Non-secret by construction — a salt
+     * before login (PROTOCOL.md §5.7). Non-secret by construction, a salt
      * that has to be handed out cannot be a secret, and cost parameters are
      * published in the protocol anyway.
      */
@@ -224,7 +224,7 @@ export const accounts = pgTable(
   // `normalizeEmail`: NFKC, trim, lowercase), so a plain unique index is a
   // true case-insensitive AND Unicode-form-insensitive uniqueness guarantee.
   // This index is also what makes concurrent signups for the same address safe
-  // — never a read-then-insert check.
+  //, never a read-then-insert check.
   (table) => [uniqueIndex('accounts_email_idx').on(table.email)],
 );
 
@@ -264,13 +264,13 @@ export const accountTokens = pgTable(
      */
     familyId: text('family_id'),
     expiresAt: timestamp('expires_at').notNull(),
-    /** Set once, never cleared. Revocation is permanent — a re-login mints new rows. */
+    /** Set once, never cleared. Revocation is permanent, a re-login mints new rows. */
     revokedAt: timestamp('revoked_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
     // Lookup is always by digest, and a digest collision across accounts would
-    // be an authentication bypass — so uniqueness here is a security property,
+    // be an authentication bypass, so uniqueness here is a security property,
     // not an optimization.
     uniqueIndex('account_tokens_hash_idx').on(table.tokenHash),
     index('account_tokens_account_kind_idx').on(table.accountId, table.kind),
@@ -376,14 +376,14 @@ export const signupInvites = pgTable(
   },
   (table) => [
     // Lookup is always by digest, and a collision would let one invite redeem
-    // as another — so uniqueness here is a security property, as it is on
+    // as another, so uniqueness here is a security property, as it is on
     // `account_tokens`.
     uniqueIndex('signup_invites_hash_idx').on(table.tokenHash),
     // Supports the operator listing outstanding invites newest-first.
     index('signup_invites_created_idx').on(table.createdAt),
     // Supports "is there a pending invite for this address?", which every mint
     // asks in order to supersede one. NOT unique: an address may legitimately
-    // have several rows over time — one redeemed, one revoked, one live.
+    // have several rows over time, one redeemed, one revoked, one live.
     index('signup_invites_email_idx').on(table.email),
     // Supports the lifetime cap, which is counted as "how many rows carry this
     // account" on every member mint. NOT unique, obviously: five is the point.
@@ -409,7 +409,7 @@ export type SelectSignupInvite = InferSelectModel<typeof signupInvites>;
  * server already holds in escrow (`accounts.recovery_code_escrow`), and the
  * CLIENT then runs the ordinary `POST /v1/auth/recover-rotate` ceremony with
  * it: prove the code, set a new passphrase, re-wrap the DEK, re-escrow a new
- * code — one transaction, exactly as before. The link is a delivery mechanism
+ * code, one transaction, exactly as before. The link is a delivery mechanism
  * for a credential the operator already has, never a new authority.
  *
  * The honest consequence is on `accounts.recovery_code_escrow`, not here: what
@@ -440,7 +440,7 @@ export const passwordResets = pgTable(
   },
   (table) => [
     // Lookup is always by digest, and a collision across accounts would hand
-    // one person another person's recovery code — uniqueness here is a
+    // one person another person's recovery code, uniqueness here is a
     // security property, exactly as it is on `account_tokens`.
     uniqueIndex('password_resets_hash_idx').on(table.tokenHash),
     // Supports superseding an account's older unconsumed rows on every request.
@@ -460,7 +460,7 @@ export type SelectPasswordReset = InferSelectModel<typeof passwordResets>;
  * `accounts.daily_ai_limit`.
  *
  * A COUNTER, NOT A LOG. There is no prompt, no response, no model, no
- * timestamp beyond the day, and no request id — nothing here says what anybody
+ * timestamp beyond the day, and no request id, nothing here says what anybody
  * asked. That is the whole design: a quota needs a number, and a number is all
  * this table is allowed to hold on a service that stores health-adjacent data
  * it cannot read.
@@ -661,6 +661,80 @@ export type InsertPulseIdempotency = InferInsertModel<typeof pulseIdempotency>;
 export type SelectPulseIdempotency = InferSelectModel<typeof pulseIdempotency>;
 
 // =============================================================================
+// Web push subscriptions (M223, ADR-0008)
+// =============================================================================
+
+/**
+ * ONE ROW PER DEVICE THAT ASKED TO BE WOKEN: where to send, when to send, and
+ * what was sent last. Never what to say.
+ *
+ * THE SERVER WRITES NO TEXT, and this table is the proof of it: there is no
+ * title column, no body column and no history of a sentence. A push carries a
+ * kind (`push/send.ts`), the device reads its own diary and writes the words.
+ * See `docs/adr/0008-push-is-a-scheduling-exception.md`.
+ *
+ * `endpoint` IS THE IDENTITY, not the pair `(account_id, endpoint)`. A push
+ * endpoint is minted by the push service and is globally unique by
+ * construction, so a unique index on it is what makes a re-registration an
+ * upsert rather than a second row, and what lets the 404/410 prune delete by
+ * endpoint alone without knowing whose it was.
+ *
+ * `onDelete: 'cascade'`, so an erased account stops being woken in the same
+ * statement that erases it.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: serial('id').primaryKey(),
+    accountId: integer('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The push service URL this device is reachable at. Unique across the instance, see the header. */
+    endpoint: text('endpoint').notNull(),
+    /** The device's public key, base64url. A sending credential: never returned by a route, never logged. */
+    p256dh: text('p256dh').notNull(),
+    /** The device's auth secret, base64url. Same rule as `p256dh`. */
+    auth: text('auth').notNull(),
+    /** Trimmed and capped at 160 characters by the route, so a person can tell two opaque endpoints apart. */
+    userAgent: text('user_agent'),
+    /** An IANA zone name, validated with `Intl.DateTimeFormat` at write time. The catch-up is a LOCAL clock question. */
+    timeZone: text('time_zone').notNull(),
+    /** `en` or `de`. Carried for the device, which is not always the device that registered. */
+    locale: text('locale').$type<InstanceLanguage>().notNull(),
+    /** The minute of the local day the catch-up is due, 0 to 1439, or `null` for "no catch-up on this device". */
+    catchUpMinute: integer('catch_up_minute'),
+    /** Whether this device wants the fast target alert. Separately toggled from the catch-up on purpose. */
+    fastTargetEnabled: boolean('fast_target_enabled').default(false).notNull(),
+    /** The local day the last catch-up went out, which is what makes it once per LOCAL day. */
+    lastCatchUpDay: date('last_catch_up_day', { mode: 'string' }),
+    /** The local day this device last registered or changed its schedule. The seven day pause reads it. */
+    lastSeenDay: date('last_seen_day', { mode: 'string' }).notNull(),
+    /** The instant this device asked to be woken, one shot: the tick sends and clears it in the same write. */
+    wakeAt: timestamp('wake_at', { withTimezone: true }),
+    /** The UTC day `sendsToday` counts, so a new day resets the cap without a sweep. */
+    sendsTodayDay: date('sends_today_day', { mode: 'string' }),
+    /** How many pushes went to this subscription on `sendsTodayDay`. The cap is two, see `push/push-scheduler.ts`. */
+    sendsToday: integer('sends_today').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('push_subscriptions_endpoint_key').on(table.endpoint),
+    // The tick reads every row that has a schedule; the account lookup is the
+    // route's, and both are small, so one index on the owner covers both.
+    index('push_subscriptions_account_idx').on(table.accountId),
+    // A minute of the day, or nothing. A value outside the range would be a
+    // catch-up that either never fires or fires at a moment no clock reaches.
+    check(
+      'push_subscriptions_catch_up_minute_range',
+      sql`${table.catchUpMinute} IS NULL OR (${table.catchUpMinute} >= 0 AND ${table.catchUpMinute} <= 1439)`,
+    ),
+  ],
+);
+
+export type InsertPushSubscription = InferInsertModel<typeof pushSubscriptions>;
+export type SelectPushSubscription = InferSelectModel<typeof pushSubscriptions>;
+
+// =============================================================================
 // Sync blobs (relocated from the openplate app, M128 spec 02)
 // =============================================================================
 
@@ -678,7 +752,7 @@ export const syncBlobs = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     /**
-     * Monotonic per-account version — the CAS token (PROTOCOL.md §5.1). A
+     * Monotonic per-account version, the CAS token (PROTOCOL.md §5.1). A
      * push is accepted only when its `baseVersion` equals the current max;
      * a stale push is a `409`, never a blind overwrite that would silently
      * discard another device's unsynced changes.
@@ -696,7 +770,7 @@ export const syncBlobs = pgTable(
     // The CAS guarantee itself: two concurrent pushes off the same
     // `baseVersion` can both pass the read, but only one INSERT of the same
     // (account, version) pair can survive. Retention (N=5) is enforced by the
-    // adapter's prune step — Postgres has no native "keep last N rows" rule.
+    // adapter's prune step, Postgres has no native "keep last N rows" rule.
     uniqueIndex('sync_blobs_account_version_idx').on(table.accountId, table.blobVersion),
     index('sync_blobs_account_idx').on(table.accountId),
   ],
@@ -716,14 +790,14 @@ export const syncKeyRecords = pgTable(
     accountId: integer('account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    /** Which KEK this record wraps the account's DEK under — `passphrase` or `recovery`. */
+    /** Which KEK this record wraps the account's DEK under, `passphrase` or `recovery`. */
     kind: text('kind').$type<SyncKeyRecordKind>().notNull(),
     /** Argon2id salt + params for the `passphrase` kind; NULL for `recovery` (HKDF-only, nothing to record). */
     kdfDescriptor: jsonb('kdf_descriptor').$type<JsonObject>(),
     /** The account's DEK wrapped under this record's KEK, one packed `iv ‖ ciphertext‖tag` blob. Never unwrapped here. */
     wrappedDek: bytea('wrapped_dek').notNull(),
     /**
-     * MILLISECOND precision, deliberately — `timestamp(3)`, not the `timestamp(6)`
+     * MILLISECOND precision, deliberately, `timestamp(3)`, not the `timestamp(6)`
      * a bare `timestamp()` gives you. Kept identical to `updatedAt` below so the
      * two are comparable; see that column for the whole reason.
      */
@@ -739,13 +813,13 @@ export const syncKeyRecords = pgTable(
      * (= `timestamp(6)`) an INSERT that let `defaultNow()` supply the value
      * stored a µs tail the wire could not express, so the token a client read
      * back was a truncation of the stored value and the exact-equality CAS
-     * matched zero rows — every rotation 409'd forever (M160 spec 06).
+     * matched zero rows, every rotation 409'd forever (M160 spec 06).
      *
      * Declaring the precision fixes the CLASS rather than the instance: the
      * database now refuses to hold anything the protocol cannot round-trip, so
      * the next writer who reaches for `defaultNow()` here cannot reintroduce
      * the trap. `sync_shares` solves the same problem the other way, by writing
-     * JS `Date`s on insert — that works, but only for as long as every future
+     * JS `Date`s on insert, that works, but only for as long as every future
      * insert remembers to.
      */
     updatedAt: timestamp('updated_at', { precision: 3 })
@@ -760,7 +834,7 @@ export type InsertSyncKeyRecord = InferInsertModel<typeof syncKeyRecords>;
 export type SelectSyncKeyRecord = InferSelectModel<typeof syncKeyRecords>;
 
 // =============================================================================
-// Sync shares (ADR-0002 — sharing a diary without giving the server a key)
+// Sync shares (ADR-0002, sharing a diary without giving the server a key)
 // =============================================================================
 
 /**
@@ -769,7 +843,7 @@ export type SelectSyncKeyRecord = InferSelectModel<typeof syncKeyRecords>;
  * The server's position is unchanged by this table: it holds one more blob it
  * has no key for. `wrappedDek` here is the ADR's frozen 125-byte
  * `ephPub(65) ‖ iv(12) ‖ AES-256-GCM(KEK_share, DEK, aad=...)` construction,
- * and the AAD binds the wrap to its grantor and its recipient key — so a
+ * and the AAD binds the wrap to its grantor and its recipient key, so a
  * malicious server splicing one patient's wrap into another patient's row
  * produces a tag failure rather than a misattributed diary.
  *
@@ -778,13 +852,13 @@ export type SelectSyncKeyRecord = InferSelectModel<typeof syncKeyRecords>;
  * through the atomic credential change of PROTOCOL.md §5.14. A share is
  * multi-valued, is held by a DIFFERENT principal, has a grant/revoke
  * lifecycle rather than create/rotate, and must never ride through
- * change-passphrase or reset — those rotate KEKs, and a share has no KEK to
+ * change-passphrase or reset, those rotate KEKs, and a share has no KEK to
  * rotate. A nullable discriminator would make the unique index partial and
  * fork every kind-validation branch.
  *
  * THE GRANTEE'S PUBLIC KEY IS NOT STORED HERE, only a fingerprint used for
  * pinning. Storing the key would make this service the clinician key
- * directory ADR-0002 rejects outright — a trust role a zero-knowledge service
+ * directory ADR-0002 rejects outright, a trust role a zero-knowledge service
  * does not have. The full public key is pinned inside the grantor's own
  * encrypted snapshot.
  *
@@ -792,7 +866,7 @@ export type SelectSyncKeyRecord = InferSelectModel<typeof syncKeyRecords>;
  * whole-database restore predates the revoke and so lacks the tombstone too,
  * which means it cannot prevent what it never contains, and re-creating a row
  * needs the grantor's own bearer token AND a fresh wrap only the grantor's
- * client can produce — a re-grant, which is a legitimate act. Against that
+ * client can produce, a re-grant, which is a legitimate act. Against that
  * zero defensive value stands a permanent server-side assertion that a named
  * patient was under a named clinician's care, outliving its own revocation.
  */
@@ -800,17 +874,17 @@ export const syncShares = pgTable(
   'sync_shares',
   {
     id: serial('id').primaryKey(),
-    /** The grantor — the account whose blob is being shared. Cascades: deleting it kills every grant it made. */
+    /** The grantor, the account whose blob is being shared. Cascades: deleting it kills every grant it made. */
     accountId: integer('account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    /** The grantee — the account the wrap is addressed to. Cascades: deleting it kills every wrap aimed at it. */
+    /** The grantee, the account the wrap is addressed to. Cascades: deleting it kills every wrap aimed at it. */
     granteeAccountId: integer('grantee_account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     /** The grantor's DEK wrapped to the grantee's public key. Opaque here; the service holds no key for it. */
     wrappedDek: bytea('wrapped_dek').notNull(),
-    /** Pinning metadata only (see the table doc) — never a key, and never served as one. */
+    /** Pinning metadata only (see the table doc), never a key, and never served as one. */
     recipientKeyFingerprint: text('recipient_key_fingerprint').notNull(),
     /** Millisecond precision, for the reason recorded on `updatedAt` below. */
     createdAt: timestamp('created_at', { precision: 3 }).defaultNow().notNull(),
@@ -822,7 +896,7 @@ export const syncShares = pgTable(
      *
      * MILLISECOND PRECISION, DECLARED, NOT MERELY WRITTEN. A bare `timestamp`
      * is `timestamp(6)`, and the wire carries ISO-8601 at millisecond
-     * precision — so a token read back over the wire is a TRUNCATION of what
+     * precision, so a token read back over the wire is a TRUNCATION of what
      * is stored, the exact `eq()` below it never matches, and every rotation
      * 409s forever. That is not hypothetical: it shipped on
      * `sync_key_records` and made "Regenerate recovery code" permanently
@@ -839,7 +913,7 @@ export const syncShares = pgTable(
       .notNull(),
   },
   (table) => [
-    // The stable identity of a share is the (grantor, grantee) PAIR — that is
+    // The stable identity of a share is the (grantor, grantee) PAIR, that is
     // what has to survive a DEK rotation, and it is why both sides of the API
     // address a share by the counterpart's account id and never by `id`.
     uniqueIndex('sync_shares_pair_idx').on(table.accountId, table.granteeAccountId),
@@ -855,14 +929,14 @@ export type InsertSyncShare = InferInsertModel<typeof syncShares>;
 export type SelectSyncShare = InferSelectModel<typeof syncShares>;
 
 // =============================================================================
-// Research contributions (ADR-0003 — pseudonymous, but never anonymous)
+// Research contributions (ADR-0003, pseudonymous, but never anonymous)
 // =============================================================================
 
 /**
  * A REDUCED, DATE-BOUNDED SLICE of one contributor's diary, sealed to one
  * study's public key. It is a different artifact from a share, not a narrower
  * one: different payload, different key, different lifecycle, and NO DEK is
- * involved at all — the wrap is over the payload directly (PROTOCOL.md §3.5).
+ * involved at all, the wrap is over the payload directly (PROTOCOL.md §3.5).
  *
  * WHY THIS IS NOT A `kind` ON `sync_shares`. ADR-0003 opens by forbidding
  * exactly that shortcut: "the researcher case must never be built as a share
@@ -875,7 +949,7 @@ export type SelectSyncShare = InferSelectModel<typeof syncShares>;
  * THE COLUMN THAT IS THE WHOLE PRIVACY DESIGN, AND THE ONE THAT IS NOT HERE.
  * `pseudonym` is `HMAC-SHA-256(root, "openplate-sync:study-pseudonym:v1" ‖
  * studyAccountId)` computed on the contributor's device from a root the
- * server never holds. The server neither computes nor verifies it — it
+ * server never holds. The server neither computes nor verifies it, it
  * cannot. `contributor_account_id` sits beside it because erasure, cascade
  * and CAS all need to find the row, and ADR-0003 discloses that edge in
  * PROTOCOL.md §9.2 rather than pretending to avoid it. **It stops here: no
@@ -889,7 +963,7 @@ export type SelectSyncShare = InferSelectModel<typeof syncShares>;
  * window of days rather than a 32-byte DEK.
  *
  * WITHDRAWAL IS A HARD DELETE, and unlike the share case a tombstone DOES
- * follow — into `research_withdrawals`, keyed by pseudonym alone. The two
+ * follow, into `research_withdrawals`, keyed by pseudonym alone. The two
  * facts are written in one transaction (`db/research-store.ts`).
  */
 export const researchContributions = pgTable(
@@ -900,7 +974,7 @@ export const researchContributions = pgTable(
     contributorAccountId: integer('contributor_account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    /** The study — an ordinary account (ADR-0003 D6: no principal type, no registry). Cascades from its end too. */
+    /** The study, an ordinary account (ADR-0003 D6: no principal type, no registry). Cascades from its end too. */
     studyAccountId: integer('study_account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
@@ -908,10 +982,10 @@ export const researchContributions = pgTable(
     pseudonym: text('pseudonym').notNull(),
     /** The fixed tier the payload conforms to (`daily-intake:v1`). Frozen by protocol revision, never by configuration. */
     schemaTier: text('schema_tier').notNull(),
-    /** The sealed payload. Opaque here — the service holds no key for it and never parses it. */
+    /** The sealed payload. Opaque here, the service holds no key for it and never parses it. */
     body: bytea('body').notNull(),
     /**
-     * MONOTONIC per (contributor, study) — the CAS token of PROTOCOL.md
+     * MONOTONIC per (contributor, study), the CAS token of PROTOCOL.md
      * §5.18, and an integer rather than a timestamp for the same reason the
      * blob's is: it also rides in the AAD, so a rollback to an older
      * contribution is what the check has to refuse.
@@ -921,7 +995,7 @@ export const researchContributions = pgTable(
     createdAt: timestamp('created_at', { precision: 3 }).defaultNow().notNull(),
     /**
      * Millisecond precision, DECLARED. This column is not itself a CAS token
-     * — `contribution_version` is — but it is served to the study client as
+     *, `contribution_version` is, but it is served to the study client as
      * an ISO-8601 string, and `scripts/assert-ms-precision.mts` holds the
      * whole service to one rule rather than to a per-column judgement about
      * which timestamps will one day be compared for equality. A bare
@@ -961,8 +1035,8 @@ export type SelectResearchContribution = InferSelectModel<typeof researchContrib
 /**
  * THE TOMBSTONE, AND THE COLUMN THAT MUST NEVER EXIST HERE.
  *
- * ADR-0003 prohibition 6: withdrawal is one transaction — hard-delete the
- * contribution, insert this row — and **no account id survives on any
+ * ADR-0003 prohibition 6: withdrawal is one transaction, hard-delete the
+ * contribution, insert this row, and **no account id survives on any
  * withdrawal record**. There is deliberately no `contributor_account_id`
  * column below, and adding one would defeat the entire point: the live system
  * forgets *who* withdrew and remembers only *that a pseudonym withdrew*. The
@@ -974,7 +1048,7 @@ export type SelectResearchContribution = InferSelectModel<typeof researchContrib
  * there a tombstone defended nothing, here it carries the instruction.
  *
  * The study foreign key cascades, so deleting a study account takes its
- * withdrawal ledger with it — a tombstone for a study that no longer exists
+ * withdrawal ledger with it, a tombstone for a study that no longer exists
  * instructs nobody.
  */
 export const researchWithdrawals = pgTable(
@@ -997,7 +1071,7 @@ export const researchWithdrawals = pgTable(
     uniqueIndex('research_withdrawals_pair_idx').on(table.studyAccountId, table.pseudonym),
     // A blank pseudonym is an instruction to purge nothing, which is a
     // withdrawal that erases nothing while reporting success. The database
-    // refuses to hold one — and that refusal is what makes the atomicity of
+    // refuses to hold one, and that refusal is what makes the atomicity of
     // `withdrawContribution` falsifiable with a LATE failure, after the
     // contribution row has already been deleted inside the transaction.
     check('research_withdrawals_pseudonym_present', sql`length(${table.pseudonym}) > 0`),

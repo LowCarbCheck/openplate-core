@@ -1,5 +1,5 @@
 /**
- * The read contract the admin API is written against — the metadata half of
+ * The read contract the admin API is written against, the metadata half of
  * `AccountStore`, deliberately kept as a SEPARATE interface rather than
  * grafted onto it.
  *
@@ -8,7 +8,7 @@
  * user's own request may cause: find an account, rotate a credential, revoke
  * a token. Nothing here is. Reading every account on the instance is an
  * operator action, and putting it on the same object would make it reachable
- * — one autocomplete away — from every handler that already has a store in
+ *, one autocomplete away, from every handler that already has a store in
  * scope. The two capabilities are separated so that a handler cannot enumerate
  * accounts by accident.
  *
@@ -17,7 +17,7 @@
  * digest, and there is no method that could be extended to produce one: the
  * blob is described by its BYTE COUNT and the instant it last changed, and a
  * key record by the fact that it exists. That is a projection, not a habit of
- * remembering not to select a column — see
+ * remembering not to select a column, see
  * `docs/adr/0001-an-admin-api-for-a-zero-knowledge-service.md` for what each
  * prohibition is protecting and why an operator has no legitimate use for the
  * material behind it.
@@ -29,6 +29,7 @@
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { AccountActivityCount, ActivityDay } from './account-activity.js';
 import type { PulseTotals } from '../pulse/pulse-store.js';
+import type { PushStats } from '../push/push-store.js';
 
 /**
  * What the admin surface knows about an account. Everything else about it is
@@ -49,7 +50,7 @@ export interface AdminAccountSummary {
   displayName: string | null;
   role: AccountRole;
   dailyAiLimit: number;
-  /** AI requests spent on the current UTC day — a count, never a log of what was asked. */
+  /** AI requests spent on the current UTC day, a count, never a log of what was asked. */
   aiUsedToday: number;
   /**
    * When this account's AI allowance ends, or `null` for no end at all. The
@@ -77,7 +78,7 @@ export interface AdminAccountSummary {
    */
   blob: AdminBlobSummary | null;
   /**
-   * WHICH key records exist — never their contents. `passphrase` present and
+   * WHICH key records exist, never their contents. `passphrase` present and
    * `recovery` absent tells an operator the user has no recovery path, which
    * is a real support answer; the wrapped DEK behind either of them is not.
    */
@@ -115,16 +116,16 @@ export interface AdminAccountPage {
   total: number;
 }
 
-/** Aggregate counts for the whole instance. Sums and counts only — no row here is attributable to a person. */
+/** Aggregate counts for the whole instance. Sums and counts only, no row here is attributable to a person. */
 export interface AdminStats {
   accounts: number;
   accountsWithBlob: number;
-  /** Every retained blob version, not just the newest one — this is what the disk actually holds. */
+  /** Every retained blob version, not just the newest one, this is what the disk actually holds. */
   blobVersions: number;
   keyRecords: number;
   /** Summed `size_bytes` across every retained blob version. */
   blobBytes: number;
-  /** Invites minted, not yet redeemed, not revoked, not expired — the letters still outstanding. */
+  /** Invites minted, not yet redeemed, not revoked, not expired, the letters still outstanding. */
   pendingInvites: number;
   /** Accounts whose `role` is `admin`. An operator's answer to "who else can do this". */
   admins: number;
@@ -141,6 +142,16 @@ export interface AdminStats {
    * See `docs/adr/0007-the-pulse-is-a-named-exception.md`.
    */
   pulse: PulseTotals;
+  /**
+   * Web push (M223): how many devices are subscribed on this instance, and how
+   * many notifications went out today.
+   *
+   * TWO NUMBERS AND NO ROW. An operator needs to know the feature is alive
+   * without reading an endpoint, which is a capability: anybody holding one and
+   * the instance's VAPID private key can wake that phone. See
+   * `docs/adr/0008-push-is-a-scheduling-exception.md`.
+   */
+  push: PushStats;
 }
 
 export interface ListAccountsInput {

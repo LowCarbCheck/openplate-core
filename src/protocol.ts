@@ -1,17 +1,17 @@
 /**
- * The E2EE sync WIRE CONTRACT — the entire shared surface between an openplate
+ * The E2EE sync WIRE CONTRACT, the entire shared surface between an openplate
  * client and a sync service (M128 spec 01).
  *
  * THIS FILE IS MAINTAINED IN TWO REPOS AND MUST STAY IDENTICAL IN SUBSTANCE:
  *  - `openplate/app/lib/sync/engine/protocol.ts`   (the client half)
- *  - `openplate-core/src/protocol.ts`              (this file — the service half)
+ *  - `openplate-core/src/protocol.ts`              (this file, the service half)
  *
  * They are deliberately NOT a shared package: the two repos ship and version
  * independently, and a third party must be able to implement either side from
  * `openplate-core/PROTOCOL.md` alone without depending on our code. The price
  * of that independence is hand-maintained duplication, so each repo carries a
  * unit test that asserts its local `PROTOCOL_VERSION` (and the size/retention
- * limits) against TRANSCRIBED literals — there is no shared CI, so drift has
+ * limits) against TRANSCRIBED literals, there is no shared CI, so drift has
  * to fail a test rather than rely on a promise in a doc comment
  * (`tests/unit/protocol.test.ts` here,
  * `tests/unit/sync-engine/protocol.test.ts` there).
@@ -35,14 +35,14 @@ import { asNumber, asObject, asString, type JsonObject, type JsonValue } from '.
 export const PROTOCOL_VERSION = 2;
 
 /**
- * The encrypted-blob wire format version — INDEPENDENT of
+ * The encrypted-blob wire format version, INDEPENDENT of
  * {@link PROTOCOL_VERSION}. This one describes what is inside
  * `ciphertext`: `gzip(JSON(payload))` sealed with AES-256-GCM, the 12-byte IV
  * packed as the leading bytes (`openplate`'s `app/lib/sync/engine/envelope/build-envelope.ts`).
  *
  * Bump ONLY for a genuine crypto/framing change (a different cipher, a
  * different compression codec, a different IV packing). Never bump it for a
- * payload SCHEMA change — that is the local store's own
+ * payload SCHEMA change, that is the local store's own
  * `payloadSchemaVersion`, which travels through this protocol as an opaque
  * number bound into the AAD.
  */
@@ -53,9 +53,9 @@ export const ENVELOPE_VERSION = 1;
  * mirrored by the client so it can fail early with a useful message instead
  * of eating a 413.
  *
- * CAPACITY PLAN (counsel, 2026-08-03): food-log JSON runs ~400–700 bytes per
+ * CAPACITY PLAN (counsel, 2026-08-03): food-log JSON runs ~400-700 bytes per
  * entry BEFORE compression, so an un-gzipped whole-store blob would reach
- * this cap within 2–4 years of daily use. `ENVELOPE_VERSION` 1 gzips the
+ * this cap within 2-4 years of daily use. `ENVELOPE_VERSION` 1 gzips the
  * plaintext before encrypting, which buys roughly an order of magnitude of
  * headroom on highly-repetitive JSON. The long-term fix (chunked/per-entity
  * blobs) is a FUTURE PROTOCOL VERSION BUMP, deliberately deferred and
@@ -77,13 +77,13 @@ export const BLOB_VERSION_RETENTION = 5;
  * app's Express server.
  *
  * `PROTOCOL.md` §7 records this as a pre-1.0 change that does NOT bump
- * `PROTOCOL_VERSION` — zero production blobs exist, there are no third-party
+ * `PROTOCOL_VERSION`, zero production blobs exist, there are no third-party
  * implementations, and no deployed client can be broken by it.
  *
  * CROSS-REPO NOTE: `openplate/app/lib/sync/engine/protocol.ts` is the
  * hand-maintained duplicate of this file and still carries the old value.
  * Its drift-guard test asserts against a transcribed literal, so it will keep
- * passing while disagreeing — nothing in either repo can catch this
+ * passing while disagreeing, nothing in either repo can catch this
  * automatically. The client half of the move belongs to the spec that wires
  * the client to a real service.
  */
@@ -129,8 +129,8 @@ export function isSyncKeyRecordKind(value: JsonValue | undefined): value is Sync
 /**
  * What an account may do on this instance.
  *
- *  - `'member'` — the default, and what every invite that says nothing grants.
- *  - `'admin'` — may also call `/v1/admin`, authenticated by its OWN access
+ *  - `'member'`, the default, and what every invite that says nothing grants.
+ *  - `'admin'`, may also call `/v1/admin`, authenticated by its OWN access
  *    token. That is the whole difference; an admin holds no key an ordinary
  *    account does not, and cannot read anybody's diary.
  *
@@ -170,7 +170,7 @@ export function isAccountRole(value: JsonValue | undefined): value is AccountRol
  */
 export interface AccountView {
   id: number;
-  /** The canonical address — NFKC, trimmed, lowercased (see `PROTOCOL.md` §5.8). */
+  /** The canonical address, NFKC, trimmed, lowercased (see `PROTOCOL.md` §5.8). */
   email: string;
   displayName: string | null;
   role: AccountRole;
@@ -262,6 +262,23 @@ export interface InstanceInfo {
    * refusals where they are.
    */
   plans: boolean;
+  /**
+   * Whether this instance can send web push notifications, so `/v1/push/*`
+   * exists here (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`,
+   * all three or none).
+   *
+   * THE `plans` PRECEDENT, AND FOR THE SAME REASON. It is a boolean rather
+   * than an optional promise: it says only whether a door exists, never what
+   * comes through it, so `false` is the honest answer both for an instance
+   * with no keys and for a build older than the field.
+   *
+   * DESCRIPTIVE, NEVER A GRANT. `false` means the whole subtree answers the
+   * ordinary unknown-path 404, so a client draws no notification settings;
+   * `true` still leaves the bearer gate, the seven day pause and the daily cap
+   * on the server. What it never says is what a push contains: the payload
+   * carries a kind and the device writes the words. See ADR-0008.
+   */
+  push: boolean;
   /** The AI proxy this instance offers, or `null` when it has no upstream key. Wired by spec 03. */
   ai: InstanceAi | null;
   /**
@@ -331,11 +348,11 @@ export interface ProtocolHandshake {
   protocolVersion: number;
   /** The highest {@link ENVELOPE_VERSION} the service is willing to accept on a push. */
   envelopeVersion: number;
-  /** Human-readable build identifier — diagnostics only, never compared. */
+  /** Human-readable build identifier, diagnostics only, never compared. */
   serviceVersion: string;
   /**
    * What this instance calls itself, what language it writes in, whether it
-   * can send mail, and what AI it offers — see {@link InstanceInfo}.
+   * can send mail, and what AI it offers, see {@link InstanceInfo}.
    *
    * OPTIONAL, and it must stay optional. A service older than this field omits
    * it entirely, and a client that required it would refuse to talk to every
@@ -345,19 +362,19 @@ export interface ProtocolHandshake {
    *
    * It is DESCRIPTIVE, never authoritative. `mail: true` does not promise a
    * letter arrives, and `ai` is what the operator configured rather than a
-   * capability grant — an account with `dailyAiLimit: 0` gets `403` whatever
+   * capability grant, an account with `dailyAiLimit: 0` gets `403` whatever
    * this says.
    */
   instance?: InstanceInfo;
   /**
-   * A short message the operator wants every client to show — a planned
+   * A short message the operator wants every client to show, a planned
    * migration, a shutdown date, a "read this before you sync again".
    *
    * WHY IT LIVES ON THE HANDSHAKE. This service holds no addresses (M181), so
    * it has no channel to write to anybody. The notice is PULL, never push: the
    * client already reads `/health` on every connect, so a person who opens the
    * app sees the message and a person who does not, does not. That limitation
-   * is real and is written down rather than papered over — it is not a
+   * is real and is written down rather than papered over, it is not a
    * notification system and must never be relied on as one.
    *
    * OPTIONAL, for the same reason {@link ProtocolHandshake.instance} is: an
@@ -381,7 +398,7 @@ export interface OperatorNotice {
   url?: string;
 }
 
-/** Result of {@link checkProtocolCompatibility} — `reason` is a user-presentable sentence. */
+/** Result of {@link checkProtocolCompatibility}, `reason` is a user-presentable sentence. */
 export type ProtocolCompatibility = { status: 'compatible' } | { status: 'incompatible'; reason: string };
 
 export function isProtocolHandshake(value: JsonValue | undefined): boolean {
@@ -399,7 +416,7 @@ export function isProtocolHandshake(value: JsonValue | undefined): boolean {
 /**
  * Decides whether this build may talk to the service that returned `remote`.
  *
- * Pure and total — it never throws and never guesses. A mismatch is REFUSAL
+ * Pure and total, it never throws and never guesses. A mismatch is REFUSAL
  * with a clear message, never a best-effort attempt: pushing an envelope a
  * service can't store, or decrypting one framed by rules this build doesn't
  * know, corrupts an account's only copy of its data. Silent wrongness is the
@@ -422,7 +439,7 @@ export function checkProtocolCompatibility(remote: ProtocolHandshake): ProtocolC
 }
 
 // ---------------------------------------------------------------------------
-// Wire shapes — blobs
+// Wire shapes, blobs
 // ---------------------------------------------------------------------------
 
 /**
@@ -436,11 +453,11 @@ export type Base64Bytes = string;
 /** An ISO-8601 UTC timestamp string, e.g. `2026-08-04T10:11:12.000Z`. */
 export type IsoTimestamp = string;
 
-/** `POST {prefix}/blob` — a compare-and-swap write of the account's single encrypted blob. */
+/** `POST {prefix}/blob`, a compare-and-swap write of the account's single encrypted blob. */
 export interface PushBlobRequest {
   /**
    * The `blobVersion` this client believes is currently stored (`0` for "no
-   * blob exists yet"). The write succeeds only if it still matches — this is
+   * blob exists yet"). The write succeeds only if it still matches, this is
    * the entire concurrency model, and it is never a blind overwrite.
    */
   baseVersion: number;
@@ -448,13 +465,13 @@ export interface PushBlobRequest {
   ciphertext: Base64Bytes;
 }
 
-/** `200` — the CAS write won. */
+/** `200`, the CAS write won. */
 export interface PushBlobAcceptedResponse {
   newVersion: number;
 }
 
 /**
- * `409` — the CAS write lost: another device wrote first. The client must
+ * `409`, the CAS write lost: another device wrote first. The client must
  * pull `currentVersion`, merge (`openplate`'s `app/lib/sync/engine/merge/merge-entities.ts`), and retry
  * with `baseVersion: currentVersion`.
  */
@@ -471,7 +488,7 @@ export interface PullBlobResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Wire shapes — key records
+// Wire shapes, key records
 // ---------------------------------------------------------------------------
 
 /** One wrapped-DEK record as it appears on the wire. */
@@ -479,7 +496,7 @@ export interface KeyRecordWire {
   kind: SyncKeyRecordKind;
   /**
    * Argon2id salt + m/t/p parameters for the `passphrase` kind so any device
-   * can re-derive the KEK; ALWAYS `null` for `recovery` (HKDF-only — a
+   * can re-derive the KEK; ALWAYS `null` for `recovery` (HKDF-only, a
    * ≥128-bit random code needs no memory-hard stretch and therefore has no
    * parameters to record). Non-secret by design.
    */
@@ -493,7 +510,7 @@ export interface ListKeyRecordsResponse {
   records: KeyRecordWire[];
 }
 
-/** `PUT {prefix}/key-records/:kind` — also CAS-gated, mirroring the blob endpoint. */
+/** `PUT {prefix}/key-records/:kind`, also CAS-gated, mirroring the blob endpoint. */
 export interface PutKeyRecordRequest {
   kdfDescriptor: JsonObject | null;
   wrappedDek: Base64Bytes;
@@ -502,7 +519,7 @@ export interface PutKeyRecordRequest {
    * any other value asserts "the record I last read had exactly this
    * `updatedAt`" (rotation).
    *
-   * The key MUST be present. An ABSENT key is a `400`, deliberately — a
+   * The key MUST be present. An ABSENT key is a `400`, deliberately, a
    * caller must not be able to skip the concurrency check by forgetting a
    * field.
    */
