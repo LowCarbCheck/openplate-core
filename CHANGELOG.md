@@ -34,6 +34,18 @@ change moves the minor.
   pulse as the third exception to zero knowledge; `PROTOCOL.md` §5.23 has the
   wire shapes. `GET /v1/admin/stats` gains the same numbers.
 
+### Fixed
+
+- **Browsers could not send a pulse write, or read a Retry-After.**
+  `Access-Control-Allow-Headers` never named `Idempotency-Key`, which every
+  write under `/v1/pulse` carries, so a browser read the preflight and refused
+  to send the request at all: no request arrived, no log line was written, and
+  the app saw a write that never answered. The same response now also sends
+  `Access-Control-Expose-Headers: Retry-After`, so a rate-limited client can
+  read the wait this service computed instead of guessing one. Both were
+  invisible to `curl` and to the test suite, because neither enforces CORS;
+  operators need no configuration change, only the new image.
+
 ## [0.12.0] - 2026-09-09
 
 ### Added
