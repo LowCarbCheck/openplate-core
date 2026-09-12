@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-12
+
 ### Added
 
 - **A shrinking blob is acknowledged, or it is refused.**
@@ -27,7 +29,7 @@ change moves the minor.
   because a new header must be named in the CORS allow list or browsers drop
   the request after a clean preflight.
   ADR 0009 states the trade: the false positives cost a field, the false
-  negatives cost data.
+  negatives cost data. ([676a0a2](https://github.com/LowCarbCheck/openplate-core/commit/676a0a2))
 
 - **Tiered blob retention, and a pin on the version before an acknowledged shrink.**
   `BLOB_VERSION_RETENTION` keeps its name and its five, and becomes one tier of
@@ -36,7 +38,7 @@ change moves the minor.
   shrink replaced them. At most 33 versions and 66 MiB per account, and the
   daily tier is per calendar day rather than per count so two devices in a merge
   loop cannot burn through it. The flat five was the only reason the wiped diary
-  above was recoverable at all, and by luck.
+  above was recoverable at all, and by luck. ([676a0a2](https://github.com/LowCarbCheck/openplate-core/commit/676a0a2))
 
 - **An operator can roll a blob back.**
   `GET /v1/admin/accounts/:id/blob/versions` lists every retained version with
@@ -52,11 +54,11 @@ change moves the minor.
   `docs/operations/restoring-a-wiped-diary.md` is the playbook, and its
   non-negotiable step is the one the rollback cannot do: every device the person
   signed into still holds the baseline that caused the loss, and has to have its
-  local data erased before it syncs again.
+  local data erased before it syncs again. ([676a0a2](https://github.com/LowCarbCheck/openplate-core/commit/676a0a2))
 
 ### Changed
 
-- `sync_blobs` gains a nullable `pinned_until`. Migration `0016`.
+- `sync_blobs` gains a nullable `pinned_until`. Migration `0016`. ([676a0a2](https://github.com/LowCarbCheck/openplate-core/commit/676a0a2))
 
 ## [0.13.0] - 2026-09-12
 
