@@ -92,6 +92,8 @@ import { RESEARCH_API_PREFIXES, registerResearchRoutes } from './research-routes
 import { registerRotateDekRoute } from './rotate-dek-route.js';
 import { CHAT_COMPLETIONS_PATH, registerAiRoute } from '../ai/register-ai-route.js';
 import { FEEDBACK_API_PREFIX, registerFeedbackRoute } from '../feedback/register-feedback-route.js';
+import { registerPulseRoutes } from './register-pulse-routes.js';
+import type { PulseStore } from '../pulse/pulse-store.js';
 import { registerPlansRoutes, type PlansUpstreamConfig } from './plans-proxy.js';
 import type { FeedbackAdminStore } from '../feedback/feedback-admin-store.js';
 import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
@@ -252,6 +254,16 @@ export interface CreateAppOptions {
    * before you default it to anything but `null`.
    */
   feedback?: FeedbackSurfaceOptions | null;
+  /**
+   * The community pulse's four tables (M222).
+   *
+   * REQUIRED, AND THERE IS NO FLAG, unlike every other surface above. What is
+   * opted in to here is a person's own data leaving their own phone, and that
+   * decision is made on the phone rather than in an operator's environment. An
+   * instance nobody opted in on holds empty tables and answers every field as
+   * zero. See `server/register-pulse-routes.ts` and ADR-0007.
+   */
+  pulse: PulseStore;
   /**
    * The biller `/v1/plans/*` is forwarded to, or `null`/absent for "no biller
    * stands behind this instance", the default, and what every deployment
@@ -471,6 +483,17 @@ export function createApp(options: CreateAppOptions): Express {
       now,
     });
   }
+
+  // THE COMMUNITY PULSE, on every instance, and behind the bearer gate it
+  // mounts itself. There is no operator flag to read here: the opt in is on the
+  // device, and an instance nobody opted in on answers every number as zero.
+  // See `server/register-pulse-routes.ts` and ADR-0007.
+  registerPulseRoutes(app, {
+    pulse: options.pulse,
+    requireAuth,
+    logger: options.logger,
+    now,
+  });
 
   // THE PLANS PASS-THROUGH, when a biller stands behind this instance. It is
   // handed the account store because `X-Account-Email` is read from the row

@@ -26,6 +26,7 @@ import type { AiQuotaStore, ReserveResult } from '../../src/ai/quota-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
 import { createFakeStorageAdapter } from './fake-storage-adapter.js';
 import { createFakeRotationStore } from './fake-rotation-store.js';
+import { createFakePulseStore } from './fake-pulse-store.js';
 import { createFakeAdminStore, type FakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore, type FakeInviteStore } from './fake-invite-store.js';
 import type { FakeAccountStore } from './fake-account-store.js';
@@ -164,6 +165,9 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
     authContext: { ...fixture.ctx, store: accounts },
     storage: createFakeStorageAdapter(),
     rotation: createFakeRotationStore(),
+    // Required on every app. The pulse has no operator flag, so a harness that
+    // is not about it still has to hand one over. See ADR-0007.
+    pulse: createFakePulseStore(),
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: capturing.logger,
     trustProxy: false,

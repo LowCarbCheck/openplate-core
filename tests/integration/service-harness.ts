@@ -24,6 +24,7 @@ import { createDrizzleAdminStore } from '../../src/db/admin-store.js';
 
 import { createDrizzleShareStore } from '../../src/db/share-store.js';
 import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
+import { createDrizzlePulseStore } from '../../src/pulse/pulse-store.js';
 import { createDrizzleResearchStore } from '../../src/db/research-store.js';
 import { createDrizzleAiQuotaStore } from '../../src/ai/quota-store.js';
 import { createDrizzleFeedbackStore } from '../../src/feedback/feedback-store.js';
@@ -53,6 +54,13 @@ export interface HttpRequestInput {
   accessToken?: string;
   /** An admin bearer credential, for the `/v1/admin` routes. Mutually exclusive with `accessToken` in practice. */
   adminToken?: string;
+  /**
+   * Extra request headers, for a route whose contract is partly in one. The
+   * pulse writes carry an `Idempotency-Key`, and a harness that could not send
+   * it would force every pulse test to build its own `fetch` and lose the
+   * typed body this returns.
+   */
+  headers?: Record<string, string>;
 }
 
 /** Every letter the service asked for, in order. Substituted so a suite can assert a send without a relay. */
@@ -105,6 +113,8 @@ export interface ServiceHarness {
   authContext: AuthContext;
   mailer: RecordingMailer;
   advance(ms: number): void;
+  /** The fixture clock, in epoch milliseconds. What the app reads, so a test can name the UTC day it is asserting. */
+  now(): number;
   request<T>(input: HttpRequestInput): Promise<HttpResponse<T>>;
   /**
    * Mints an invite through the REAL invite store and redeems it through the
@@ -302,6 +312,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     authContext,
     storage: createDrizzleStorageAdapter(options.db),
     rotation: createDrizzleRotationStore(options.db),
+    // Required on every app: the pulse has no operator flag, because the opt in
+    // is on the device. See ADR-0007.
+    pulse: createDrizzlePulseStore(options.db),
     throttle: createThrottleStore(options.throttleConfig ?? PERMISSIVE_THROTTLE),
     logger: options.logger ?? createSilentLogger(),
     trustProxy: false,
@@ -352,6 +365,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     advance(ms: number) {
       clock += ms;
     },
+    now: () => clock,
     async signupThroughInvite(input: SignupThroughInviteInput): Promise<SessionResponse> {
       const now = new Date(clock);
       const minted = await inviteStore.mint({
@@ -403,6 +417,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       if (input.body !== undefined) headers['content-type'] = 'application/json';
       if (input.accessToken) headers.authorization = `Bearer ${input.accessToken}`;
       if (input.adminToken) headers.authorization = `Bearer ${input.adminToken}`;
+      // Last, so a caller can override what this built when a test is about a
+      // header rather than about a body.
+      Object.assign(headers, input.headers ?? {});
 
       const response = await fetch(`${baseUrl}${input.path}`, {
         method: input.method,

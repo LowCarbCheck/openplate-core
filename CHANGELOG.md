@@ -5,6 +5,20 @@ All notable changes to `openplate-core` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [Unreleased]
+
+### Added
+
+- **An opt-in pulse: instance-wide counts for the day, and who is fasting right now.**
+  Four member routes under `/v1/pulse` take small rounded deltas from devices
+  whose owner turned the pulse on (a meal with its calories rounded to 50 and
+  protein to 5 g, a photo, a "still fasting" heartbeat) and answer today's sums
+  plus the live fasting count from a 5 minute cache. Day sums keep 30 days,
+  presence rows expire 30 minutes after the last heartbeat, idempotency keys
+  24 hours, all swept hourly. The routes log no account id. ADR 0007 names the
+  pulse as the third exception to zero knowledge; `PROTOCOL.md` §5.23 has the
+  wire shapes. `GET /v1/admin/stats` gains the same numbers.
+
 ## [0.12.0] - 2026-09-09
 
 ### Added

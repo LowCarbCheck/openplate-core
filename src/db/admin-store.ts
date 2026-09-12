@@ -45,6 +45,7 @@ import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { Database } from './client.js';
 import { utcDayKey } from '../lib/utc-day.js';
 import { accounts, aiUsageDays, signupInvites, syncBlobs, syncKeyRecords } from './schema.js';
+import { createDrizzlePulseStore } from '../pulse/pulse-store.js';
 
 /** The identity columns — deliberately enumerated, never `select()`. See the module header. */
 interface AccountIdentityRow {
@@ -319,6 +320,12 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
     },
 
     async stats(input: { now: Date }): Promise<AdminStats> {
+      // DELEGATED, never re-queried. `pulse/pulse-store.ts` owns these four
+      // tables at both ends, and a second reading of them here would be a
+      // second place the contributor count could drift from the floor the
+      // client draws from it.
+      const pulse = await createDrizzlePulseStore(db).totals({ day: utcDayKey(input.now), now: input.now });
+
       const [accountTotals] = await db.select({ total: count() }).from(accounts);
       const [adminTotals] = await db.select({ total: count() }).from(accounts).where(eq(accounts.role, 'admin'));
 
@@ -363,6 +370,7 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         // `blobBytes` does: a Postgres `bigint` does not fit a JS number by
         // contract, even when this one always will.
         aiRequestsToday: toByteCount(aiTotals?.total ?? null),
+        pulse,
       };
     },
   };

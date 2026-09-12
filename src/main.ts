@@ -42,6 +42,8 @@ import {
   feedbackRetentionAdvertisement,
   startFeedbackRetention,
 } from './feedback/feedback-retention.js';
+import { createDrizzlePulseStore } from './pulse/pulse-store.js';
+import { PULSE_RETENTION_DAYS, startPulseRetention } from './pulse/pulse-retention.js';
 import { createApp } from './server/create-app.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
@@ -226,6 +228,11 @@ async function main(): Promise<void> {
   // feature was never written. A client that finds no window offers no report.
   if (feedback !== null) instance.feedback = feedbackRetentionAdvertisement();
 
+  // THE COMMUNITY PULSE, on every instance and with no flag to read: the opt in
+  // is on the device, and the sweep at the bottom of this file has to run
+  // whatever anybody's device is doing today. See ADR-0007.
+  const pulse = createDrizzlePulseStore(database.db);
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
@@ -246,6 +253,7 @@ async function main(): Promise<void> {
     shares,
     research,
     feedback,
+    pulse,
   });
 
   // NO HOST MEANS EVERY INTERFACE, and that is the production default on
@@ -314,6 +322,13 @@ async function main(): Promise<void> {
   });
   logger.info('AI usage retention sweep started', { retentionDays: AI_USAGE_RETENTION_DAYS });
 
+  // THE PULSE ROWS EXPIRE, on every instance, for the reason the AI counters do
+  // and one more: a contributor row says an account was here on a day, and a
+  // presence row says somebody is fasting right now. Thirty days for the sums,
+  // thirty minutes for presence, twenty-four hours for an idempotency key.
+  const pulseRetention = startPulseRetention({ pulse, logger, now: () => new Date() });
+  logger.info('Community pulse retention sweep started', { retentionDays: PULSE_RETENTION_DAYS });
+
   const accountStore = authContext.store;
   const sweeper = setInterval(() => {
     void (async () => {
@@ -335,6 +350,7 @@ async function main(): Promise<void> {
     clearInterval(sweeper);
     feedbackRetention?.stop();
     aiUsageRetention.stop();
+    pulseRetention.stop();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     await database.close();
     process.exit(0);

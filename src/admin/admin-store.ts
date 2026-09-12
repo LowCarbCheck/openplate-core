@@ -28,6 +28,7 @@
  */
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { AccountActivityCount, ActivityDay } from './account-activity.js';
+import type { PulseTotals } from '../pulse/pulse-store.js';
 
 /**
  * What the admin surface knows about an account. Everything else about it is
@@ -129,6 +130,17 @@ export interface AdminStats {
   admins: number;
   /** AI requests every account together spent on the current UTC day. A count, never a log. */
   aiRequestsToday: number;
+  /**
+   * Today's community pulse (M222): the same instance-wide sums every member
+   * can already read at `GET /v1/pulse/today`.
+   *
+   * IT IS NOT A NEW DISCLOSURE, and that is why it is allowed onto a store
+   * whose whole discipline is what it may not return. Every number here is
+   * already served to any signed-in caller, and none of them is attributable to
+   * anybody: an operator reading them learns what a member reading them learns.
+   * See `docs/adr/0007-the-pulse-is-a-named-exception.md`.
+   */
+  pulse: PulseTotals;
 }
 
 export interface ListAccountsInput {

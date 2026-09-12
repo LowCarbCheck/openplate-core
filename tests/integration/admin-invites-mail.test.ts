@@ -24,6 +24,7 @@ import { createDrizzleStorageAdapter } from '../../src/db/storage-adapter.js';
 import { createDrizzleAdminStore } from '../../src/db/admin-store.js';
 import { createDrizzleInviteStore } from '../../src/db/invite-store.js';
 import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
+import { createDrizzlePulseStore } from '../../src/pulse/pulse-store.js';
 import { createSilentLogger } from '../../src/logger.js';
 import { createThrottleStore } from '../../src/lib/throttle.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
@@ -132,6 +133,7 @@ before(async () => {
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
     rotation: createDrizzleRotationStore(database.db),
+    pulse: createDrizzlePulseStore(database.db),
     throttle: createThrottleStore(PERMISSIVE_THROTTLE),
     logger,
     trustProxy: false,

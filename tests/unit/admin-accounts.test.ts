@@ -454,6 +454,9 @@ test('stats reports the three fields the console shows beside the counts', async
     'blobVersions',
     'keyRecords',
     'pendingInvites',
+    // M222: today's community pulse, the same six numbers every member can
+    // already read at `GET /v1/pulse/today`.
+    'pulse',
   ]);
   assert.equal(asNumber(stats?.admins), 1);
   // THIS HARNESS HAS NO AI SURFACE, so there is no ceiling to report and the

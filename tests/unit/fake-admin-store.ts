@@ -191,6 +191,10 @@ export function createFakeAdminStore(): FakeAdminStore {
         pendingInvites: 0,
         admins: all.filter((account) => account.role === 'admin').length,
         aiRequestsToday: all.reduce((total, account) => total + account.aiUsedToday, 0),
+        // ZEROES, and honestly so: this fake holds no pulse rows, so these are
+        // the numbers the real store reports for an instance nobody opted in
+        // on. `tests/integration/pulse-today.test.ts` owns the non-zero case.
+        pulse: { day: '1970-01-01', meals: 0, photos: 0, kcal: 0, protein: 0, contributors: 0, fastingNow: 0 },
       };
     },
   };

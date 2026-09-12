@@ -537,6 +537,130 @@ export type InsertAiInstanceDay = InferInsertModel<typeof aiInstanceDays>;
 export type SelectAiInstanceDay = InferSelectModel<typeof aiInstanceDays>;
 
 // =============================================================================
+// The community pulse (M222, ADR-0007)
+// =============================================================================
+
+/**
+ * ONE ROW PER UTC DAY FOR THE WHOLE INSTANCE: how many meals and photographs
+ * every opted in device together reported, and the calories and grams of
+ * protein that went with them.
+ *
+ * MODELLED ON `ai_instance_days` ABOVE, down to the day as the whole primary
+ * key and the one statement upsert that increments it. What differs is where
+ * the numbers come from: that table counts requests this process served, and
+ * this one holds deltas devices sent, because the server cannot read a diary
+ * and never will. See `docs/adr/0007-the-pulse-is-a-named-exception.md`.
+ *
+ * A SUM, NEVER A LOG. No account id, no time of day, no entry, no food. The
+ * calories arrive rounded to 50 and the protein to 5 g, and
+ * `pulse/pulse-deltas.ts` rounds them again on the way in rather than trusting
+ * a client, so an exact figure can never land here.
+ *
+ * IT REFERENCES NOTHING, exactly as `ai_instance_days` does, so no cascade can
+ * reach it: a person deleting their account must not make an instance wide
+ * total for a past day fall. What goes with that account is its contributor
+ * row below, which is the only account keyed thing this feature stores.
+ *
+ * KEPT 30 DAYS by `pulse/pulse-retention.ts`.
+ */
+export const pulseDays = pgTable('pulse_days', {
+  /** The UTC calendar day, `YYYY-MM-DD`, and the whole primary key: one row per day for the instance. */
+  day: date('day', { mode: 'string' }).primaryKey(),
+  meals: integer('meals').default(0).notNull(),
+  photos: integer('photos').default(0).notNull(),
+  /** Calories, summed, every addend already on the 50 grid. */
+  kcal: integer('kcal').default(0).notNull(),
+  /** Protein in grams, summed, every addend already on the 5 g grid. */
+  protein: integer('protein').default(0).notNull(),
+});
+
+export type InsertPulseDay = InferInsertModel<typeof pulseDays>;
+export type SelectPulseDay = InferSelectModel<typeof pulseDays>;
+
+/**
+ * WHO CONTRIBUTED ON A DAY, as one row per account per day, and the source of
+ * the `contributors` number `GET /v1/pulse/today` reports.
+ *
+ * AN EXACT COUNT RATHER THAN A SKETCH. A HyperLogLog would remove this table
+ * and with it the one account attributable row the pulse writes, and it was
+ * refused: at this instance's size an exact count is cheaper to reason about
+ * than an estimator with a standard error, and these rows are already the
+ * shortest lived thing the feature stores.
+ *
+ * THE FLOOR OF THREE READS THIS NUMBER. The client renders nothing at all
+ * below three contributors, so a count that was approximate would be
+ * approximate exactly where the decision is made.
+ *
+ * `onDelete: 'cascade'`, so an erased account takes its contributions with it,
+ * and pruned on the SAME schedule as the day rows above: 30 days.
+ */
+export const pulseDayContributors = pgTable(
+  'pulse_day_contributors',
+  {
+    day: date('day', { mode: 'string' }).notNull(),
+    accountId: integer('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    // The composite primary key IS the upsert target: a second delta from the
+    // same account on the same day is `ON CONFLICT DO NOTHING`.
+    primaryKey({ columns: [table.day, table.accountId] }),
+  ],
+);
+
+export type InsertPulseDayContributor = InferInsertModel<typeof pulseDayContributors>;
+export type SelectPulseDayContributor = InferSelectModel<typeof pulseDayContributors>;
+
+/**
+ * WHO IS FASTING RIGHT NOW: one row per account, replaced by an upsert on every
+ * heartbeat, and gone 30 minutes after the last one.
+ *
+ * NOT A HISTORY. The upsert overwrites `expires_at` rather than appending, so
+ * two heartbeats leave one row and the table can never become a record of when
+ * somebody fasted. The prune deletes expired rows hourly, and a reader counts
+ * only unexpired ones, so a late sweep changes a number nobody can see.
+ *
+ * ACCOUNT KEYED, DELIBERATELY, and ADR-0007 argues it at length: rate limiting
+ * and deduplication both need an identity, and an anonymous heartbeat could be
+ * replayed as often as somebody liked to inflate the number.
+ */
+export const pulsePresence = pgTable('pulse_presence', {
+  accountId: integer('account_id')
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  /** When this row stops counting. Written as the heartbeat instant plus 30 minutes, never extended in place by a read. */
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+export type InsertPulsePresence = InferInsertModel<typeof pulsePresence>;
+export type SelectPulsePresence = InferSelectModel<typeof pulsePresence>;
+
+/**
+ * THE KEYS THAT MAKE A REPLAY A NO-OP. A pulse write carries an
+ * `Idempotency-Key` header and this table remembers it for 24 hours, so a
+ * retry, a double tap or a queue drained twice after a flight adds one meal
+ * rather than three.
+ *
+ * THE KEY IS THE PRIMARY KEY, so the claim is one INSERT whose unique
+ * violation IS the duplicate answer. A read then write would have the window
+ * the retry is most likely to land in.
+ *
+ * `account_id` is stored beside it so an erasure takes the rows with it, and
+ * is never part of the key: a key a client chose is opaque here.
+ */
+export const pulseIdempotency = pgTable('pulse_idempotency', {
+  key: text('key').primaryKey(),
+  accountId: integer('account_id')
+    .notNull()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export type InsertPulseIdempotency = InferInsertModel<typeof pulseIdempotency>;
+export type SelectPulseIdempotency = InferSelectModel<typeof pulseIdempotency>;
+
+// =============================================================================
 // Sync blobs (relocated from the openplate app, M128 spec 02)
 // =============================================================================
 

@@ -74,12 +74,13 @@ export async function setupTestDatabase(): Promise<TestDatabase> {
       // real foreign keys rather than deleting in a hand-maintained order.
       //
       // THE TABLE LIST IS HAND-MAINTAINED AND A NEW TABLE MUST JOIN IT.
-      // `ai_instance_days` references nothing on purpose (see `db/schema.ts`),
-      // so CASCADE cannot reach it through `accounts`: left out, one test's
-      // instance spend would still be there in the next one, and a ceiling
-      // test would fail as a fixture problem.
+      // `ai_instance_days` and `pulse_days` reference nothing on purpose (see
+      // `db/schema.ts`), so CASCADE cannot reach either through `accounts`:
+      // left out, one test's instance spend or one test's pulse sums would
+      // still be there in the next one, and a ceiling or a floor test would
+      // fail as a fixture problem.
       await handle.pool.query(
-        'TRUNCATE TABLE account_tokens, password_resets, ai_usage_days, ai_instance_days, sync_blobs, sync_key_records, sync_shares, research_contributions, research_withdrawals, feedback_images, feedback_reports, signup_invites, accounts RESTART IDENTITY CASCADE',
+        'TRUNCATE TABLE account_tokens, password_resets, ai_usage_days, ai_instance_days, pulse_days, pulse_day_contributors, pulse_presence, pulse_idempotency, sync_blobs, sync_key_records, sync_shares, research_contributions, research_withdrawals, feedback_images, feedback_reports, signup_invites, accounts RESTART IDENTITY CASCADE',
       );
     },
   };

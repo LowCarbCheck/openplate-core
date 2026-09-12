@@ -1284,6 +1284,57 @@ The outbound call carries an explicit timeout. It is short, because every route 
 
 The operator configures `PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, **both or neither**. A URL with no secret is a refusal to boot rather than a silent downgrade: the secret is the only thing that tells the biller the account id it is reading came from a gateway that authenticated somebody.
 
+### 5.23 `/v1/pulse/*`: the community pulse (ADR-0007)
+
+**Opt in on the device, and off until a person turns it on.** Nothing here is derived from a diary the server can read, because it cannot read one. Every number below arrives as a small delta from a device whose owner asked for it, and [ADR-0007](./docs/adr/0007-the-pulse-is-a-named-exception.md) states exactly what leaves the device and why.
+
+Four routes, all behind the account's ordinary **access token** (§4.1). An anonymous caller gets the ordinary `401`.
+
+```
+POST /v1/pulse/meal
+Authorization: Bearer <accessToken>
+Idempotency-Key: 6f1c3a1e-9d7b-4a2f-8b31-0f4e9a2c7d55
+Content-Type: application/json
+
+{ "kcal": 1234, "protein": 33 }
+```
+
+```
+POST /v1/pulse/photo
+POST /v1/pulse/fasting
+Authorization: Bearer <accessToken>
+Idempotency-Key: <uuid>
+```
+
+Both carry an empty body.
+
+```
+GET /v1/pulse/today
+Authorization: Bearer <accessToken>
+
+200 {
+  "day": "2026-09-12",
+  "meals": 42,
+  "photos": 17,
+  "kcal": 68350,
+  "protein": 2140,
+  "contributors": 9,
+  "fastingNow": 4
+}
+```
+
+Seven properties a conforming implementation MUST hold:
+
+1. **The server re-rounds and clamps.** `kcal` is rounded to the nearest 50 and clamped to 0 to 5000; `protein` is rounded to the nearest 5 and clamped to 0 to 500. A device that sends an exact figure, a negative one or an absurd one still lands on the grid everybody else is on. A body that is not two finite numbers is `400 {"error":"invalid request body"}`.
+2. **Every write carries an `Idempotency-Key` header**, a uuid, and a request without one is `400 {"error":"idempotency key required"}`. The key is kept **24 hours**. A repeat inside that window answers `200 {"duplicate": true}` and changes nothing, which is what makes an offline replay or a retry safe.
+3. **The rate limits are per account**: `POST /v1/pulse/meal` and `POST /v1/pulse/photo` one per minute each, `POST /v1/pulse/fasting` one per 10 minutes. Over the limit is `429` with a `Retry-After` header in seconds and a body that names no identifier.
+4. **A fasting heartbeat is an upsert on the account id.** Two heartbeats leave one row, with the later expiry. The row expires **30 minutes** after the last heartbeat, and `fastingNow` counts unexpired rows only. Presence is account keyed rather than anonymous because rate limiting and deduplication both need an identity, and an anonymous heartbeat could be replayed to inflate the number (ADR-0007).
+5. **`GET /v1/pulse/today` is served from a five minute in-process cache**, one entry for the whole instance, invalidated by time and never by a write. A client fetches it at most every five minutes. A write made inside the window is therefore not visible until the entry expires, which is stated rather than fixed: the numbers are a sign of company, not an acknowledgement.
+6. **Day sums are kept 30 days.** `pulse_days` and the contributor rows beside it are deleted by an hourly sweep past that age, expired presence rows go with them, and idempotency keys go at 24 hours.
+7. **The pulse routes log a status code and a byte count only.** Never the account id, and never a value from the body.
+
+`GET /v1/admin/stats` (§5.20) reports today's pulse to the operator as `pulse: { meals, photos, kcal, protein, contributors, fastingNow }`, which is the same set every member can already read.
+
 ## 6. Version handshake: required, and required to fail closed
 
 **A client MUST read this document from the service and check it before its first sync of a session.**
@@ -1335,6 +1386,8 @@ The two version numbers are independent on purpose: re-framing the crypto and re
 
 The server never receives the DEK, either KEK, the passphrase, or the recovery code. It stores `wrappedDek` blobs it has no key for. Decryption is not withheld by policy; it is unavailable.
 
+**And it still cannot aggregate one.** The community pulse of §5.23 looks like the server counting meals, and it is not: nothing in §9.2 is derived from a blob, and a deployment where nobody turned the pulse on counts nothing at all. The sums exist because devices whose owners opted in sent them, which is why the pulse is listed below as something the server knows rather than something it works out.
+
 ### 9.2 What it does know
 
 Being honest about the metadata, because "end-to-end encrypted" is often heard as "the server knows nothing":
@@ -1348,6 +1401,7 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
 - **The account's RECOVERY CODE, sealed** (`accounts.recovery_code_escrow`, §3.1). This is the entry on this list that a reader should stop at. It is AES-256-GCM under a subkey of `SERVER_SECRET`, so a dumped database alone does not open it, and the operator of a managed instance has both. **The operator of a managed instance can open any account on it.** Not through an endpoint, and not through any code path in this service, but by reading that column with the secret in hand and running the client's own HKDF. A self-hosted instance is its own operator, so the older promise holds there. Deciding whether to trust a hosted instance is therefore a decision about its operator.
 - **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
 - **AI usage**: one integer per account per UTC day, **kept for 90 days and then deleted** (§5.20). A count, never a log: no prompt, no response, no model, no timestamp beyond the day. An operator can read one account's counters as a day-by-day strip (`GET /v1/admin/accounts/:id/activity`), which is metadata about when a person used a health app and is bounded for exactly that reason.
+- **The community pulse**, for accounts that turned it on (§5.23, ADR-0007): instance-wide day sums of meals, photographs, calories and grams of protein, one row per contributing account per day, and a short lived presence row saying that an account is fasting right now. The sums are not attributable to anybody; the contributor row and the presence row are, and they say only "this account contributed today" and "this account is fasting". Day sums and contributor rows are **kept 30 days**, presence expires 30 minutes after the last heartbeat, and the routes log no account id. A person who never turned it on sends nothing and appears in none of it.
 - **When a person last did something**: `accounts.last_seen_at`, written by a login and by a proxied completion, and deliberately not by a token refresh or a sync poll, so it means "somebody acted" rather than "a client was running". It is visible to an operator (§5.20) and goes with the account row on deletion.
 - **Session metadata**: how many active sessions exist, when each was created, and when tokens were last rotated or revoked. Token values themselves are stored only as digests.
 - **The study graph**, on a deployment with `SYNC_RESEARCH` set (§5.18): which

@@ -185,6 +185,22 @@ interface AdminStatsView {
    * credential: it is the operator's budget, not a client fact.
    */
   aiInstanceDailyLimit: number | null;
+  /**
+   * Today's community pulse (M222), the six numbers `GET /v1/pulse/today`
+   * serves every signed-in caller.
+   *
+   * THE DAY IS NOT REPEATED HERE. The store answers one, and it is today's by
+   * construction, so a second copy of it in this body would be a field an
+   * operator could read as a date the rest of the stats also belong to.
+   */
+  pulse: {
+    meals: number;
+    photos: number;
+    kcal: number;
+    protein: number;
+    contributors: number;
+    fastingNow: number;
+  };
 }
 
 /**
@@ -272,6 +288,17 @@ function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | 
     // counted; this one is what the operator configured, and the store that
     // reads rows has no business inventing it.
     aiInstanceDailyLimit: input.aiInstanceDailyLimit,
+    // PROJECTED, not spread. The store's shape carries a `day` this body does
+    // not publish, and a spread would put it there the moment somebody adds a
+    // field to `PulseTotals`.
+    pulse: {
+      meals: stats.pulse.meals,
+      photos: stats.pulse.photos,
+      kcal: stats.pulse.kcal,
+      protein: stats.pulse.protein,
+      contributors: stats.pulse.contributors,
+      fastingNow: stats.pulse.fastingNow,
+    },
   };
 }
 
