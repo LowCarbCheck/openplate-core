@@ -18,6 +18,7 @@
 - [A collapse topic length is never 1 mod 4](project_a_collapse_topic_length_is_never_1_mod_4.md): Apple decodes the push topic as base64, FCM does not, so the bug is iPhone only
 
 - [oxlint bites plain JS in openplate too](project_openplate_oxlint_bites_plain_js_too.md): public/*.js is linted, typeof is banned, and clearTimeout reads as a second resolve
+- [An empty local store tombstones the whole diary](project_openplate_sync_tombstones_an_empty_store.md): stampSnapshot has no floor; the wipe spreads to healthy devices, and a backup restore undoes it
 - [The openplate worker copies its pure logic](project_openplate_worker_copies_its_pure_logic.md): a classic service worker cannot import app code, so parity is a behavioural test with a mutation control
 
 ## Project (the sibling openplate app repo)
