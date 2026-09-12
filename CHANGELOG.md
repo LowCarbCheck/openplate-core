@@ -5,6 +5,59 @@ All notable changes to `openplate-core` are recorded here. The format follows
 [semantic versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0, a breaking
 change moves the minor.
 
+## [Unreleased]
+
+### Added
+
+- **A shrinking blob is acknowledged, or it is refused.**
+  A push whose ciphertext is under half the stored version's `size_bytes` is
+  now answered `400` unless the request body carries
+  `"shrinkAcknowledged": true`. Absent means false, so every deployed client
+  says no and none of them can wipe an account. A person lost her whole diary
+  on 2026-09-12 to a client that found its local store evicted, concluded she
+  had deleted every entry, and pushed a tombstone for each one, 5310 bytes to
+  1588 in one accepted write; a second device then pulled that blob and deleted
+  its own rows. A client fix reaches nobody who has not updated, and an
+  installed progressive web app cannot be made to update, so the refusal lives
+  here. The guard reads `size_bytes`, which this service already stored and
+  already reported, so it discloses nothing new. What it gives up is the claim
+  to be a store with no opinion about what it holds. `400` and not `409`,
+  because `409` already means "another device wrote first" on this route and
+  obliges a client to push the same bytes again. A body field and not a header,
+  because a new header must be named in the CORS allow list or browsers drop
+  the request after a clean preflight.
+  ADR 0009 states the trade: the false positives cost a field, the false
+  negatives cost data.
+
+- **Tiered blob retention, and a pin on the version before an acknowledged shrink.**
+  `BLOB_VERSION_RETENTION` keeps its name and its five, and becomes one tier of
+  three: the newest 5 versions, the newest version of each UTC calendar day for
+  14 days, and up to 14 versions held for 14 days because an acknowledged large
+  shrink replaced them. At most 33 versions and 66 MiB per account, and the
+  daily tier is per calendar day rather than per count so two devices in a merge
+  loop cannot burn through it. The flat five was the only reason the wiped diary
+  above was recoverable at all, and by luck.
+
+- **An operator can roll a blob back.**
+  `GET /v1/admin/accounts/:id/blob/versions` lists every retained version with
+  its byte count, its time and its pin, and never its bytes.
+  `POST /v1/admin/accounts/:id/blob/rollback` makes an older version current
+  again by deleting the versions above it, refusing an unknown version, the
+  current version, an envelope format this build cannot accept and a zero-byte
+  row. A rollback rather than a re-upload because the envelope binds
+  `blobVersion` into its AAD: re-inserting old bytes as a new version yields
+  something no client could ever decrypt.
+  `pnpm sync-api accounts blob-versions <id>` and
+  `pnpm sync-api accounts rollback <id> --to-version <n> --yes`.
+  `docs/operations/restoring-a-wiped-diary.md` is the playbook, and its
+  non-negotiable step is the one the rollback cannot do: every device the person
+  signed into still holds the baseline that caused the loss, and has to have its
+  local data erased before it syncs again.
+
+### Changed
+
+- `sync_blobs` gains a nullable `pinned_until`. Migration `0016`.
+
 ## [0.13.0] - 2026-09-12
 
 ### Added

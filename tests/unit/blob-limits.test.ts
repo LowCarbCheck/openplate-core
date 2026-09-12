@@ -63,6 +63,17 @@ after(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 });
 
+/**
+ * One push, ALWAYS ACKNOWLEDGING THE SHRINK (M224).
+ *
+ * This file walks ONE account's blob deliberately across the whole size range,
+ * 2 MiB, then 1.6 MiB, then 128 bytes, to reach the band boundaries it is
+ * about. Every one of those steps is a large shrink, and without the flag the
+ * guard of `lib/blob-retention.ts` would refuse them and this file would be
+ * testing the guard instead of the cap. The guard has its own tests
+ * (`push-shrink-guard.test.ts`), including the control this line would
+ * otherwise silently become.
+ */
 async function push(ciphertextBytes: number, baseVersion: number): Promise<Response> {
   return fetch(`${baseUrl}/v1/sync/blob`, {
     method: 'POST',
@@ -71,6 +82,7 @@ async function push(ciphertextBytes: number, baseVersion: number): Promise<Respo
       baseVersion,
       envelopeVersion: 1,
       ciphertext: Buffer.alloc(ciphertextBytes, 7).toString('base64'),
+      shrinkAcknowledged: true,
     }),
   });
 }

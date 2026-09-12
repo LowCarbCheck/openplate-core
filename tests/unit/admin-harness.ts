@@ -36,6 +36,7 @@ import {
   createFakeFeedbackStore,
 } from './feedback-harness.js';
 import type { FeedbackReportDetail } from '../../src/feedback/feedback-admin-store.js';
+import { createFakeBlobRollbackStore, type FakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 /** One emitted log line, kept whole so a test can assert on the message AND the fields. */
 export interface CapturedLogLine {
@@ -65,6 +66,8 @@ export function createCapturingLogger(): CapturingLogger {
 export interface AdminHarness {
   baseUrl: string;
   admin: FakeAdminStore;
+  /** The blob restore path's store, seedable so a test can state what versions exist (M224). */
+  blobs: FakeBlobRollbackStore;
   invites: FakeInviteStore;
   /** The store the app holds — the spying wrapper below. */
   accounts: AccountStore;
@@ -145,6 +148,7 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
   const inviteStore = createFakeInviteStore();
   const capturing = createCapturingLogger();
   const deletedAccountIds: number[] = [];
+  const blobs = createFakeBlobRollbackStore();
   /** Shared by the two feedback fakes below, exactly as `feedback-harness.ts` shares it. Empty unless one is built. */
   const feedbackRows: FeedbackReportDetail[] = [];
 
@@ -174,6 +178,7 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
     mailer: fixture.mailer,
     now: fixture.now,
     admin: {
+      blobs,
       token: options.adminToken,
       billingToken: options.billingToken ?? null,
       metadata: adminStore,
@@ -214,6 +219,7 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
   return {
     baseUrl,
     admin: adminStore,
+    blobs,
     invites: inviteStore,
     accounts,
     fakeAccounts: fixture.store,

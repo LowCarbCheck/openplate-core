@@ -46,6 +46,7 @@ import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createFakeFeedbackAdminStore, createFakeFeedbackImageStore } from './feedback-harness.js';
 import type { FeedbackReportDetail } from '../../src/feedback/feedback-admin-store.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_MINUTE = 60 * 1000;
@@ -91,7 +92,7 @@ async function readHandshake(instance: InstanceInfo): Promise<JsonObject> {
     logger: createSilentLogger(),
     trustProxy: false,
     instance,
-    admin: { token: null, metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
+    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
   });
   const server = app.listen(0);
   servers.push(server);

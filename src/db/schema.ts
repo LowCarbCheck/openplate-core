@@ -765,6 +765,22 @@ export const syncBlobs = pgTable(
     /** Redundant with `ciphertext`'s length, but avoids reading a 2 MiB blob just to report storage usage. */
     sizeBytes: integer('size_bytes').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    /**
+     * While this is in the future, the retention sweep may not delete this
+     * row: it is the copy that stood immediately before an ACKNOWLEDGED large
+     * shrink (M224, `lib/blob-retention.ts`).
+     *
+     * `NULL` FOR ALMOST EVERY ROW, and that is the honest default rather than
+     * an epoch. A pin is an exceptional promise about one version, and a column
+     * that claimed every row was pinned-until-1970 would say something about
+     * rows nothing ever decided anything about.
+     *
+     * IT IS NOT A SECOND RETENTION SETTING. It is capped and it expires, see
+     * `BLOB_PRE_SHRINK_PIN_LIMIT` and `BLOB_PRE_SHRINK_PIN_DAYS`, so the
+     * storage one account can hold stays arithmetic rather than a client's
+     * choice.
+     */
+    pinnedUntil: timestamp('pinned_until'),
   },
   (table) => [
     // The CAS guarantee itself: two concurrent pushes off the same

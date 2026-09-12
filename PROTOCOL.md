@@ -345,11 +345,12 @@ Paths in §5.1 to §5.5 are written relative to `SYNC_API_PREFIX`; everything el
 Request:
 
 ```json
-{ "baseVersion": 3, "envelopeVersion": 1, "ciphertext": "<base64>" }
+{ "baseVersion": 3, "envelopeVersion": 1, "ciphertext": "<base64>", "shrinkAcknowledged": false }
 ```
 
 - `baseVersion`: the `blobVersion` the client believes is currently stored. `0` asserts "this account has no blob yet".
 - The write is accepted **only if** `baseVersion` equals the account's current version. This is the entire concurrency model. There is no force-push and no `If-Match`-less write.
+- `shrinkAcknowledged`: OPTIONAL, and absent means `false`. See **the shrink guard** below.
 
 Responses:
 
@@ -357,9 +358,22 @@ Responses:
 | ----------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `200`       | `{"newVersion": 4}`     | Accepted. The blob is now at `newVersion`.                                                                                    |
 | `409`       | `{"currentVersion": 5}` | Lost the race. Another device wrote first.                                                                                    |
-| `400`       | `{"error": "..."}`      | `baseVersion` not a non-negative integer, `envelopeVersion` not a positive integer, `ciphertext` absent/not base64, or empty. |
+| `400`       | `{"error": "..."}`      | `baseVersion` not a non-negative integer, `envelopeVersion` not a positive integer, `ciphertext` absent/not base64, or empty, or `shrinkAcknowledged` present and not a boolean. |
+| `400`       | `{"error": "...", "currentSizeBytes": 5310, "nextSizeBytes": 1588}` | An unacknowledged large shrink. **Nothing was written.** See below. |
 | `413`       | `{"error": "..."}`      | Blob exceeds `MAX_BLOB_BYTES`.                                                                                                |
 | `401`/`403` | `{"error": "..."}`      | Not authenticated / not permitted.                                                                                            |
+
+**The shrink guard (M224).** A push whose decoded `ciphertext` is **strictly under half** of the stored version's `size_bytes` (`BLOB_SHRINK_ACK_RATIO`) is REFUSED with `400` unless the request carries `"shrinkAcknowledged": true`. An account with no blob yet is never refused; a first push is not a deletion.
+
+It is an ACKNOWLEDGEMENT, not a verdict. A client sets it `true` exactly when it emits deletions from state it positively trusts, and a client that cannot make that claim omits the field and takes the refusal. The service holds ciphertext and cannot tell a deliberate deletion from a client that lost its local store and believes everything was deleted; those are the same bytes. So it asks, and a client that says nothing gets a refusal rather than a wipe.
+
+When an acknowledged shrink IS accepted, the version immediately before it is held against pruning for `BLOB_PRE_SHRINK_PIN_DAYS` (§8).
+
+The CAS is checked FIRST: a push off a stale `baseVersion` is the ordinary `409`, whatever its size, because that client's job is to pull and merge and it is usually not shrinking once it has. The guard speaks only about a push that would otherwise have been accepted.
+
+The refusal is `400` and deliberately NOT `409`: a `409` on this route means "another device wrote first" and obliges the recovery loop below, which would push the same bytes again. `413` was not used either: the request is not too large.
+
+`shrinkAcknowledged` is a BODY FIELD and must never become a header. A new custom request header has to be named in the service's CORS `Access-Control-Allow-Headers`, or a browser reads the preflight, sees a header it may not send, and never sends the request at all, with no log line anywhere and nothing a non-browser test can observe. Reasoning: [`docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md`](./docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md).
 
 **The 409 recovery loop is mandatory client behaviour**, not an optimization: pull `currentVersion`, decrypt it, merge it with local state (§3.3), re-encrypt with the AAD bound to the _new_ `blobVersion`, and push again with `baseVersion: currentVersion`. A client that treats `409` as a fatal error will strand the user's device permanently out of sync.
 
@@ -1095,6 +1109,8 @@ either token turns that `404` into the `401` a wrong value gets.
 | `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `suspended`, `displayName`. At least one required |
 | `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
 | `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
+| `GET /v1/admin/accounts/:id/blob/versions` | Every retained blob version: number, envelope version, byte count, time, and the pin if it has one. Never ciphertext |
+| `POST /v1/admin/accounts/:id/blob/rollback` | `{"targetVersion": n}`. Makes that version current again by DELETING every version above it (§5.1's shrink guard, ADR-0009). Refuses an unknown version, the current version, an envelope version this build does not accept, and a zero-byte row. A rollback rather than a re-upload, because §3.2's AAD binds `blobVersion`: re-inserting old bytes as a new version yields something no client can decrypt |
 | `GET /v1/admin/invites`                  | A page of pending invitations, plus `total`                               |
 | `POST /v1/admin/invites`                 | Mints one (§5.8). The token is returned **once**                          |
 | `POST /v1/admin/invites/:id/resend`      | A NEW token on the SAME row, and a new expiry                             |
@@ -1447,8 +1463,20 @@ The two version numbers are independent on purpose: re-framing the crypto and re
 | Limit                   | Value                        | Enforced by                                              |
 | ----------------------- | ---------------------------- | -------------------------------------------------------- |
 | Max blob size           | 2 MiB (`MAX_BLOB_BYTES`)     | Service (`413`), mirrored client-side for a better error |
-| Blob versions retained  | 5 (`BLOB_VERSION_RETENTION`) | Service, pruned oldest-first after each accepted write   |
+| Blob versions retained  | Three tiers, see below       | Service, swept after each accepted write                 |
 | Key records per account | 2 (one per `kind`)           | Service                                                  |
+
+**Retention is tiered (M224).** A version is kept if ANY tier keeps it:
+
+| Tier            | Rule                                                                     | Cap |
+| --------------- | ------------------------------------------------------------------------ | --- |
+| Recent          | The newest versions (`BLOB_VERSION_RETENTION`)                           | 5   |
+| Daily           | The newest version of each UTC calendar day for `BLOB_DAILY_RETENTION_DAYS` | 14  |
+| Pre-shrink pins | Versions replaced by an acknowledged large shrink, for `BLOB_PRE_SHRINK_PIN_DAYS`, newest first up to `BLOB_PRE_SHRINK_PIN_LIMIT` | 14  |
+
+So at most **33 versions**, and therefore at most **66 MiB**, per account. The daily tier is per calendar DAY rather than per count on purpose: two devices in a merge loop produce versions as fast as the network allows, and a count-based tier is exhausted by that in minutes. The pin tier is capped because a pin is taken on a client's own claim.
+
+The flat five was the whole rule before M224, and it was thin as a safety net: an account whose diary was wiped by a client defect was recoverable only while the good version happened to still be inside a window two devices can burn through in a minute.
 
 **The capacity cliff, stated plainly.** One blob holds the account's _entire_ store. Food-log entries run roughly 400 to 700 bytes of JSON each before compression, so an uncompressed blob would cross 2 MiB within about 2 to 4 years of daily logging. That is not a theoretical concern; it is a date.
 
@@ -1504,7 +1532,7 @@ A conforming **sync** server needs, in full:
 1. The five endpoints of §5.1 to §5.5 plus the `/health` handshake of §5.6.
 2. Per-account CAS on `blobVersion`: atomic. The reference implementation uses a `UNIQUE (accountId, blobVersion)` index and treats a unique-violation as a conflict, rather than row locking; that stays correct under `READ COMMITTED` and is simpler than `SELECT ... FOR UPDATE`. Any mechanism with the same guarantee is fine; a read-then-write without atomicity is **not**.
 3. Per-account-and-kind CAS on key records via `expectedUpdatedAt`, with the same "absent field is a `400`" rule.
-4. Retention pruning to `BLOB_VERSION_RETENTION`.
+4. Retention pruning to the three tiers of §8, and the shrink guard of §5.1. A server that accepts an unacknowledged large shrink will destroy an account's diary the first time a client of the affected build loses its local store; a client written against a server that refuses it and pointed at one that does not is silently unprotected.
 5. Byte-exact storage of `ciphertext` and `wrappedDek`. Never re-encode, normalize, trim, or "fix" them. Any mutation destroys the GCM tag and with it the user's data.
 
 Additionally, a server that also implements the **account** endpoints of §5.7 to §5.15 must:

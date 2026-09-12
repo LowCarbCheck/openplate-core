@@ -17,6 +17,7 @@ import type { Request } from 'express';
 // borrows it rather than declaring a second copy that could drift.
 import type { SyncKeyRecordKind } from './protocol.js';
 import type { JsonObject } from './lib/json.js';
+import type { BlobVersionSummary, RollbackRefusal } from './lib/blob-rollback.js';
 import type { Logger } from './logger.js';
 
 export interface SyncKeyRecord {
@@ -40,6 +41,21 @@ export interface SyncBlobRecord {
 export type PutBlobResult = { ok: true; newVersion: number } | { ok: false; currentVersion: number };
 
 /**
+ * What the push path needs to know about the STORED blob before it decides
+ * whether to accept a shrinking one (M224).
+ *
+ * SIZE AND VERSION, NEVER THE BYTES. `sync_blobs.size_bytes` exists precisely
+ * so a caller does not read two megabytes to learn a length, and the shrink
+ * rule is a comparison of two lengths. Reading the ciphertext here would put a
+ * blob in memory on every push for no reason, and would put it in a code path
+ * that has no business holding one.
+ */
+export interface SyncBlobMeta {
+  blobVersion: number;
+  sizeBytes: number;
+}
+
+/**
  * Result of a CAS key-record write (security review finding #2 — mirrors
  * `PutBlobResult`'s optimistic-concurrency shape, applied to key records so
  * a rotation/first-time-setup race can never silently overwrite another
@@ -52,11 +68,31 @@ export type PutKeyRecordResult = { ok: true; record: SyncKeyRecord } | { ok: fal
 
 export interface SyncStorageAdapter {
   getBlob(accountId: number): Promise<SyncBlobRecord | null>;
+  /**
+   * The current version's number and byte count, or `null` when the account has
+   * never pushed. Read on every push by the shrink guard, which is why it does
+   * not return the ciphertext, see {@link SyncBlobMeta}.
+   */
+  getBlobMeta(accountId: number): Promise<SyncBlobMeta | null>;
   putBlobIfVersionMatches(input: {
     accountId: number;
     baseVersion: number;
     envelopeVersion: number;
     ciphertext: Uint8Array;
+    /**
+     * When set, the version at `baseVersion` is held against pruning until this
+     * instant, and the hold is written in the SAME step as the accepted write
+     * (M224).
+     *
+     * `null` on an ordinary push, which is nearly all of them. It is non-`null`
+     * only for a large shrink the client acknowledged: that is the write whose
+     * predecessor an operator may be asked for a fortnight later, and the write
+     * after which no client will ever ask for it again. Applied AFTER the
+     * insert wins and BEFORE the prune, so a pin can never be taken for a write
+     * that lost its CAS race and can never be pruned by the sweep it exists to
+     * survive.
+     */
+    pinPreviousUntil?: Date | null;
   }): Promise<PutBlobResult>;
   listKeyRecords(accountId: number): Promise<SyncKeyRecord[]>;
   /**
@@ -248,6 +284,38 @@ export type RotateDekResult =
 export interface SyncRotationStore {
   rotateDek(input: RotateDekInput): Promise<RotateDekResult>;
 }
+
+// =============================================================================
+// Blob rollback (ADR-0009)
+// =============================================================================
+
+/**
+ * The operator's restore path, in its OWN store for the reason
+ * {@link SyncShareStore} is kept out of {@link SyncStorageAdapter}: this is the
+ * one capability on the service that DELETES a person's accepted writes, and
+ * the push and pull handlers must not be able to reach it even by accident.
+ * Only `server/admin-routes.ts` is given one.
+ *
+ * It cannot write a blob, and that absence is the design. An operator may
+ * choose which retained version is current again; nothing here can put bytes
+ * into an account that its owner's device did not put there.
+ */
+export interface SyncBlobRollbackStore {
+  /** Every retained version of one account, newest first. Metadata only, never ciphertext. */
+  listBlobVersions(accountId: number): Promise<BlobVersionSummary[]>;
+  /**
+   * Makes `targetVersion` current again by deleting every version above it, as
+   * ONE transaction with the read that judged them.
+   *
+   * A ROLLBACK AND NOT A RE-UPLOAD, because the AAD binds `blobVersion`. See
+   * `lib/blob-rollback.ts` for the whole argument and for what it refuses.
+   */
+  rollbackToVersion(input: { accountId: number; targetVersion: number }): Promise<RollbackBlobResult>;
+}
+
+export type RollbackBlobResult =
+  | { ok: true; blobVersion: number; discardedVersions: number[] }
+  | { ok: false; reason: RollbackRefusal };
 
 // =============================================================================
 // Research contributions (ADR-0003)

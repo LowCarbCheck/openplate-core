@@ -43,6 +43,7 @@ import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
 import { createFakePushStore } from './fake-push-store.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 /** Every path the push family occupies, plus the subtree around it and the bare prefix. */
 const PUSH_ROUTES: readonly { method: string; path: string; body?: string }[] = [
@@ -93,7 +94,7 @@ async function startConfigHarness(options: { push: boolean }): Promise<ConfigHar
     trustProxy: false,
     mailer: fixture.mailer,
     now: fixture.now,
-    admin: { token: null, metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
+    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
     // BUILT FROM THE SAME FLAG that decides the surface, exactly as `main.ts`
     // builds both from `config.push`. A harness that reported one and mounted
     // the other would let a service that advertises a door it has not got pass.

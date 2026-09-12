@@ -1,0 +1,1 @@
+ALTER TABLE "sync_blobs" ADD COLUMN "pinned_until" timestamp;

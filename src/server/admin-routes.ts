@@ -63,6 +63,8 @@ import type { Request, Response, Router } from 'express';
 import { asyncHandler } from './async-handler.js';
 import type { AccountStore } from '../accounts/account-store.js';
 import type { AdminAccountSummary, AdminMetadataStore, AdminStats, ExpiringAllowance } from '../admin/admin-store.js';
+import type { SyncBlobRollbackStore } from '../contract-types.js';
+import type { BlobVersionSummary, RollbackRefusal } from '../lib/blob-rollback.js';
 import {
   DEFAULT_INVITE_TTL_MS,
   MAX_DAILY_AI_LIMIT,
@@ -584,6 +586,12 @@ export interface AdminRoutesOptions {
   invites: InviteStore;
   /** The SAME store the self-service delete path uses. `deleteAccount` and the reset-mail write. */
   accounts: AccountStore;
+  /**
+   * The blob restore path (M224, ADR-0009). It reaches `sync_blobs` and nothing
+   * else, and it is the only capability on this service that deletes an
+   * accepted write, see `contract-types.ts`.
+   */
+  blobs: SyncBlobRollbackStore;
   /** The two letters. A no-op on an instance with no mail, which is what makes `link` load-bearing. */
   mailer: Mailer;
   /**
@@ -623,12 +631,56 @@ export interface AdminRoutesOptions {
 }
 
 /**
+ * One retained blob version, as an operator reads it.
+ *
+ * A BYTE COUNT, A TIME AND TWO VERSION NUMBERS, and never the ciphertext, which
+ * is the projection ADR-0001 fixes for every blob fact on this surface. What is
+ * new in M224 is `pinnedUntil`: an operator choosing what to restore needs to
+ * know which version the service is deliberately holding, because that is the
+ * one the shrink guard marked as the copy before somebody's diary got smaller.
+ */
+interface AdminBlobVersionView {
+  blobVersion: number;
+  envelopeVersion: number;
+  sizeBytes: number;
+  createdAt: string;
+  pinnedUntil: string | null;
+}
+
+function toBlobVersionView(version: BlobVersionSummary): AdminBlobVersionView {
+  return {
+    blobVersion: version.blobVersion,
+    envelopeVersion: version.envelopeVersion,
+    sizeBytes: version.sizeBytes,
+    createdAt: version.createdAt.toISOString(),
+    pinnedUntil: version.pinnedUntil === null ? null : version.pinnedUntil.toISOString(),
+  };
+}
+
+/**
+ * Why a rollback was refused, in words an operator can act on.
+ *
+ * ONE MAP, EXHAUSTIVE BY `satisfies`, so a refusal added to
+ * `lib/blob-rollback.ts` is a compile error here rather than a `undefined` in
+ * somebody's terminal at the moment they are restoring a diary.
+ */
+const ROLLBACK_REFUSALS = {
+  'no-blob': 'That account has never pushed a blob, so there is nothing to roll back to.',
+  'unknown-version':
+    'No retained version carries that number. Run the version list again: it may have been pruned since you read it.',
+  'already-current': 'That version is already the current one. Nothing was changed.',
+  'unreadable-envelope':
+    'That version was written with an envelope format this service no longer accepts, so no app could read it. Nothing was changed.',
+  'empty-ciphertext': 'That version holds no bytes, so restoring it would leave the account unreadable. Nothing was changed.',
+} satisfies Record<RollbackRefusal, string>;
+
+/**
  * Builds the admin router. It does NOT include authentication, `create-app.ts`
  * mounts `createAdminAuthMiddleware` in front of it, in the same branch that
  * decides whether to mount anything at all.
  */
 export function createAdminRoutes(options: AdminRoutesOptions): Router {
-  const { metadata, accounts, invites, mailer, links, logger } = options;
+  const { metadata, accounts, blobs, invites, mailer, links, logger } = options;
   const router = express.Router();
 
   /**
@@ -988,6 +1040,83 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       // here or anywhere (`logger.ts`).
       logger.info('Account deleted by admin with all sync data', { accountId });
       res.status(204).end();
+    }),
+  );
+
+  // ---------------------------------------------------------------------------
+  // The blob restore path (M224, ADR-0009)
+  // ---------------------------------------------------------------------------
+
+  router.get(
+    '/accounts/:id/blob/versions',
+    asyncHandler(async (req, res) => {
+      const accountId = parseAccountId(req.params.id ?? '');
+      if (accountId === null) {
+        sendNotFound(res);
+        return;
+      }
+      // The account is read FIRST, so a version list for an id that never
+      // existed is the ordinary 404 and not an empty array an operator would
+      // read as "this person has never synced".
+      const summary = await metadata.getAccount({ accountId, day: utcDayKey(options.now()) });
+      if (summary === null) {
+        sendNotFound(res);
+        return;
+      }
+
+      const versions = await blobs.listBlobVersions(accountId);
+      res.status(200).json({ versions: versions.map(toBlobVersionView) });
+    }),
+  );
+
+  router.post(
+    '/accounts/:id/blob/rollback',
+    // PER ROUTE, like every other body on this router. There is no parser over
+    // the admin tree, so a route that forgets this one line reads `undefined`
+    // and refuses every well-formed request as a malformed one.
+    express.json({ limit: 4 * 1024 }),
+    asyncHandler(async (req, res) => {
+      const accountId = parseAccountId(req.params.id ?? '');
+      if (accountId === null) {
+        sendNotFound(res);
+        return;
+      }
+
+      // SAFETY: `express.json()` above has already parsed this body, so it is
+      // JSON-shaped by construction; `asObject` re-establishes that at the type
+      // level and yields `null` for anything that is not an object.
+      const body = asObject(req.body as JsonValue) ?? {};
+      const targetVersion = asNumber(body.targetVersion);
+      if (targetVersion === null || !Number.isInteger(targetVersion) || targetVersion < 1) {
+        res.status(400).json({ error: 'targetVersion must be a positive integer' });
+        return;
+      }
+
+      const summary = await metadata.getAccount({ accountId, day: utcDayKey(options.now()) });
+      if (summary === null) {
+        sendNotFound(res);
+        return;
+      }
+
+      const result = await blobs.rollbackToVersion({ accountId, targetVersion });
+      if (!result.ok) {
+        // A REFUSAL, NOT A 404. The account exists and the operator's request
+        // was understood; what it asked for would leave somebody's only copy
+        // unreadable, or was a no-op. Saying which is the whole value of this
+        // response, see `ROLLBACK_REFUSALS`.
+        res.status(400).json({ error: ROLLBACK_REFUSALS[result.reason] });
+        return;
+      }
+
+      // The account id and the numbers, never a byte and never an address.
+      // A restore deletes accepted writes, so it is the one operator action
+      // here that has to be legible in a log afterwards.
+      logger.info('Blob rolled back by admin', {
+        accountId,
+        blobVersion: result.blobVersion,
+        discarded: result.discardedVersions.length,
+      });
+      res.status(200).json({ blobVersion: result.blobVersion, discardedVersions: result.discardedVersions });
     }),
   );
 

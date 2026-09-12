@@ -21,6 +21,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BLOB_DAILY_RETENTION_DAYS,
+  BLOB_PRE_SHRINK_PIN_DAYS,
+  BLOB_PRE_SHRINK_PIN_LIMIT,
+  BLOB_SHRINK_ACK_RATIO,
   BLOB_VERSION_RETENTION,
   ENVELOPE_VERSION,
   MAX_BLOB_BYTES,
@@ -43,6 +47,16 @@ const EXPECTED_PROTOCOL_VERSION = 2;
 const EXPECTED_ENVELOPE_VERSION = 1;
 const EXPECTED_MAX_BLOB_BYTES = 2 * 1024 * 1024;
 const EXPECTED_BLOB_VERSION_RETENTION = 5;
+// M224. The flat count above is now one tier of three, and the other two are
+// part of the same contract: a client deciding whether to set
+// `shrinkAcknowledged` is deciding against `BLOB_SHRINK_ACK_RATIO`, and an
+// operator's restore window is the two day counts. Transcribed literals, under
+// the same rule as everything above: a change means four places, and forgetting
+// one fails a test.
+const EXPECTED_BLOB_DAILY_RETENTION_DAYS = 14;
+const EXPECTED_BLOB_PRE_SHRINK_PIN_DAYS = 14;
+const EXPECTED_BLOB_PRE_SHRINK_PIN_LIMIT = 14;
+const EXPECTED_BLOB_SHRINK_ACK_RATIO = 0.5;
 // M128 spec 02 moved this from '/api/sync' to '/v1/sync' (PROTOCOL.md §5).
 // The openplate copy still says '/api/sync' and, because both guards assert
 // TRANSCRIBED literals rather than each other, both will pass while
@@ -63,6 +77,22 @@ test('ENVELOPE_VERSION matches the value the client repo declares', () => {
 test('size and retention limits match the values the client repo transcribes', () => {
   assert.equal(MAX_BLOB_BYTES, EXPECTED_MAX_BLOB_BYTES);
   assert.equal(BLOB_VERSION_RETENTION, EXPECTED_BLOB_VERSION_RETENTION);
+});
+
+test('the shrink ratio and the two retention windows match the transcribed values (M224)', () => {
+  assert.equal(BLOB_SHRINK_ACK_RATIO, EXPECTED_BLOB_SHRINK_ACK_RATIO);
+  assert.equal(BLOB_DAILY_RETENTION_DAYS, EXPECTED_BLOB_DAILY_RETENTION_DAYS);
+  assert.equal(BLOB_PRE_SHRINK_PIN_DAYS, EXPECTED_BLOB_PRE_SHRINK_PIN_DAYS);
+  assert.equal(BLOB_PRE_SHRINK_PIN_LIMIT, EXPECTED_BLOB_PRE_SHRINK_PIN_LIMIT);
+});
+
+test('worst-case retained versions per account is the arithmetic the ADR states', () => {
+  // THE STORAGE BOUND, asserted rather than believed. Every tier is capped, so
+  // the most one account can hold is the sum, and `MAX_BLOB_BYTES` turns that
+  // into the 66 MiB ADR-0009 commits to. A tier made unbounded later fails here.
+  const worstCaseVersions = BLOB_VERSION_RETENTION + BLOB_DAILY_RETENTION_DAYS + BLOB_PRE_SHRINK_PIN_LIMIT;
+  assert.equal(worstCaseVersions, 33);
+  assert.equal(worstCaseVersions * MAX_BLOB_BYTES, 69_206_016);
 });
 
 test('the route prefix and key-record kinds match the client repo', () => {

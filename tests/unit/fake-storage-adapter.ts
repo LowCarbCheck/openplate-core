@@ -7,6 +7,7 @@
 import type {
   PutBlobResult,
   PutKeyRecordResult,
+  SyncBlobMeta,
   SyncBlobRecord,
   SyncKeyRecord,
   SyncStorageAdapter,
@@ -20,6 +21,17 @@ export function createFakeStorageAdapter(): SyncStorageAdapter {
   return {
     async getBlob(accountId: number): Promise<SyncBlobRecord | null> {
       return blobsByAccount.get(accountId) ?? null;
+    },
+
+    /**
+     * The size and version the shrink guard compares against (M224). It reads
+     * the same record `getBlob` does, so a fake cannot disagree with itself
+     * about what is stored.
+     */
+    async getBlobMeta(accountId: number): Promise<SyncBlobMeta | null> {
+      const current = blobsByAccount.get(accountId);
+      if (current === undefined) return null;
+      return { blobVersion: current.blobVersion, sizeBytes: current.ciphertext.byteLength };
     },
 
     async putBlobIfVersionMatches(input): Promise<PutBlobResult> {

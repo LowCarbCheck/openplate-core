@@ -23,6 +23,7 @@ import { createLogger } from './logger.js';
 import { createDatabase, runMigrations, waitForDatabase } from './db/client.js';
 import { createDrizzleAccountStore } from './db/account-store.js';
 import { createDrizzleStorageAdapter } from './db/storage-adapter.js';
+import { createDrizzleBlobRollbackStore } from './db/blob-rollback-store.js';
 import { createDrizzleAdminStore } from './db/admin-store.js';
 import { createDrizzleInviteStore } from './db/invite-store.js';
 import { createDrizzleShareStore } from './db/share-store.js';
@@ -120,6 +121,9 @@ async function main(): Promise<void> {
     billingToken: config.billingToken,
     metadata: createDrizzleAdminStore(database.db),
     invites,
+    // The restore path of ADR-0009. Its own store, so nothing on the sync
+    // routes can reach a delete of an accepted write.
+    blobs: createDrizzleBlobRollbackStore(database.db),
     // The same pair the mailer builds its links from, so an admin response and
     // a letter can never disagree about where a link points.
     links,

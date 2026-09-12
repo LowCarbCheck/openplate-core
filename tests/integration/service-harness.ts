@@ -41,6 +41,7 @@ import type { SyncKeyRecordKind } from '../../src/protocol.js';
 import type { Database } from '../../src/db/client.js';
 import { SHARE_WRAPPED_DEK_BYTES } from '../../src/server/share-routes.js';
 import { RESEARCH_BODY_MIN_BYTES } from '../../src/server/research-routes.js';
+import { createDrizzleBlobRollbackStore } from '../../src/db/blob-rollback-store.js';
 
 export interface HttpResponse<T> {
   status: number;
@@ -340,6 +341,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     mailer,
     now: () => new Date(clock),
     admin: {
+      // The REAL store, against the real table: the rollback this service
+      // offers deletes rows, and a fake here would prove nothing about that.
+      blobs: createDrizzleBlobRollbackStore(options.db),
       token: options.adminToken ?? null,
       metadata: createDrizzleAdminStore(options.db),
       invites: inviteStore,

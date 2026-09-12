@@ -79,7 +79,13 @@ import express from 'express';
 import type { Express } from 'express';
 import { ENVELOPE_VERSION, PLANS_API_PREFIX, PROTOCOL_VERSION, SYNC_API_PREFIX } from '../protocol.js';
 import type { InstanceInfo, OperatorNotice, ProtocolHandshake } from '../protocol.js';
-import type { SyncResearchStore, SyncRotationStore, SyncShareStore, SyncStorageAdapter } from '../contract-types.js';
+import type {
+  SyncBlobRollbackStore,
+  SyncResearchStore,
+  SyncRotationStore,
+  SyncShareStore,
+  SyncStorageAdapter,
+} from '../contract-types.js';
 import type { AuthContext } from '../accounts/auth-handlers.js';
 import { registerAuthRoutes } from '../accounts/register-auth-routes.js';
 import { ADMIN_API_PREFIX, createAdminRoutes, type AdminLinkBases } from './admin-routes.js';
@@ -136,6 +142,13 @@ export interface AdminSurfaceOptions {
   metadata: AdminMetadataStore;
   /** Invite minting and revocation, the only door onto this service. */
   invites: InviteStore;
+  /**
+   * The blob restore path (M224, ADR-0009). REQUIRED, unlike the share and
+   * research stores: a service that can refuse a wipe and cannot undo one is
+   * half a fix, and an instance where the second half is optional is an
+   * instance where it will be missing on the night it is needed.
+   */
+  blobs: SyncBlobRollbackStore;
   /** Where a join link points, or `null` when this instance cannot build one. */
   links?: AdminLinkBases | null;
 }
@@ -605,6 +618,7 @@ export function createApp(options: CreateAppOptions): Express {
       metadata: options.admin.metadata,
       invites: options.admin.invites,
       accounts: options.authContext.store,
+      blobs: options.admin.blobs,
       mailer,
       // The mailer itself cannot answer this: the no-op resolves, so a send
       // that did nothing is indistinguishable from one that worked.

@@ -39,6 +39,7 @@ import {
   sampleRecoveryCode,
   sampleWrappedDek,
 } from './service-harness.js';
+import { createDrizzleBlobRollbackStore } from '../../src/db/blob-rollback-store.js';
 
 const ADMIN_TOKEN = 'integration-admin-token-0123456789abcdef';
 const CLIENT_BASE_URL = 'https://openplate.de';
@@ -141,6 +142,9 @@ before(async () => {
     mailConfigured: true,
     instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null, plans: false, push: false },
     admin: {
+      // The REAL store, against the real table: the rollback this service
+      // offers deletes rows, and a fake here would prove nothing about that.
+      blobs: createDrizzleBlobRollbackStore(database.db),
       token: ADMIN_TOKEN,
       metadata: createDrizzleAdminStore(database.db),
       invites: createDrizzleInviteStore(database.db),

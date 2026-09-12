@@ -46,6 +46,7 @@ import type {
   FeedbackReportDetail,
   FeedbackReportSummary,
 } from '../../src/feedback/feedback-admin-store.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 export interface FakeFeedbackStore extends FeedbackStore {
   /** Every submission the route handed down, in order, so a test can assert what was and was not passed on. */
@@ -185,6 +186,7 @@ export async function startFeedbackHarness(options: StartFeedbackHarnessOptions)
     mailer: fixture.mailer,
     now: fixture.now,
     admin: {
+      blobs: createFakeBlobRollbackStore(),
       token: options.adminToken ?? null,
       metadata: createFakeAdminStore(),
       invites: createFakeInviteStore(),

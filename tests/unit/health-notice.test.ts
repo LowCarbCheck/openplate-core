@@ -25,6 +25,7 @@ import { createFakeRotationStore } from './fake-rotation-store.js';
 import { createFakePulseStore } from './fake-pulse-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 const servers: Server[] = [];
 
@@ -52,7 +53,7 @@ async function readHandshake(notice: OperatorNotice | null, instance: InstanceIn
     trustProxy: false,
     notice,
     instance,
-    admin: { token: null, metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
+    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
   });
   const server = app.listen(0);
   servers.push(server);

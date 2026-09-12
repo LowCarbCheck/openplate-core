@@ -49,17 +49,24 @@ import {
   SERVICE_SCOPE_REFUSAL,
   type AdminRouteRef,
 } from '../../src/server/service-principal-scope.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 /** Generated, as the operator is told to generate theirs. Long enough to pass `MIN_ADMIN_TOKEN_LENGTH`. */
 const BILLING_TOKEN = 'billing-2f7c4a1e9b3d6058ac71fe42';
 const ADMIN_TOKEN = 'admin-9d41c7b8e0a25f36471dcb9e';
 
 /**
- * How many routes the whole admin surface has today: thirteen account and
+ * How many routes the whole admin surface has today: fifteen account and
  * invite routes, four operator feedback routes. See the header, this is the
  * decision gate rather than a fact that happens to be pinned.
+ *
+ * M224 took it from seventeen to nineteen with the blob restore path
+ * (`GET .../blob/versions` and `POST .../blob/rollback`, ADR-0009). The
+ * decision it forced: NEITHER is on the biller's allow list. A subscription
+ * buys an allowance, and nothing a biller pays for gives it a reason to read
+ * somebody's blob history or to delete their accepted writes.
  */
-const ADMIN_ROUTE_COUNT = 17;
+const ADMIN_ROUTE_COUNT = 19;
 
 let harness: AdminHarness;
 let routes: AdminRouteRef[];
@@ -100,6 +107,7 @@ function buildAdminRouters(): Router[] {
       metadata: createFakeAdminStore(),
       invites: createFakeInviteStore(),
       accounts: fixture.store,
+      blobs: createFakeBlobRollbackStore(),
       mailer: fixture.mailer,
       mailConfigured: false,
       links: null,

@@ -21,6 +21,14 @@
  * typing it by accident; on a self-hostable service there is no single
  * production instance for such a flag to mean, either.
  *
+ * ── A ROLLBACK ASKS TOO ─────────────────────────────────────────────────────
+ * `accounts rollback` requires `--yes`, under the rule below and for the same
+ * reason: it deletes blob versions the account's own devices wrote, and there
+ * is no undo. Run `accounts blob-versions` first, and read
+ * `docs/operations/restoring-a-wiped-diary.md` before either, because the
+ * rollback alone does not finish the job — the person's devices still hold the
+ * baseline that caused the loss.
+ *
  * ── DELETION ASKS ───────────────────────────────────────────────────────────
  * `accounts delete` requires `--yes`. Without it the command exits non-zero
  * having sent nothing. The erasure is immediate, total and irreversible: no
@@ -44,6 +52,10 @@ import {
   formatInviteTable,
   formatMintedInvite,
   decodeResetMail,
+  decodeBlobVersions,
+  decodeRollback,
+  formatBlobVersions,
+  formatRollback,
 } from './views.js';
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
@@ -69,6 +81,11 @@ const USAGE = `sync-api, the openplate-core admin CLI
     invites resend <id>        Mint a NEW token for the same invite and send it
     invites revoke <id> --yes  Withdraw an unredeemed invite
     accounts reset-mail <id>   Send this account a password-reset letter
+    accounts blob-versions <id>        What blob versions the service still holds
+    accounts rollback <id> --to-version <n> --yes
+                               Make an older blob version current again, deleting
+                               every version above it. Read the playbook first:
+                               docs/operations/restoring-a-wiped-diary.md
     push keygen                Print a fresh VAPID key pair for the environment
 
   Options:
@@ -76,7 +93,9 @@ const USAGE = `sync-api, the openplate-core admin CLI
     --limit <n>    Page size for "accounts list" (default 50, max 200)
     --offset <n>   Page offset for "accounts list" (default 0)
     --json         Print the decoded response as JSON (read commands only)
-    --yes          Required by "accounts delete" and "invites revoke"
+    --yes          Required by "accounts delete", "accounts rollback" and
+                   "invites revoke"
+    --to-version <n>       Which blob version "accounts rollback" restores
     --email <address>      Who the invite is for. Becomes the account's identity
     --display-name <text>  The person's name, carried onto the account
     --role <admin|member>  What the redeemed account may do (default member)
@@ -104,6 +123,7 @@ interface Invocation {
   dailyAiLimit: string | null;
   allowanceExpires: string | null;
   expiresInDays: string | null;
+  toVersion: string | null;
   json: boolean;
   yes: boolean;
   help: boolean;
@@ -123,6 +143,7 @@ function parseInvocation(argv: string[]): Invocation {
       'daily-ai-limit': { type: 'string' },
       'allowance-expires': { type: 'string' },
       'expires-in-days': { type: 'string' },
+      'to-version': { type: 'string' },
       json: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -141,6 +162,7 @@ function parseInvocation(argv: string[]): Invocation {
     dailyAiLimit: parsed.values['daily-ai-limit'] ?? null,
     allowanceExpires: parsed.values['allowance-expires'] ?? null,
     expiresInDays: parsed.values['expires-in-days'] ?? null,
+    toVersion: parsed.values['to-version'] ?? null,
     json: parsed.values.json === true,
     yes: parsed.values.yes === true,
     help: parsed.values.help === true,
@@ -204,6 +226,29 @@ function expiryFrom(value: string | null): AccountPatchBody {
   return { allowanceExpiresAt: new Date(parsed).toISOString() };
 }
 
+/**
+ * The `--to-version` value of `accounts rollback`, or a refusal.
+ *
+ * A FLAG RATHER THAN A POSITIONAL, for the reason `--allowance-expires` is one:
+ * `accounts rollback 7 4` is two bare integers side by side, and the wrong
+ * reading of them deletes a different person's versions.
+ *
+ * Checked HERE as well as by the service, so an obvious typo costs no round
+ * trip on the one command that cannot be undone.
+ */
+function rollbackTargetFrom(value: string | null): number {
+  if (value === null || value.trim() === '') {
+    throw new CliError(
+      'accounts rollback needs --to-version <n>, e.g. `accounts rollback 7 --to-version 4 --yes`. Run `accounts blob-versions 7` first to see what is still held.',
+    );
+  }
+  const version = Number(value.trim());
+  if (!Number.isInteger(version) || version < 1) {
+    throw new CliError('--to-version must be a whole blob version number, 1 or more.');
+  }
+  return version;
+}
+
 function inviteIdArgument(invocation: Invocation): string {
   const raw = invocation.command[2];
   if (raw === undefined || raw === '') {
@@ -260,6 +305,42 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
     }
     await client.request({ method: 'DELETE', path: `/v1/admin/accounts/${id}` });
     print(`Deleted account ${decodeURIComponent(id)} and everything attached to it.`);
+    return;
+  }
+
+  if (subcommand === 'blob-versions') {
+    const id = accountIdArgument(invocation);
+    const versions = decodeBlobVersions(
+      await client.request({ method: 'GET', path: `/v1/admin/accounts/${id}/blob/versions` }),
+    );
+    print(invocation.json ? JSON.stringify(versions, null, 2) : formatBlobVersions(versions));
+    return;
+  }
+
+  if (subcommand === 'rollback') {
+    const id = accountIdArgument(invocation);
+    const targetVersion = rollbackTargetFrom(invocation.toVersion);
+    // Checked BEFORE the request is built, so an unconfirmed rollback sends
+    // nothing. The same rule `accounts delete` follows, and for a stronger
+    // reason: what this deletes is somebody's own writes, not an account they
+    // asked to be rid of.
+    if (!invocation.yes) {
+      throw new CliError(
+        `Refusing to roll account ${decodeURIComponent(id)} back to version ${targetVersion} without --yes. Every blob version above it is deleted immediately and irreversibly.`,
+      );
+    }
+    const rollback = decodeRollback(
+      await client.request({
+        method: 'POST',
+        path: `/v1/admin/accounts/${id}/blob/rollback`,
+        body: { targetVersion },
+      }),
+    );
+    print(
+      invocation.json
+        ? JSON.stringify(rollback, null, 2)
+        : formatRollback({ accountId: decodeURIComponent(id), rollback }),
+    );
     return;
   }
 
@@ -329,7 +410,7 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
   }
 
   throw new CliError(
-    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, set-expiry, suspend, reactivate, reset-mail.`,
+    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, set-expiry, suspend, reactivate, reset-mail, blob-versions, rollback.`,
   );
 }
 

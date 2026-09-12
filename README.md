@@ -14,6 +14,8 @@ The third is the community pulse. A person who turns it on in the app sends thre
 
 The fourth is push scheduling. With `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` set, a person can register a device at `/v1/push` and ask for two things: a morning catch-up at a minute of their own local day, and an alert when a fast reaches its target. The server stores one row per device: where to send, in which zone, at which minute, when it was last seen, and the instant it asked to be woken. What it never stores is a word of what the notification says. Every push carries a kind, `{"kind":"catch-up"}` or `{"kind":"fast-target"}`, and the device writes the sentence out of the diary only it can read. At most two pushes a day per device, nothing at all for somebody who has not opened the app in seven days, and a subscription the push service disowns is deleted. [ADR-0008](./docs/adr/0008-push-is-a-scheduling-exception.md) states all four holes side by side, including the fact that a `wake_at` row and the pulse's presence row describe the same fast. Leave the three variables unset and the whole `/v1/push` subtree answers the ordinary unknown-path 404.
 
+**One opinion about a blob, and it is not a fifth hole.** This service used to accept any correctly versioned blob without looking at it at all. Since M224 it refuses one shape: a push whose ciphertext is under half the size of the stored one, unless the request explicitly says the deletion is intended. A person lost her whole diary to a client that found its local store evicted, concluded she had deleted everything, and pushed a tombstone per entry, and a second device then pulled that blob and deleted its own rows. The guard compares two byte counts this service already stored for the storage figure it already reports, so it learns nothing new about anybody; what it gives up is the claim to be a store with no opinion. An operator can put an account back with `pnpm sync-api accounts rollback`, and [`docs/operations/restoring-a-wiped-diary.md`](./docs/operations/restoring-a-wiped-diary.md) is the procedure, including the step on the person's own devices that the rollback cannot do. [ADR-0009](./docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md) states what it costs when it is wrong.
+
 **Start with [`PROTOCOL.md`](./PROTOCOL.md).** It is the normative specification of the wire protocol, written so a third party can implement either side of it without reading this code: an alternative client against this service, or an alternative server that an openplate client can be pointed at with `SYNC_SERVER_URL`.
 
 **This service is optional.** openplate is a complete, fully functional tracker without it: your diary lives in the browser, exports to JSON, and imports again on another device. Sync removes the manual step; it does not unlock anything.
@@ -24,8 +26,8 @@ The fourth is push scheduling. With `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and 
 
 ## Documentation
 
-`docs/` holds only architecture decision records for now
-([`docs/adr/`](./docs/adr/)); this README's Self-hosting, The AI proxy, Backup and restore,
+`docs/` holds the architecture decision records ([`docs/adr/`](./docs/adr/)) and
+the operator playbooks ([`docs/operations/`](./docs/operations/)); this README's Self-hosting, The AI proxy, Backup and restore,
 and The admin API sections read like standalone guides and are candidates for splitting into
 `docs/` files later.
 

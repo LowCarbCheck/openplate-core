@@ -35,6 +35,7 @@ import { createFakePulseStore } from './fake-pulse-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 /** A syntactically perfect credential. It must buy nothing on a dark instance, because there is nothing to buy. */
 const VALID_LOOKING_TOKEN = 'a'.repeat(48);
@@ -70,7 +71,7 @@ async function startGatingHarness(memberInvites: boolean): Promise<GatingHarness
     trustProxy: false,
     mailer: fixture.mailer,
     now: fixture.now,
-    admin: { token: null, metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
+    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
   });
 
   const server: Server = app.listen(0);

@@ -64,8 +64,76 @@ export const ENVELOPE_VERSION = 1;
  */
 export const MAX_BLOB_BYTES = 2 * 1024 * 1024;
 
-/** How many historical blob versions the service retains per account; older ones are pruned on every successful write. */
+/**
+ * The RECENT tier of blob retention: how many of the newest versions are kept
+ * whatever else is true. Unchanged since M128, and still the tier that covers
+ * ordinary churn.
+ *
+ * IT IS NO LONGER THE WHOLE RULE. Two devices disagreeing burn five versions in
+ * a minute, and the only reason the M224 data loss was recoverable at all is
+ * that the pre-wipe blob happened to still be inside the window. The full rule
+ * is this tier plus {@link BLOB_DAILY_RETENTION_DAYS} plus the pins of
+ * {@link BLOB_PRE_SHRINK_PIN_DAYS}; `lib/blob-retention.ts` is where the three
+ * are combined, and `docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md`
+ * is why.
+ */
 export const BLOB_VERSION_RETENTION = 5;
+
+/**
+ * The DAILY tier: at most one version per UTC calendar day is kept for this
+ * many days back, on top of {@link BLOB_VERSION_RETENTION}.
+ *
+ * A CALENDAR DAY, NOT A COUNT, and that is the point. A loop between two
+ * devices can produce a thousand versions in an hour and still occupies one
+ * slot here, so the tier bounds itself: at most this many extra blobs per
+ * account, whatever a client does.
+ */
+export const BLOB_DAILY_RETENTION_DAYS = 14;
+
+/**
+ * The PIN tier: how long the version immediately before an ACKNOWLEDGED shrink
+ * is held, whatever the two tiers above would have done with it.
+ *
+ * The refusal of {@link BLOB_SHRINK_ACK_RATIO} protects the copy a client never
+ * meant to overwrite. This protects the copy a client DID mean to overwrite and
+ * was wrong about, which is the same fortnight an operator needs to hear about
+ * it, be asked, and act.
+ */
+export const BLOB_PRE_SHRINK_PIN_DAYS = 14;
+
+/**
+ * How many pinned versions one account may hold at once. The oldest pins past
+ * this many are prunable again.
+ *
+ * A CAP RATHER THAN A TRUST. Without it a client that acknowledges every shrink
+ * pins one row per shrink, and storage per account has no bound at all. With
+ * it the worst case is arithmetic: {@link BLOB_VERSION_RETENTION} plus
+ * {@link BLOB_DAILY_RETENTION_DAYS} plus this, times {@link MAX_BLOB_BYTES}.
+ */
+export const BLOB_PRE_SHRINK_PIN_LIMIT = 14;
+
+/**
+ * The fraction of the stored blob's `size_bytes` below which a push counts as a
+ * LARGE SHRINK and must carry {@link PushBlobRequest.shrinkAcknowledged}.
+ *
+ * HALF, chosen for what it does NOT catch. Deleting a month out of two years of
+ * diary is a few percent; the M224 incident went from 5310 bytes to 1588 in one
+ * push, which is thirty. A ratio this coarse never fires on ordinary editing,
+ * and fires on every shape of "this device thinks the diary is nearly empty".
+ */
+export const BLOB_SHRINK_ACK_RATIO = 0.5;
+
+/**
+ * The sentence the service refuses an unacknowledged large shrink with.
+ *
+ * PROSE, NOT A TOKEN, unlike `account-suspended`. A client is not being asked to
+ * branch on it: the status already says "this request was refused and nothing
+ * was written", and the only thing left to do with the text is show it to a
+ * person whose app is older than the field. So it says what happened and what to
+ * do, in words somebody can act on.
+ */
+export const SHRINK_REFUSED_ERROR =
+  'This push would delete more than half of the stored diary, and this app did not confirm that the deletion was intended. Nothing was changed on the server. Update the app, then sync again.';
 
 /**
  * Path prefix the blob/key-record endpoints are mounted under.
@@ -463,6 +531,23 @@ export interface PushBlobRequest {
   baseVersion: number;
   envelopeVersion: number;
   ciphertext: Base64Bytes;
+  /**
+   * `true` when this client MEANS the deletion it is pushing: it emitted those
+   * tombstones from state it positively trusts, and it is willing to have the
+   * server act on that. Absent and `false` mean the same thing, so every client
+   * older than the field says "no".
+   *
+   * IT IS ONLY EVER READ ON A LARGE SHRINK (`BLOB_SHRINK_ACK_RATIO`), and it is
+   * an ACKNOWLEDGEMENT rather than a verdict: saying `true` does not make a
+   * deletion correct, it makes it this client's claim. An ordinary push sets
+   * nothing and is unaffected.
+   *
+   * A BODY FIELD AND NOT A HEADER, on purpose. A new custom request header must
+   * be added to `server/cors.ts`'s allow list or a browser silently drops the
+   * request after a clean preflight, and no Node test can see that; this service
+   * shipped exactly that defect in M222. See `tests/integration/cors-preflight.test.ts`.
+   */
+  shrinkAcknowledged?: boolean;
 }
 
 /** `200`, the CAS write won. */

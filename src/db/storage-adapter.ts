@@ -30,12 +30,13 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import type {
   PutBlobResult,
   PutKeyRecordResult,
+  SyncBlobMeta,
   SyncBlobRecord,
   SyncKeyRecord,
   SyncStorageAdapter,
 } from '../contract-types.js';
 import type { SyncKeyRecordKind } from '../protocol.js';
-import { BLOB_VERSION_RETENTION } from '../protocol.js';
+import { selectPrunableBlobIds } from '../lib/blob-retention.js';
 import { isUniqueViolation } from '../lib/storage-conflict.js';
 import type { Database } from './client.js';
 import { syncBlobs, syncKeyRecords } from './schema.js';
@@ -52,7 +53,13 @@ function mapKeyRecordRow(row: SyncKeyRecordRow): SyncKeyRecord {
   };
 }
 
-export function createDrizzleStorageAdapter(db: Database): SyncStorageAdapter {
+/**
+ * @param clock Injected, like every other clock in this repo, because the
+ * retention sweep's daily tier and its pin expiry both key on it and a test
+ * that cannot move the clock cannot reach either boundary. The default is the
+ * real one.
+ */
+export function createDrizzleStorageAdapter(db: Database, clock: () => Date = () => new Date()): SyncStorageAdapter {
   async function readCurrentBlobVersion(accountId: number): Promise<number> {
     const [row] = await db
       .select({ blobVersion: syncBlobs.blobVersion })
@@ -63,14 +70,31 @@ export function createDrizzleStorageAdapter(db: Database): SyncStorageAdapter {
     return row?.blobVersion ?? 0;
   }
 
-  /** Deletes every blob version for `accountId` past the retention cap, oldest first. */
-  async function pruneOldBlobVersions(accountId: number): Promise<void> {
+  /**
+   * Deletes every blob version for `accountId` that none of the three
+   * retention tiers keeps (M224).
+   *
+   * THE TIERS ARE NOT DECIDED HERE. `lib/blob-retention.ts` takes the rows and
+   * a clock and answers with ids, so the rule that decides whether somebody's
+   * last good copy survives is pure and is tested at its boundaries rather
+   * than through a database. This function reads, calls, and deletes.
+   *
+   * The read projects four columns and never `ciphertext`: the sweep runs on
+   * every accepted write, and selecting the bytes would put every retained
+   * version of a 2 MiB blob in memory to decide which ones to drop.
+   */
+  async function pruneOldBlobVersions(accountId: number, now: Date): Promise<void> {
     const rows = await db
-      .select({ id: syncBlobs.id })
+      .select({
+        id: syncBlobs.id,
+        blobVersion: syncBlobs.blobVersion,
+        createdAt: syncBlobs.createdAt,
+        pinnedUntil: syncBlobs.pinnedUntil,
+      })
       .from(syncBlobs)
       .where(eq(syncBlobs.accountId, accountId))
       .orderBy(desc(syncBlobs.blobVersion));
-    const staleIds = rows.slice(BLOB_VERSION_RETENTION).map((row) => row.id);
+    const staleIds = selectPrunableBlobIds({ versions: rows, now });
     if (staleIds.length === 0) return;
     await db.delete(syncBlobs).where(inArray(syncBlobs.id, staleIds));
   }
@@ -85,6 +109,16 @@ export function createDrizzleStorageAdapter(db: Database): SyncStorageAdapter {
   }
 
   return {
+    async getBlobMeta(accountId: number): Promise<SyncBlobMeta | null> {
+      const [row] = await db
+        .select({ blobVersion: syncBlobs.blobVersion, sizeBytes: syncBlobs.sizeBytes })
+        .from(syncBlobs)
+        .where(eq(syncBlobs.accountId, accountId))
+        .orderBy(desc(syncBlobs.blobVersion))
+        .limit(1);
+      return row ?? null;
+    },
+
     async getBlob(accountId: number): Promise<SyncBlobRecord | null> {
       const [row] = await db
         .select()
@@ -124,7 +158,18 @@ export function createDrizzleStorageAdapter(db: Database): SyncStorageAdapter {
         return { ok: false, currentVersion: await readCurrentBlobVersion(input.accountId) };
       }
 
-      await pruneOldBlobVersions(input.accountId);
+      // THE PIN, BETWEEN THE WIN AND THE SWEEP (M224). After the insert, so a
+      // write that lost its CAS race never pins anything; before the prune, so
+      // the pin is visible to the sweep it exists to survive.
+      const pinPreviousUntil = input.pinPreviousUntil ?? null;
+      if (pinPreviousUntil !== null && input.baseVersion > 0) {
+        await db
+          .update(syncBlobs)
+          .set({ pinnedUntil: pinPreviousUntil })
+          .where(and(eq(syncBlobs.accountId, input.accountId), eq(syncBlobs.blobVersion, input.baseVersion)));
+      }
+
+      await pruneOldBlobVersions(input.accountId, clock());
       return { ok: true, newVersion };
     },
 

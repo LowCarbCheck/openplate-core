@@ -48,6 +48,29 @@ export interface StatsView {
   blobBytes: number;
 }
 
+/**
+ * One retained blob version, as `accounts blob-versions` reads it (M224).
+ *
+ * IT IS DELIBERATELY NOT AN `AccountView` FIELD. An operator asks this question
+ * once, in an incident, about one person, and a column on the accounts table
+ * would put a list of somebody's version history in front of anybody who typed
+ * `accounts list`.
+ */
+export interface BlobVersionView {
+  blobVersion: number;
+  envelopeVersion: number;
+  sizeBytes: number;
+  createdAt: string;
+  /** Non-`null` while the service is holding this version as the copy before an acknowledged shrink. */
+  pinnedUntil: string | null;
+}
+
+/** What `accounts rollback` reports: which version is current now, and what it removed to get there. */
+export interface RollbackView {
+  blobVersion: number;
+  discardedVersions: number[];
+}
+
 export interface HandshakeView {
   protocolVersion: number;
   envelopeVersion: number;
@@ -252,6 +275,30 @@ export function decodeResetMail(value: JsonValue): ResetMailView {
   return { emailed, link: asString(body?.link) };
 }
 
+export function decodeBlobVersions(value: JsonValue): BlobVersionView[] {
+  const rows = asArray(asObject(value)?.versions);
+  if (rows === null) throw undocumentedResponse('blob versions');
+  return rows.map((row) => {
+    const version = asObject(row);
+    const blobVersion = asNumber(version?.blobVersion);
+    const envelopeVersion = asNumber(version?.envelopeVersion);
+    const sizeBytes = asNumber(version?.sizeBytes);
+    const createdAt = asString(version?.createdAt);
+    if (version === null || blobVersion === null || envelopeVersion === null || sizeBytes === null || createdAt === null) {
+      throw undocumentedResponse('blob versions');
+    }
+    return { blobVersion, envelopeVersion, sizeBytes, createdAt, pinnedUntil: asString(version.pinnedUntil) };
+  });
+}
+
+export function decodeRollback(value: JsonValue): RollbackView {
+  const body = asObject(value);
+  const blobVersion = asNumber(body?.blobVersion);
+  const discarded = asArray(body?.discardedVersions);
+  if (blobVersion === null || discarded === null) throw undocumentedResponse('rollback');
+  return { blobVersion, discardedVersions: discarded.map((entry) => asNumber(entry) ?? 0) };
+}
+
 export function decodeStats(value: JsonValue): StatsView {
   const stats = asObject(asObject(value)?.stats);
   const accounts = asNumber(stats?.accounts);
@@ -346,5 +393,48 @@ export function formatStats(stats: StatsView): string {
     `blob versions       ${stats.blobVersions}`,
     `key records         ${stats.keyRecords}`,
     `stored ciphertext   ${formatBytes(stats.blobBytes)}`,
+  ].join('\n');
+}
+
+/**
+ * The version list an operator reads before choosing what to restore.
+ *
+ * THE SIZE COLUMN IS THE POINT, and it is why the drop is shown beside it. An
+ * incident looks like one row a third the size of the one above it, and a
+ * table that made a person do that arithmetic in their head at two in the
+ * morning would be a table that gets it wrong.
+ */
+export function formatBlobVersions(versions: BlobVersionView[]): string {
+  if (versions.length === 0) return 'No retained blob versions. This account has never pushed.';
+
+  const header = `${pad('VERSION', 9)}${pad('SIZE', 12)}${pad('CHANGE', 10)}${pad('ENVELOPE', 10)}${pad('CREATED', 26)}PINNED UNTIL`;
+  const rows = versions.map((version, index) => {
+    // The row BELOW is the older one: the list arrives newest first.
+    const previous = versions[index + 1];
+    const change =
+      previous === undefined || previous.sizeBytes === 0
+        ? '—'
+        : `${Math.round((version.sizeBytes / previous.sizeBytes) * 100 - 100)}%`;
+    return [
+      pad(String(version.blobVersion), 9),
+      pad(formatBytes(version.sizeBytes), 12),
+      pad(change, 10),
+      pad(String(version.envelopeVersion), 10),
+      pad(version.createdAt, 26),
+      version.pinnedUntil ?? '—',
+    ].join('');
+  });
+  return [header, ...rows].join('\n');
+}
+
+export function formatRollback(input: { accountId: string; rollback: RollbackView }): string {
+  return [
+    `Account ${input.accountId} is back at blob version ${input.rollback.blobVersion}.`,
+    `Removed ${input.rollback.discardedVersions.length} later version(s): ${input.rollback.discardedVersions.join(', ')}.`,
+    '',
+    'THIS IS NOT FINISHED. Every device that person signed into still holds the',
+    'baseline that produced the bad push, and the next sync will delete the same',
+    'rows again. Erase the local data on each of those devices before they sync.',
+    'See docs/operations/restoring-a-wiped-diary.md.',
   ].join('\n');
 }

@@ -22,8 +22,8 @@
 import express from 'express';
 import type { Express, Request, Response } from 'express';
 import type { SyncHostContext } from '../contract-types.js';
-import { MAX_BLOB_BYTES, SYNC_API_PREFIX, isSyncKeyRecordKind } from '../protocol.js';
-import { asNumber, asObject, asString, type JsonValue } from '../lib/json.js';
+import { MAX_BLOB_BYTES, SHRINK_REFUSED_ERROR, SYNC_API_PREFIX, isSyncKeyRecordKind } from '../protocol.js';
+import { asBoolean, asNumber, asObject, asString, type JsonValue } from '../lib/json.js';
 import { handlePushBlob } from './push-handler.js';
 import { handlePullBlob } from './pull-handler.js';
 import { handleDeleteKeyRecord, handleListKeyRecords, handlePutKeyRecord } from './key-records-handler.js';
@@ -78,6 +78,26 @@ async function requireEntitledUser(
   return user;
 }
 
+/**
+ * Reads `shrinkAcknowledged` (M224).
+ *
+ * ABSENT IS `false`, AND THAT IS THE WHOLE POINT OF THE FIELD. Every client
+ * built before it says nothing, and "said nothing" must mean "did not
+ * acknowledge" rather than "no opinion, carry on" — the deployed clients are
+ * exactly the population the refusal protects.
+ *
+ * A PRESENT NON-BOOLEAN IS A REFUSAL, not a lenient `false`. `"true"` from a
+ * third-party implementation that guessed the encoding would otherwise be read
+ * as `false` and silently refused on a push it meant to take responsibility
+ * for; a `400` naming the body is something an implementer can act on.
+ */
+function parseShrinkAcknowledged(value: JsonValue | undefined): { ok: true; value: boolean } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, value: false };
+  const flag = asBoolean(value);
+  if (flag === null) return { ok: false };
+  return { ok: true, value: flag };
+}
+
 export function registerSyncRoutes(app: Express, context: SyncHostContext): void {
   const router = express.Router();
   // SCOPED TO THE SYNC PREFIX, and the prefix is load-bearing. This router is
@@ -98,7 +118,8 @@ export function registerSyncRoutes(app: Express, context: SyncHostContext): void
       const baseVersion = asNumber(body.baseVersion);
       const envelopeVersion = asNumber(body.envelopeVersion);
       const ciphertext = fromBase64(body.ciphertext);
-      if (baseVersion === null || envelopeVersion === null || ciphertext === null) {
+      const shrinkAcknowledged = parseShrinkAcknowledged(body.shrinkAcknowledged);
+      if (baseVersion === null || envelopeVersion === null || ciphertext === null || !shrinkAcknowledged.ok) {
         res.status(400).json({ error: 'invalid request body' });
         return;
       }
@@ -123,7 +144,14 @@ export function registerSyncRoutes(app: Express, context: SyncHostContext): void
       }
 
       const result = await handlePushBlob(
-        { accountId: user.userId, baseVersion, envelopeVersion, ciphertext },
+        {
+          accountId: user.userId,
+          baseVersion,
+          envelopeVersion,
+          ciphertext,
+          shrinkAcknowledged: shrinkAcknowledged.value,
+          now: new Date(),
+        },
         context.storage,
       );
 
@@ -131,6 +159,33 @@ export function registerSyncRoutes(app: Express, context: SyncHostContext): void
         res.status(200).json({ newVersion: result.newVersion });
       } else if (result.status === 'conflict') {
         res.status(409).json({ currentVersion: result.currentVersion });
+      } else if (result.status === 'shrink-refused') {
+        // 400 AND NOT 409, AND THE CHOICE IS LOAD-BEARING (M224). PROTOCOL.md
+        // §5.1 gives 409 one meaning on this route, "another device wrote
+        // first", and the deployed client acts on it: it reads
+        // `currentVersion` out of the body, pulls, merges and pushes again. A
+        // 409 here would carry no such field, and the client would loop on the
+        // very push this refusal exists to stop.
+        //
+        // 400 is what the deployed client already renders as `incompatible`,
+        // whose words are "this app and the sync server don't speak the same
+        // version yet, so syncing is paused on purpose", with the sentence
+        // below underneath it. That is true: this app IS too old, and the
+        // remedy IS an update. It also throws out of the sync cycle before
+        // `applySnapshot`, so nothing local is adopted either.
+        //
+        // The two numbers travel beside the prose for the operator reading a
+        // support mail, never for a client to branch on.
+        context.logger?.warn('Refused an unacknowledged shrinking push', {
+          accountId: user.userId,
+          currentSizeBytes: result.currentSizeBytes,
+          nextSizeBytes: result.nextSizeBytes,
+        });
+        res.status(400).json({
+          error: SHRINK_REFUSED_ERROR,
+          currentSizeBytes: result.currentSizeBytes,
+          nextSizeBytes: result.nextSizeBytes,
+        });
       } else {
         res.status(400).json({ error: result.reason });
       }

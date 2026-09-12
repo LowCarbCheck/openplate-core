@@ -27,6 +27,7 @@ import { createFakePulseStore } from './fake-pulse-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
+import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 
 /** One request the fake upstream received, recorded off the wire. */
 export interface RecordedUpstreamRequest {
@@ -167,6 +168,7 @@ export async function startPlansHarness(options: StartPlansHarnessOptions): Prom
     mailer: fixture.mailer,
     now: fixture.now,
     admin: {
+      blobs: createFakeBlobRollbackStore(),
       token: options.adminToken ?? null,
       metadata: createFakeAdminStore(),
       invites: createFakeInviteStore(),

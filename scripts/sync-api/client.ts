@@ -67,12 +67,17 @@ export interface AccountPatchBody {
   displayName?: string | null;
 }
 
+/** The body of `POST /v1/admin/accounts/:id/blob/rollback` (M224). One field, because the route takes one decision. */
+export interface BlobRollbackBody {
+  targetVersion: number;
+}
+
 export interface AdminRequest {
   readonly method: HttpMethod;
   /** Absolute path on the service, e.g. `/v1/admin/accounts`. */
   readonly path: string;
   /** Sent as JSON on a `POST` or a `PATCH`. Never carries a credential — the token stays in the header. */
-  readonly body?: MintInviteRequestBody | AccountPatchBody;
+  readonly body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody;
 }
 
 export interface AdminClientOptions {
@@ -148,7 +153,11 @@ export class AdminClient {
     return this.readJson(response, url);
   }
 
-  private async send(url: string, method: HttpMethod, body?: MintInviteRequestBody | AccountPatchBody): Promise<Response> {
+  private async send(
+    url: string,
+    method: HttpMethod,
+    body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody,
+  ): Promise<Response> {
     // Named rather than an open dictionary, so the one header that carries the
     // credential is part of a fixed shape and cannot be joined by a key some
     // later edit computes.
