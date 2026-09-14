@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-14
+
 ### Added
 
 - **The letters exist in four more languages.**
@@ -18,7 +20,7 @@ change moves the minor.
   does, and they live in `src/mail/strings.<lang>.ts`, one generated module
   each, checked by the compiler with the hand-written two. The expiry date in
   an invitation now renders in the reader's own language for every one of the
-  six; before this, every language but German got an English date.
+  six; before this, every language but German got an English date. ([bf04ca4](https://github.com/LowCarbCheck/openplate-core/commit/bf04ca4))
 
 ## [0.15.0] - 2026-09-14
 
