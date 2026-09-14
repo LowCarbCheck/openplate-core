@@ -18,7 +18,7 @@ import type { AiUpstreamConfig } from './ai/proxy.js';
 import type { PlansUpstreamConfig } from './server/plans-proxy.js';
 import type { VapidCredentials } from './push/web-push-sender.js';
 import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
-import { MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
+import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 
 /**
  * Minimum accepted `SERVER_SECRET` length. 32 characters is the shortest
@@ -163,6 +163,11 @@ export interface ServiceConfig {
    * reason the admin, share, research and feedback trees do
    * (`server/create-app.ts`). `InstanceInfo.memberInvites` reports it
    * descriptively so a client knows whether to draw the card.
+   *
+   * THE LIFETIME CAP RIDES ALONG (`MEMBER_INVITE_LIFETIME_CAP`, default 5,
+   * M228). It is optional because it only narrows a door the pair opens, and
+   * it travels here rather than as a constant so the route, the caller's own
+   * account view and the operator's console all count to the same number.
    *
    * NEITHER VALUE IS READABLE OR WRITABLE BY THE CALLER. The member mint takes
    * an address and nothing else: the terms are the instance's, and that is the
@@ -597,6 +602,22 @@ function parseBoolean(env: NodeJS.ProcessEnv, key: string, fallback: boolean): b
   throw new Error(`Invalid boolean for ${key}: expected true/false, got "${raw}"`);
 }
 
+/**
+ * Like {@link parsePositiveInteger}, but zero is a value rather than a
+ * mistake. `MEMBER_INVITE_LIFETIME_CAP=0` leaves the route mounted and gives
+ * every member nothing to spend, which is a different statement from unsetting
+ * the pair and taking the route away.
+ */
+function parseNonNegativeInteger(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const raw = env[key]?.trim();
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid integer for ${key}: expected an integer of 0 or more, got "${raw}"`);
+  }
+  return parsed;
+}
+
 function parsePositiveInteger(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
   const raw = env[key]?.trim();
   if (raw === undefined || raw === '') return fallback;
@@ -777,6 +798,9 @@ function parseAiInstanceDailyLimit(env: NodeJS.ProcessEnv): number | null {
 /** The two names that make up the member-invite block. Listed once so every message below can name both. */
 const MEMBER_INVITE_VARIABLES = ['MEMBER_INVITE_DAILY_AI_LIMIT', 'MEMBER_INVITE_ALLOWANCE_DAYS'] as const;
 
+/** The optional third name. It narrows the door the pair opens; on its own it narrows nothing. */
+const MEMBER_INVITE_CAP_VARIABLE = 'MEMBER_INVITE_LIFETIME_CAP';
+
 /**
  * `MEMBER_INVITE_DAILY_AI_LIMIT` + `MEMBER_INVITE_ALLOWANCE_DAYS`, both or
  * neither. Unset is `null`, which is the default and takes the route away
@@ -789,9 +813,16 @@ const MEMBER_INVITE_VARIABLES = ['MEMBER_INVITE_DAILY_AI_LIMIT', 'MEMBER_INVITE_
  * date on what it hands out.
  *
  * AN ALLOWANCE ABOVE THE CEILING IS A BOOT FAILURE TOO. This one number is
- * multiplied by every member on the instance times
- * {@link MEMBER_INVITE_LIFETIME_CAP} invitations, so a mistyped extra digit
- * here is the largest bill any single variable in this file can write.
+ * multiplied by every member on the instance times `MEMBER_INVITE_LIFETIME_CAP`
+ * invitations, so a mistyped extra digit here is the largest bill any single
+ * variable in this file can write.
+ *
+ * `MEMBER_INVITE_LIFETIME_CAP` IS OPTIONAL AND DEFAULTS TO
+ * {@link DEFAULT_MEMBER_INVITE_LIFETIME_CAP}, so an upgrade changes nothing.
+ * Zero is accepted for it, unlike the pair: it keeps the route mounted with
+ * nothing to spend. Setting it while the pair is unset is a boot failure, for
+ * the same reason half the pair is: it is a dial with no door to narrow, and
+ * the operator who set it believes they have narrowed one.
  *
  * ZERO IS REFUSED FOR EITHER, and it is the value that reads most like "off".
  * A zero allowance mints letters that grant no AI at all, and a zero-day
@@ -800,7 +831,17 @@ const MEMBER_INVITE_VARIABLES = ['MEMBER_INVITE_DAILY_AI_LIMIT', 'MEMBER_INVITE_
  */
 function parseMemberInvites(env: NodeJS.ProcessEnv): MemberInvitePolicy | null {
   const present = MEMBER_INVITE_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
-  if (present.length === 0) return null;
+  const capIsSet = (env[MEMBER_INVITE_CAP_VARIABLE]?.trim() ?? '') !== '';
+  if (present.length === 0) {
+    if (capIsSet) {
+      throw new Error(
+        `Incomplete member-invite configuration: ${MEMBER_INVITE_CAP_VARIABLE} is set, but members cannot ` +
+          `invite anybody on this instance, so there is nothing for it to cap. Set ` +
+          `${MEMBER_INVITE_VARIABLES.join(' and ')} to open that door, or unset ${MEMBER_INVITE_CAP_VARIABLE}.`,
+      );
+    }
+    return null;
+  }
 
   const missing = MEMBER_INVITE_VARIABLES.filter((name) => !present.includes(name));
   if (missing.length > 0) {
@@ -811,17 +852,22 @@ function parseMemberInvites(env: NodeJS.ProcessEnv): MemberInvitePolicy | null {
     );
   }
 
+  // Read BEFORE the ceiling check below, which names it in its message: the
+  // number an operator is warned about has to be the one their instance will
+  // multiply by, not the default they did not choose.
+  const lifetimeCap = parseNonNegativeInteger(env, MEMBER_INVITE_CAP_VARIABLE, DEFAULT_MEMBER_INVITE_LIFETIME_CAP);
+
   // The fallback is unreachable: both names are non-empty by the check above.
   // `parsePositiveInteger` is what refuses a zero, a fraction and a word.
   const dailyAiLimit = parsePositiveInteger(env, 'MEMBER_INVITE_DAILY_AI_LIMIT', 0);
   if (dailyAiLimit > MAX_DAILY_AI_LIMIT) {
     throw new Error(
       `MEMBER_INVITE_DAILY_AI_LIMIT must be at most ${MAX_DAILY_AI_LIMIT} (got ${dailyAiLimit}): ` +
-        `every member may cause ${MEMBER_INVITE_LIFETIME_CAP} invitations, so this number is multiplied ` +
+        `every member may cause ${lifetimeCap} invitations, so this number is multiplied ` +
         'by the whole instance before it reaches your provider bill.',
     );
   }
-  return { dailyAiLimit, allowanceDays: parsePositiveInteger(env, 'MEMBER_INVITE_ALLOWANCE_DAYS', 0) };
+  return { dailyAiLimit, allowanceDays: parsePositiveInteger(env, 'MEMBER_INVITE_ALLOWANCE_DAYS', 0), lifetimeCap };
 }
 
 function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {

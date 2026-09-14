@@ -309,7 +309,7 @@ test('the two member-invite settings are all-or-nothing, and the allowance has a
   // below cannot pass by the parser rejecting everything.
   assert.deepEqual(
     parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '30' })).memberInvites,
-    { dailyAiLimit: 50, allowanceDays: 30 },
+    { dailyAiLimit: 50, allowanceDays: 30, lifetimeCap: 5 },
   );
   // Neither set is the default: members cannot invite anybody, and
   // `POST /v1/auth/invites` answers 404.
@@ -343,6 +343,43 @@ test('the two member-invite settings are all-or-nothing, and the allowance has a
     () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '0' })),
     /MEMBER_INVITE_ALLOWANCE_DAYS/,
   );
+});
+
+test('the lifetime cap comes from the environment, and it needs the pair to stand on', () => {
+  const pair = { MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '30' };
+
+  // THE CONTROL FIRST: unset, the cap is five, which is what every instance
+  // has run on since M212. An upgrade must not change what a member may do.
+  assert.equal(parseConfig(baseEnv(pair)).memberInvites?.lifetimeCap, 5);
+
+  // Two, which is what a managed instance whose administrator pays for the
+  // provider key asks for.
+  assert.deepEqual(parseConfig(baseEnv({ ...pair, MEMBER_INVITE_LIFETIME_CAP: '2' })).memberInvites, {
+    dailyAiLimit: 50,
+    allowanceDays: 30,
+    lifetimeCap: 2,
+  });
+
+  // ZERO IS A VALUE HERE AND NOT A MISTAKE, unlike the pair. It leaves the
+  // route mounted and gives every member nothing to spend, which is what an
+  // operator wants while they watch the bill. Unsetting the pair is the other
+  // move, and it takes the route away instead.
+  assert.equal(parseConfig(baseEnv({ ...pair, MEMBER_INVITE_LIFETIME_CAP: '0' })).memberInvites?.lifetimeCap, 0);
+
+  // Nothing else silently becomes a number.
+  for (const bad of ['-1', '1.5', 'a few']) {
+    assert.throws(
+      () => parseConfig(baseEnv({ ...pair, MEMBER_INVITE_LIFETIME_CAP: bad })),
+      /MEMBER_INVITE_LIFETIME_CAP/,
+      `MEMBER_INVITE_LIFETIME_CAP="${bad}" must be refused`,
+    );
+  }
+
+  // THE CAP WITHOUT THE PAIR IS A BOOT FAILURE NAMING IT, for the reason the
+  // half-pair refusal above exists: an operator who set only this one believes
+  // they have narrowed a door that is not open, on an instance where
+  // `POST /v1/auth/invites` answers 404 to everybody.
+  assert.throws(() => parseConfig(baseEnv({ MEMBER_INVITE_LIFETIME_CAP: '2' })), /MEMBER_INVITE_LIFETIME_CAP/);
 });
 
 test('an instance with nothing to say publishes no notice at all', () => {

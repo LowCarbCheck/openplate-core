@@ -73,7 +73,7 @@ import {
   type InviteStore,
   type InviteSummary,
 } from '../admin/invite-store.js';
-import { invitesLeft } from '../accounts/member-invites.js';
+import { invitesLeft, type MemberInvitePolicy } from '../accounts/member-invites.js';
 import { isAccountRole, type AccountRole, type AccountView, type SyncKeyRecordKind } from '../protocol.js';
 import type { Logger } from '../logger.js';
 import type { Mailer } from '../mail/mailer.js';
@@ -219,13 +219,14 @@ interface AdminStatsView {
  * The ONLY function that turns an account into a response body. See the module
  * header.
  *
- * `memberInvites` is whether THIS INSTANCE lets members invite people, not
- * anything about this account: it is what turns `invitesMinted` into
- * `invitesLeft`, through the same function the caller's own account view uses
- * (`accounts/member-invites.ts`), so an operator's console can never show a
- * number the route does not enforce.
+ * `memberInvites` is THIS INSTANCE'S policy, or `null` where members cannot
+ * invite anybody. Nothing in it is about this account: it is what turns
+ * `invitesMinted` into `invitesLeft`, through the same function the caller's
+ * own account view uses (`accounts/member-invites.ts`), and it carries the
+ * configured `MEMBER_INVITE_LIFETIME_CAP`, so an operator's console can never
+ * show a number the route does not enforce.
  */
-function toAccountView(summary: AdminAccountSummary, memberInvites: boolean): AdminAccountView {
+function toAccountView(summary: AdminAccountSummary, memberInvites: MemberInvitePolicy | null): AdminAccountView {
   return {
     id: summary.id,
     email: summary.email,
@@ -235,7 +236,7 @@ function toAccountView(summary: AdminAccountSummary, memberInvites: boolean): Ad
     aiUsedToday: summary.aiUsedToday,
     allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
-    invitesLeft: invitesLeft({ role: summary.role, minted: summary.invitesMinted, enabled: memberInvites }),
+    invitesLeft: invitesLeft({ role: summary.role, minted: summary.invitesMinted, policy: memberInvites }),
     createdAt: summary.createdAt.toISOString(),
     lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
     blob:
@@ -613,16 +614,16 @@ export interface AdminRoutesOptions {
    */
   aiInstanceDailyLimit: number | null;
   /**
-   * Whether this instance lets ordinary members invite people (M212), which is
-   * what turns each account's `invitesMinted` count into the `invitesLeft` the
-   * account view reports.
+   * This instance's member-invite policy (M212), or `null` where members
+   * cannot invite anybody. Its `lifetimeCap` is what turns each account's
+   * `invitesMinted` count into the `invitesLeft` the account view reports.
    *
    * IT IS NOT CONFIGURED HERE, for the reason `aiInstanceDailyLimit` above is
    * not: `create-app.ts` derives it from the same surface
    * `POST /v1/auth/invites` is mounted on, so the console cannot report a cap
    * that no route enforces.
    */
-  memberInvites: boolean;
+  memberInvites: MemberInvitePolicy | null;
   /** Mints the `sr_` token `POST /accounts/:id/reset-mail` writes. Injected so a test can name it. */
   mintResetToken(): GeneratedToken;
   /** Injected, like every clock in this repo, so a test can pin "today" and an invite's status. */

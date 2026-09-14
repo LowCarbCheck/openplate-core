@@ -10,22 +10,35 @@
  * enforce.
  *
  * NOTHING HERE READS A CLOCK, A DATABASE OR AN ENVIRONMENT. The counts and the
- * standing come in as arguments, so the rule is asserted by comparison.
+ * standing come in as arguments, so the rule is asserted by comparison. The
+ * cap itself is one of those arguments since M228: it arrives on
+ * {@link MemberInvitePolicy}, read from `MEMBER_INVITE_LIFETIME_CAP` at boot.
  */
 import type { AccountRole } from '../protocol.js';
 
 /**
- * How many invitations one member may cause in their whole life.
+ * The default for `MEMBER_INVITE_LIFETIME_CAP`: how many invitations one
+ * member may cause in their whole life on an instance whose operator has not
+ * said otherwise.
  *
- * NOT CONFIGURABLE, deliberately. It is the growth rate of the instance, and
- * an operator who wants a different one has the two settings that decide what
- * an invitation is WORTH (`MEMBER_INVITE_DAILY_AI_LIMIT` and
- * `MEMBER_INVITE_ALLOWANCE_DAYS`) plus the instance ceiling
- * (`AI_INSTANCE_DAILY_LIMIT`) that bounds the bill whatever this number is.
- * A third dial here would let one variable multiply accounts without moving
- * the bound.
+ * CONFIGURABLE SINCE 2026-09-14 (M228), AND IT WAS NOT BEFORE. This comment
+ * used to say the number was fixed on purpose, and argued that a third dial
+ * would let one variable multiply accounts without moving the bound. The
+ * decision was reversed on purpose: a managed instance whose administrator
+ * pays for the provider key wants two, not five, and the bound that argument
+ * asked for already exists and is unchanged. `AI_INSTANCE_DAILY_LIMIT` caps
+ * what the whole instance may spend per day whatever this number is, so the
+ * cap moves the growth rate and never the bill.
+ *
+ * FIVE REMAINS THE DEFAULT because it is what every instance has enforced
+ * since M212. An upgrade that silently changed what a member may do would be
+ * the same defect from the other side.
+ *
+ * NOTHING IN `src/` OUTSIDE `config.ts` READS THIS. The enforced number travels on
+ * {@link MemberInvitePolicy}, so a console and a route cannot disagree about
+ * it; this is only what `parseMemberInvites` falls back to.
  */
-export const MEMBER_INVITE_LIFETIME_CAP = 5;
+export const DEFAULT_MEMBER_INVITE_LIFETIME_CAP = 5;
 
 /**
  * The ONE refusal `POST /v1/auth/invites` reports about the caller's own
@@ -46,14 +59,27 @@ export interface MemberInvitePolicy {
   dailyAiLimit: number;
   /** `MEMBER_INVITE_ALLOWANCE_DAYS`, how many days after redemption the allowance ends. */
   allowanceDays: number;
+  /**
+   * `MEMBER_INVITE_LIFETIME_CAP`, how many invitations one member may cause in
+   * total, defaulting to {@link DEFAULT_MEMBER_INVITE_LIFETIME_CAP}. Zero is a
+   * value: the route stays mounted and every member has nothing to spend.
+   */
+  lifetimeCap: number;
 }
 
 export interface InvitesLeftInput {
   role: AccountRole;
   /** Rows in `signup_invites` that carry this account, from `InviteStore.countMintedBy`. */
   minted: number;
-  /** Whether this instance has the two settings that enable the feature. */
-  enabled: boolean;
+  /**
+   * This instance's settings, or `null` where members cannot invite anybody.
+   *
+   * THE POLICY ITSELF AND NOT A FLAG PLUS A NUMBER, because the two could
+   * disagree. A caller that passed `enabled: true` beside somebody else's cap
+   * would report a count this service does not enforce, which is the one thing
+   * this module exists to make impossible.
+   */
+  policy: MemberInvitePolicy | null;
 }
 
 /**
@@ -73,11 +99,11 @@ export interface InvitesLeftInput {
  * exist here and are all spent.
  *
  * NEVER NEGATIVE. An account whose count somehow exceeds the cap (an operator
- * lowering it in a future version, a restored backup) reads `0`, which is the
- * honest answer to "how many more may I send".
+ * lowering `MEMBER_INVITE_LIFETIME_CAP`, a restored backup) reads `0`, which
+ * is the honest answer to "how many more may I send".
  */
 export function invitesLeft(input: InvitesLeftInput): number | null {
-  if (!input.enabled) return null;
+  if (input.policy === null) return null;
   if (input.role === 'admin') return null;
-  return Math.max(0, MEMBER_INVITE_LIFETIME_CAP - input.minted);
+  return Math.max(0, input.policy.lifetimeCap - input.minted);
 }

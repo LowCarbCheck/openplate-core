@@ -112,7 +112,7 @@ function buildAdminRouters(): Router[] {
       mailConfigured: false,
       links: null,
       aiInstanceDailyLimit: null,
-      memberInvites: false,
+      memberInvites: null,
       mintResetToken: fixture.ctx.mintResetToken,
       now: fixture.now,
       logger: createSilentLogger(),

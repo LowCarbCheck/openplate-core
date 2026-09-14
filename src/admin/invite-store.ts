@@ -155,8 +155,8 @@ export interface InviteStore {
   revoke(input: { inviteId: number; revokedAt: Date }): Promise<boolean>;
   /**
    * How many invites this account has ever caused, counted as ROWS carrying
-   * its id (M212). The lifetime cap (`accounts/member-invites.ts`'s
-   * `MEMBER_INVITE_LIFETIME_CAP`) is compared against this number.
+   * its id (M212). The instance's lifetime cap (`MEMBER_INVITE_LIFETIME_CAP`,
+   * carried on `MemberInvitePolicy`) is compared against this number.
    *
    * ROWS, NOT A COUNTER ON THE ACCOUNT. A counter column drifts: withdraw an
    * invitation, delete a row, restore from a backup, and it lies. Counting the
@@ -164,7 +164,7 @@ export interface InviteStore {
    *
    * REVOKED, EXPIRED AND REDEEMED ROWS ALL COUNT. The cap is on how many
    * letters an account caused, not on how many worked, so a member cannot
-   * recycle their five by asking an operator to withdraw one.
+   * recycle their allowance by asking an operator to withdraw one.
    */
   countMintedBy(input: { accountId: number }): Promise<number>;
   /**

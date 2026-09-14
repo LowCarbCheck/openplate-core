@@ -56,7 +56,7 @@ interface GatingHarness {
 async function startGatingHarness(memberInvites: boolean): Promise<GatingHarness> {
   const fixture = createAuthFixture();
   if (memberInvites) {
-    fixture.ctx.memberInvites = { invites: createFakeInviteStore(), policy: { dailyAiLimit: 50, allowanceDays: 30 } };
+    fixture.ctx.memberInvites = { invites: createFakeInviteStore(), policy: { dailyAiLimit: 50, allowanceDays: 30, lifetimeCap: 5 } };
   }
 
   const app = createApp({

@@ -36,6 +36,7 @@ import { createThrottleStore, type ThrottleConfig } from '../../src/lib/throttle
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import type { AuthContext, SessionResponse } from '../../src/accounts/auth-handlers.js';
+import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
 import type { Mailer, SendAccountNoticeInput, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
 import type { SyncKeyRecordKind } from '../../src/protocol.js';
 import type { Database } from '../../src/db/client.js';
@@ -240,7 +241,7 @@ export interface StartServiceOptions {
    * an allowance window a test can assert as a DATE has to be a number the
    * test names.
    */
-  memberInvites?: { dailyAiLimit?: number; allowanceDays?: number } | null;
+  memberInvites?: { dailyAiLimit?: number; allowanceDays?: number; lifetimeCap?: number } | null;
   /**
    * Absent (the default) boots the service the way every deployment boots
    * today: no `VAPID_*` variables, and the whole `/v1/push` subtree answering
@@ -270,6 +271,10 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           policy: {
             dailyAiLimit: options.memberInvites.dailyAiLimit ?? 25,
             allowanceDays: options.memberInvites.allowanceDays ?? 14,
+            // The default `parseMemberInvites` applies when
+            // `MEMBER_INVITE_LIFETIME_CAP` is unset, so a suite that names
+            // nothing exercises what every instance runs on.
+            lifetimeCap: options.memberInvites.lifetimeCap ?? DEFAULT_MEMBER_INVITE_LIFETIME_CAP,
           },
         };
 

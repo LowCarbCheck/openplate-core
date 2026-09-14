@@ -87,9 +87,9 @@ export interface AdminAccountSummary {
    * How many invitations this account has CAUSED: rows in `signup_invites`
    * carrying its id (M212).
    *
-   * A COUNT AND NOT `invitesLeft`, deliberately. Whether five minus this
-   * number is what the person may still send depends on their role and on
-   * whether the instance has member invites on at all, and both of those
+   * A COUNT AND NOT `invitesLeft`, deliberately. Whether the instance's cap
+   * minus this number is what the person may still send depends on their role
+   * and on whether the instance has member invites on at all, and both of those
    * belong to `accounts/member-invites.ts` rather than to a store. The store
    * reports what the table holds.
    *

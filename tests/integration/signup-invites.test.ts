@@ -379,6 +379,60 @@ test('five member invitations succeed, the sixth is refused, and a revoked row s
   }
 });
 
+test('a lifetime cap of two is the cap the route counts to, over real rows', async () => {
+  // MEMBER_INVITE_LIFETIME_CAP=2 (M228), the number a managed instance whose
+  // administrator pays for the provider key sets.
+  const service = await startService({
+    db: database.db,
+    memberInvites: { ...MEMBER_INVITE_POLICY, lifetimeCap: 2 },
+    adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+  });
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    const accessToken = member.tokens.accessToken;
+    // The account view reports the instance's number from the first read.
+    assert.equal(member.account.invitesLeft, 2);
+
+    for (let index = 0; index < 2; index += 1) {
+      const accepted = await memberMint(service, { accessToken, email: `friend-${index}@example.org` });
+      assert.equal(accepted.status, 202, `invitation ${index + 1} must be accepted under a cap of two`);
+    }
+
+    // THE SAME REFUSAL the sixth gets on a default instance, byte for byte.
+    const third = await memberMint(service, { accessToken, email: 'one-too-many@example.org' });
+    assert.equal(third.status, 403);
+    assert.deepEqual(third.body, { error: 'member-invite-cap-reached' });
+
+    // Two rows, and no third, so the refusal is a refusal and not a silent
+    // acceptance the status happened to describe.
+    const caused = await database.db
+      .select()
+      .from(signupInvites)
+      .where(eq(signupInvites.invitedByAccountId, member.account.id));
+    assert.equal(caused.length, 2);
+
+    // The caller's own view agrees with what the route enforced.
+    const own = await service.request<{ account: { invitesLeft: number | null } }>({
+      method: 'GET',
+      path: '/v1/auth/account',
+      accessToken,
+    });
+    assert.equal(own.body.account.invitesLeft, 0);
+
+    // AND THE OPERATOR IS STILL EXEMPT, whatever the cap says. Without this the
+    // test would pass against a service that had stopped minting anything.
+    const asOperator = await service.request({
+      method: 'POST',
+      path: '/v1/admin/invites',
+      adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+      body: { email: 'one-too-many@example.org' },
+    });
+    assert.equal(asOperator.status, 201);
+  } finally {
+    await service.close();
+  }
+});
+
 test('a new address, a pending invitation and an existing account get the same response, and the admin mint is the control that does not', async () => {
   const service = await startWithMemberInvites();
   try {

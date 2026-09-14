@@ -7,6 +7,21 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **The member invite cap comes from the environment.**
+  `MEMBER_INVITE_LIFETIME_CAP` sets how many invitations one member may cause
+  in their whole life. It is optional, it takes an integer of 0 or more, and it
+  defaults to 5, which is the number every instance has enforced since the
+  feature shipped, so an upgrade changes nothing. Set it to 2 on a managed
+  instance whose administrator pays for the provider key. Zero keeps
+  `POST /v1/auth/invites` mounted and leaves every member with nothing to
+  spend. Setting it while `MEMBER_INVITE_DAILY_AI_LIMIT` and
+  `MEMBER_INVITE_ALLOWANCE_DAYS` are unset is a boot failure naming it, because
+  members cannot invite anybody there and the cap would narrow a door that is
+  not open. Administrators stay exempt, and `AI_INSTANCE_DAILY_LIMIT` still
+  bounds what the whole instance may spend per day whatever the cap is.
+
 ## [0.14.0] - 2026-09-12
 
 ### Added

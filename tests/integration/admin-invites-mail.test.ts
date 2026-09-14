@@ -18,6 +18,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
 import { createApp } from '../../src/server/create-app.js';
 import { createDrizzleAccountStore } from '../../src/db/account-store.js';
 import { createDrizzleStorageAdapter } from '../../src/db/storage-adapter.js';
@@ -126,7 +127,11 @@ before(async () => {
     // account a member's invitation creates.
     memberInvites: {
       invites: createDrizzleInviteStore(database.db),
-      policy: { dailyAiLimit: MEMBER_INVITE_DAILY_AI_LIMIT, allowanceDays: MEMBER_INVITE_ALLOWANCE_DAYS },
+      policy: {
+        dailyAiLimit: MEMBER_INVITE_DAILY_AI_LIMIT,
+        allowanceDays: MEMBER_INVITE_ALLOWANCE_DAYS,
+        lifetimeCap: DEFAULT_MEMBER_INVITE_LIFETIME_CAP,
+      },
     },
   };
 

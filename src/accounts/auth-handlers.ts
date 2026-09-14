@@ -49,7 +49,6 @@ import type { Mailer } from '../mail/mailer.js';
 import { DEFAULT_INVITE_TTL_MS, type InviteStore } from '../admin/invite-store.js';
 import {
   MEMBER_INVITE_CAP_REACHED,
-  MEMBER_INVITE_LIFETIME_CAP,
   invitesLeft,
   type MemberInvitePolicy,
 } from './member-invites.js';
@@ -239,7 +238,7 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
     aiUsedToday,
     allowanceExpiresAt: account.allowanceExpiresAt?.toISOString() ?? null,
     suspendedAt: account.suspendedAt?.toISOString() ?? null,
-    invitesLeft: invitesLeft({ role: account.role, minted, enabled: memberInvites !== null }),
+    invitesLeft: invitesLeft({ role: account.role, minted, policy: memberInvites?.policy ?? null }),
     createdAt: account.createdAt.toISOString(),
   };
 }
@@ -1147,8 +1146,9 @@ const MEMBER_INVITE_ACCEPTED: AuthOutcome<Record<string, never>> = { status: 'ac
  * account themselves, or keep a live invitation for an address they typed by
  * mistake.
  *
- * THE ONE THING IT MAY SAY ABOUT THE CALLER is that their own five are spent,
- * which is a fact about their account and not about anybody else's.
+ * THE ONE THING IT MAY SAY ABOUT THE CALLER is that their own allowance of
+ * invitations is spent, which is a fact about their account and not about
+ * anybody else's.
  */
 export async function handleMintMemberInvite(
   input: { accountId: number; body: JsonValue | undefined },
@@ -1180,7 +1180,7 @@ export async function handleMintMemberInvite(
   // depends on which screen they were looking at.
   if (account.role !== 'admin') {
     const minted = await surface.invites.countMintedBy({ accountId: account.id });
-    if (minted >= MEMBER_INVITE_LIFETIME_CAP) {
+    if (minted >= surface.policy.lifetimeCap) {
       return { status: 'forbidden', reason: MEMBER_INVITE_CAP_REACHED };
     }
 

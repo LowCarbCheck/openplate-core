@@ -13,8 +13,9 @@
  *    the letter;
  *  - the terms are the instance's: the allowance comes from the policy, and a
  *    `dailyAiLimit` in the body is not read;
- *  - five is the cap, withdrawn invitations count towards it, and an
- *    administrator is exempt;
+ *  - the cap is the instance's `MEMBER_INVITE_LIFETIME_CAP` and defaults to
+ *    five, withdrawn invitations count towards it, and an administrator is
+ *    exempt;
  *  - an address that already redeemed a member-caused invitation gets no second
  *    one, and is still told `202`.
  *
@@ -36,7 +37,7 @@ import {
   type AuthContext,
   type AuthOutcome,
 } from '../../src/accounts/auth-handlers.js';
-import { MEMBER_INVITE_CAP_REACHED, MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
+import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, MEMBER_INVITE_CAP_REACHED } from '../../src/accounts/member-invites.js';
 import { createAuthFixture, type AuthFixture } from './auth-context-fixture.js';
 import { createFakeInviteStore, type FakeInviteStore } from './fake-invite-store.js';
 import type { JsonObject } from '../../src/lib/json.js';
@@ -44,8 +45,16 @@ import type { JsonObject } from '../../src/lib/json.js';
 const MEMBER_EMAIL = 'anna@example.org';
 const FRIEND_EMAIL = 'boris@example.org';
 
-/** What this instance says an invitation is worth. Neither number is readable or writable by a caller. */
-const POLICY = { dailyAiLimit: 50, allowanceDays: 30 };
+/**
+ * What this instance says an invitation is worth, and how many one member may
+ * cause. No value here is readable or writable by a caller.
+ *
+ * `lifetimeCap` IS THE DEFAULT, not the constant the handler reads. Since M228
+ * the cap is `MEMBER_INVITE_LIFETIME_CAP` and it arrives on this policy, so a
+ * test naming a different one is the only thing that changes the count. The
+ * cap-of-two test below does exactly that.
+ */
+const POLICY = { dailyAiLimit: 50, allowanceDays: 30, lifetimeCap: DEFAULT_MEMBER_INVITE_LIFETIME_CAP };
 
 interface MemberInviteFixture {
   fixture: AuthFixture;
@@ -117,7 +126,7 @@ test('a new address, a pending invitation and an existing account are ONE respon
 /** Spends one account's whole allowance and returns the refusal, for use as a control. */
 async function refuseWithCap(ctx: AuthContext, fixture: AuthFixture): Promise<AuthOutcome<Record<string, never>>> {
   const accountId = await seedMember(fixture, 'spender@example.org');
-  for (let index = 0; index < MEMBER_INVITE_LIFETIME_CAP; index += 1) {
+  for (let index = 0; index < POLICY.lifetimeCap; index += 1) {
     await mint(ctx, { accountId, email: `spent-${index}@example.org` });
   }
   return mint(ctx, { accountId, email: 'one-too-many@example.org' });
@@ -168,18 +177,18 @@ test('five invitations succeed and the sixth is refused with its own code', asyn
   const { fixture, invites, ctx } = withMemberInvites();
   const accountId = await seedMember(fixture);
 
-  for (let index = 0; index < MEMBER_INVITE_LIFETIME_CAP; index += 1) {
+  for (let index = 0; index < POLICY.lifetimeCap; index += 1) {
     const outcome = await mint(ctx, { accountId, email: `friend-${index}@example.org` });
     assert.equal(outcome.status, 'accepted', `invitation ${index + 1} must be accepted`);
   }
-  assert.equal(invites.rows().length, MEMBER_INVITE_LIFETIME_CAP);
+  assert.equal(invites.rows().length, POLICY.lifetimeCap);
 
   const sixth = await mint(ctx, { accountId, email: 'one-too-many@example.org' });
   assert.equal(sixth.status, 'forbidden');
   assert.equal(sixth.status === 'forbidden' ? sixth.reason : '', MEMBER_INVITE_CAP_REACHED);
   // The refusal is a refusal: no sixth row, and no sixth letter.
-  assert.equal(invites.rows().length, MEMBER_INVITE_LIFETIME_CAP);
-  assert.equal(fixture.mailer.invites.length, MEMBER_INVITE_LIFETIME_CAP);
+  assert.equal(invites.rows().length, POLICY.lifetimeCap);
+  assert.equal(fixture.mailer.invites.length, POLICY.lifetimeCap);
 
   // ANOTHER MEMBER IS UNAFFECTED, which is what makes the count per account
   // rather than per instance.
@@ -191,7 +200,7 @@ test('a withdrawn invitation still counts, so the five cannot be recycled', asyn
   const { fixture, invites, ctx } = withMemberInvites();
   const accountId = await seedMember(fixture);
 
-  for (let index = 0; index < MEMBER_INVITE_LIFETIME_CAP; index += 1) {
+  for (let index = 0; index < POLICY.lifetimeCap; index += 1) {
     await mint(ctx, { accountId, email: `friend-${index}@example.org` });
   }
   // The operator withdraws one, which is the move a member would ask for if
@@ -208,10 +217,46 @@ test('an administrator is exempt from the cap', async () => {
   const { fixture, ctx } = withMemberInvites();
   const accountId = await seedAdmin(fixture);
 
-  for (let index = 0; index < MEMBER_INVITE_LIFETIME_CAP + 2; index += 1) {
+  for (let index = 0; index < POLICY.lifetimeCap + 2; index += 1) {
     const outcome = await mint(ctx, { accountId, email: `invited-${index}@example.org` });
     assert.equal(outcome.status, 'accepted', `an operator's invitation ${index + 1} must be accepted`);
   }
+});
+
+test('the cap is the instance policy, so two is two and the third is the same refusal', async () => {
+  // A MANAGED INSTANCE WHOSE ADMINISTRATOR PAYS FOR THE PROVIDER KEY, which is
+  // the deployment M228 made the cap configurable for.
+  const fixture = createAuthFixture();
+  const invites = createFakeInviteStore();
+  fixture.ctx.memberInvites = { invites, policy: { ...POLICY, lifetimeCap: 2 } };
+  const accountId = await seedMember(fixture);
+
+  // The account view reports the instance's number, not the default.
+  assert.equal(await invitesLeftFor(fixture.ctx, accountId), 2);
+
+  for (let index = 0; index < 2; index += 1) {
+    const outcome = await mint(fixture.ctx, { accountId, email: `friend-${index}@example.org` });
+    assert.equal(outcome.status, 'accepted', `invitation ${index + 1} must be accepted under a cap of two`);
+  }
+  assert.equal(await invitesLeftFor(fixture.ctx, accountId), 0);
+
+  // THE SAME REFUSAL the sixth gets under the default cap, through the same
+  // handler. A cap that was enforced anywhere but here would let this third
+  // one through while the count above still read zero.
+  const third = await mint(fixture.ctx, { accountId, email: 'one-too-many@example.org' });
+  assert.equal(third.status, 'forbidden');
+  assert.equal(third.status === 'forbidden' ? third.reason : '', MEMBER_INVITE_CAP_REACHED);
+  assert.equal(invites.rows().length, 2, 'the refusal must leave no third row');
+  assert.equal(fixture.mailer.invites.length, 2, 'the refusal must send no third letter');
+
+  // THE CONTROL: a fresh account on the DEFAULT instance takes a third, so the
+  // refusal above is the configured cap and not a broken handler.
+  const byDefault = withMemberInvites();
+  const other = await seedMember(byDefault.fixture);
+  for (let index = 0; index < 2; index += 1) {
+    await mint(byDefault.ctx, { accountId: other, email: `other-${index}@example.org` });
+  }
+  assert.equal((await mint(byDefault.ctx, { accountId: other, email: 'third@example.org' })).status, 'accepted');
 });
 
 // ── The re-invite rule ─────────────────────────────────────────────────────
@@ -273,9 +318,9 @@ test('invitesLeft counts down for a member, and is null for an administrator', a
   const memberId = await seedMember(fixture);
   const adminId = await seedAdmin(fixture);
 
-  assert.equal(await invitesLeftFor(ctx, memberId), MEMBER_INVITE_LIFETIME_CAP);
+  assert.equal(await invitesLeftFor(ctx, memberId), POLICY.lifetimeCap);
   await mint(ctx, { accountId: memberId, email: FRIEND_EMAIL });
-  assert.equal(await invitesLeftFor(ctx, memberId), MEMBER_INVITE_LIFETIME_CAP - 1);
+  assert.equal(await invitesLeftFor(ctx, memberId), POLICY.lifetimeCap - 1);
 
   // `null`, NOT `0`, and this is the whole point of the field: an operator has
   // used none of anything, and `0` would read as "you have used them all".
@@ -293,7 +338,7 @@ test('invitesLeft is null on an instance where members cannot invite anybody', a
   // number, so the `null` above is the flag and not a broken read.
   const withFeature = withMemberInvites();
   const other = await seedMember(withFeature.fixture);
-  assert.equal(await invitesLeftFor(withFeature.ctx, other), MEMBER_INVITE_LIFETIME_CAP);
+  assert.equal(await invitesLeftFor(withFeature.ctx, other), POLICY.lifetimeCap);
 });
 
 async function invitesLeftFor(ctx: AuthContext, accountId: number): Promise<number | null> {
