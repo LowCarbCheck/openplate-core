@@ -37,7 +37,7 @@ name: openplate-core
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: docker.io/library/postgres:17-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-openplate}
@@ -115,8 +115,24 @@ services:
       # Only for an EXTERNAL database. The bundled Postgres above speaks plain
       # TCP on the compose network.
       DATABASE_SSL: ${DATABASE_SSL:-false}
+    healthcheck:
+      # The image bakes the same check in, but Podman drops a HEALTHCHECK when
+      # it pulls an OCI manifest, which is what GHCR serves. Declared here it
+      # holds under both engines and Quadlet turns it into Notify=healthy.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     ports:
       - '${SYNC_PORT:-3000}:3000'
 
 volumes:
   postgres-data:
+    driver: local

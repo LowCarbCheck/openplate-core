@@ -31,11 +31,18 @@ Environment=AI_RATE_LIMIT_PER_MINUTE=20
 Environment=AI_MAX_REQUEST_BYTES=8000000
 Environment=DATABASE_SSL=false
 EnvironmentFile=openplate-core.env
+HealthCmd=["node","-e","fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=20s
+HealthTimeout=5s
+Notify=healthy
 Image=ghcr.io/lowcarbcheck/openplate-core:latest
-Network=openplate-core.network
+Network=openplate-core.network:alias=sync
 PublishPort=3000:3000
 
 [Service]
+TimeoutStartSec=300
 Restart=always
 
 [Install]
