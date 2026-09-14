@@ -54,6 +54,22 @@ docker compose --project-directory . -f docker/compose.yml up -d
 curl http://localhost:3000/health
 ```
 
+```bash
+git clone https://github.com/LowCarbCheck/openplate-core.git
+cd openplate-core
+cp .env.example .env
+
+openssl rand -hex 32
+
+podman compose --project-directory . -f docker/compose.yml up -d
+curl http://localhost:3000/health
+```
+
+Podman needs the `compose` subcommand, not the separate `podman-compose`
+tool. This file's Postgres volume is already a named volume, so rootless
+Podman needs no ownership fix for it. See openplate's
+[podman.md](https://github.com/LowCarbCheck/openplate/blob/main/docs/podman.md).
+
 That is the whole install. Postgres comes up alongside the service, the schema migrates itself on boot, and there is nothing else to run.
 
 `--project-directory .` is what keeps the repository root as the project root, so `.env` is read from where you created it and the image builds from the checkout rather than from `docker/`. If you would rather run the published image than build from source, copy `docker/compose.yml` out on its own, uncomment the `image:` line, and plain `docker compose up -d` beside it works.
@@ -289,6 +305,16 @@ docker compose --project-directory . -f docker/compose.yml exec -T postgres \
   psql -U openplate openplate_sync < sync-backup.sql
 ```
 
+```bash
+# Back up
+podman compose --project-directory . -f docker/compose.yml exec -T postgres \
+  pg_dump -U openplate openplate_sync > sync-backup.sql
+
+# Restore, into a stopped-then-started stack, before users reconnect
+podman compose --project-directory . -f docker/compose.yml exec -T postgres \
+  psql -U openplate openplate_sync < sync-backup.sql
+```
+
 The database lives in the `postgres-data` volume declared by `docker/compose.yml`. Keep
 `SERVER_SECRET` with the dump, in whatever holds your other secrets, not in the dump itself.
 
@@ -434,7 +460,7 @@ Docker image.
 Two optional conveniences:
 
 - `nix develop` gives you a shell with the expected Node 22 and pnpm, if you have Nix with flakes enabled.
-- `docker compose -f docker/compose.dev.yml up -d` starts the contributor test database on port 5433, for the integration suite. Skip it if something already answers on that port.
+- `docker compose -f docker/compose.dev.yml up -d` starts the contributor test database on port 5433, for the integration suite. Skip it if something already answers on that port. `podman compose -f docker/compose.dev.yml up -d` works the same way.
 
 Linting is [oxlint](https://oxc.rs) plus a vendored `anti-slop` plugin under
 `tools/oxlint/anti-slop/` (MIT, © Dillon Mulroy, its own LICENSE ships beside
