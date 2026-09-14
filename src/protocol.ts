@@ -296,7 +296,7 @@ export interface AccountView {
 export interface InstanceInfo {
   /** The operator's name for this instance (`INSTANCE_NAME`, default `openplate`). */
   name: string;
-  /** The language its mail is written in (`INSTANCE_LANGUAGE`, `en` or `de`). */
+  /** The language its mail is written in (`INSTANCE_LANGUAGE`, one of `INSTANCE_LANGUAGES`). */
   language: InstanceLanguage;
   /** Whether this instance can send mail at all. `false` means invites and resets are printed as links instead. */
   mail: boolean;
@@ -380,14 +380,18 @@ export interface InstanceFeedback {
   retentionDays: number;
 }
 
-/** The two languages the invite and reset mails exist in. */
-export type InstanceLanguage = 'en' | 'de';
+/**
+ * The six languages the invite and reset mails exist in (M230). `en` and `de`
+ * are hand-written in `mail/strings.ts`; the other four are bought by
+ * `scripts/translate-mail.ts` into `mail/strings.<lang>.ts`, one module each.
+ */
+export type InstanceLanguage = 'en' | 'de' | 'fr' | 'it' | 'es' | 'tr';
 
 /** Every valid {@link InstanceLanguage}, for validation and exhaustive iteration. */
-export const INSTANCE_LANGUAGES: readonly InstanceLanguage[] = ['en', 'de'];
+export const INSTANCE_LANGUAGES: readonly InstanceLanguage[] = ['en', 'de', 'fr', 'it', 'es', 'tr'];
 
 export function isInstanceLanguage(value: JsonValue | undefined): value is InstanceLanguage {
-  return value === 'en' || value === 'de';
+  return INSTANCE_LANGUAGES.some((language) => language === value);
 }
 
 /**

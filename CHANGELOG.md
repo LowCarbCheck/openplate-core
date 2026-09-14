@@ -7,6 +7,19 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **The letters exist in four more languages.**
+  `INSTANCE_LANGUAGE` accepts `fr`, `it`, `es` and `tr` beside `en` and `de`,
+  and a push subscription's `locale` accepts the same six. The invitation, the
+  password reset and the account notice were bought in the four new languages
+  from the English by the same model under the same style contract the
+  website and the app use, addressing the reader informally as the German
+  does, and they live in `src/mail/strings.<lang>.ts`, one generated module
+  each, checked by the compiler with the hand-written two. The expiry date in
+  an invitation now renders in the reader's own language for every one of the
+  six; before this, every language but German got an English date.
+
 ## [0.15.0] - 2026-09-14
 
 ### Added

@@ -82,7 +82,7 @@ export interface ServiceConfig {
   serverSecret: string;
   /** What this instance calls itself on the handshake and in its mail. `INSTANCE_NAME`, default `openplate`. */
   instanceName: string;
-  /** Which language its two letters are written in. `INSTANCE_LANGUAGE`, `en` or `de`, default `en`. */
+  /** Which language its letters are written in. `INSTANCE_LANGUAGE`, one of `INSTANCE_LANGUAGES`, default `en`. */
   instanceLanguage: InstanceLanguage;
   /**
    * This service's own public base URL, or `null`. It goes into the `server=`
@@ -510,7 +510,7 @@ function parseInstanceName(env: NodeJS.ProcessEnv): string {
   return raw;
 }
 
-/** `INSTANCE_LANGUAGE`, which of the two languages the invite and reset mails are written in. */
+/** `INSTANCE_LANGUAGE`, which of the six languages the invite and reset mails are written in. */
 function parseInstanceLanguage(env: NodeJS.ProcessEnv): InstanceLanguage {
   const raw = env.INSTANCE_LANGUAGE?.trim().toLowerCase();
   if (raw === undefined || raw === '') return 'en';

@@ -35,7 +35,7 @@ import { asBoolean, asNumber, asObject, asString, type JsonObject, type JsonValu
 import { asyncHandler } from './async-handler.js';
 import { getRequestSession } from './bearer-auth.js';
 import type { Logger } from '../logger.js';
-import { isInstanceLanguage, type InstanceLanguage } from '../protocol.js';
+import { INSTANCE_LANGUAGES, isInstanceLanguage, type InstanceLanguage } from '../protocol.js';
 import { isTimeZone, localDayKey } from '../push/local-day.js';
 import type { PushStore } from '../push/push-store.js';
 
@@ -139,8 +139,9 @@ function decodeTimeZone(value: JsonValue | undefined): Decoded<string> {
   return { ok: true, value: zone };
 }
 
+/** The error names the list itself, so a seventh language cannot leave it saying six. */
 function decodeLocale(value: JsonValue | undefined): Decoded<InstanceLanguage> {
-  if (!isInstanceLanguage(value)) return { ok: false, error: 'locale must be "en" or "de"' };
+  if (!isInstanceLanguage(value)) return { ok: false, error: `locale must be one of ${INSTANCE_LANGUAGES.join(', ')}` };
   return { ok: true, value };
 }
 

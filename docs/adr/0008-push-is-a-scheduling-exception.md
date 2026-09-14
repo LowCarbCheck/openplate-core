@@ -81,7 +81,7 @@ One row per device, in `push_subscriptions`:
 - **`time_zone`**, an IANA name, validated with `Intl.DateTimeFormat` when it
   is written. The whole catch-up is a local clock question, so an unvalidated
   zone here is a notification at the wrong hour rather than an error.
-- **`locale`**, `en` or `de`. The server never writes text, so this is carried
+- **`locale`**, an `InstanceLanguage` (six since M230). The server never writes text, so this is carried
   for the device rather than used here, and it is stored because the device
   that registered is not always the device that renders.
 - **`catch_up_minute`**, a minute of the local day, 0 to 1439, or `null` for

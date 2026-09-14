@@ -484,9 +484,10 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
 | `src/ai/`             | The completion proxy, its quota store, the minute limiter, the scrubber and the usage retention sweep. |
 | `src/feedback/`       | Reported estimates: submit, the operator's read side, image storage, retention. |
 | `src/pulse/`          | The community pulse: its store, the rounding, the per account limits, the cache and the retention sweep. |
-| `src/mail/`           | The two letters, their strings, and the HTTP mailer that sends them.          |
+| `src/mail/`           | The letters in six languages, their strings, and the HTTP mailer that sends them. `en` and `de` are hand-written in `strings.ts`; `strings.<lang>.ts` is generated from `memory/<lang>.json` by `pnpm translate:mail`. |
 | `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                 |
 | `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only: it imports no database code.        |
+| `scripts/lib/`        | The translator, a vendored copy of `openplate-website`'s written by `pnpm sync:translate-lib` and pinned by `TRANSLATE_SOURCE.json`; never edited here. |
 | `drizzle/migrations/` | Generated migrations. Never hand-written: see `src/db/schema.ts`.             |
 
 ### Invariants

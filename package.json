@@ -13,6 +13,8 @@
     "dev": "node --import tsx --watch src/main.ts",
     "build": "tsx scripts/build.ts",
     "sync-api": "tsx scripts/sync-api/main.ts",
+    "sync:translate-lib": "tsx scripts/sync-translate-lib.ts",
+    "translate:mail": "tsx scripts/translate-mail.ts",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run test:unit && pnpm run test:integration",
     "test:unit": "node --import tsx --test 'tests/unit/**/*.test.ts'",

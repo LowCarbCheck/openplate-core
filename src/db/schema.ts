@@ -699,7 +699,7 @@ export const pushSubscriptions = pgTable(
     userAgent: text('user_agent'),
     /** An IANA zone name, validated with `Intl.DateTimeFormat` at write time. The catch-up is a LOCAL clock question. */
     timeZone: text('time_zone').notNull(),
-    /** `en` or `de`. Carried for the device, which is not always the device that registered. */
+    /** An `InstanceLanguage`. Carried for the device, which is not always the device that registered. */
     locale: text('locale').$type<InstanceLanguage>().notNull(),
     /** The minute of the local day the catch-up is due, 0 to 1439, or `null` for "no catch-up on this device". */
     catchUpMinute: integer('catch_up_minute'),

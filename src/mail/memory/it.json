@@ -1,0 +1,135 @@
+{
+  "0c05088b567bb775": {
+    "en": "You already have an openplate account",
+    "path": "mail:accountNotice.subject",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Hai già un account openplate"
+  },
+  "188786ebf7e2b659": {
+    "en": "Hello,",
+    "path": "mail:reset.greeting",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Ciao,"
+  },
+  "1f401cb32accfb62": {
+    "en": "If the link no longer works, ask for a new one on the sign-in page.",
+    "path": "mail:reset.help",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Se il link non funziona più, richiedine uno nuovo nella pagina di accesso."
+  },
+  "384e2132b01142f3": {
+    "en": "If the link no longer works, ask the person who sent it to you for a new one.",
+    "path": "mail:invite.help",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Se il link non funziona più, chiedine uno nuovo a chi ti ha inviato l'invito."
+  },
+  "4c7e12f2c54737ce": {
+    "en": "If you did not ask for this, you can ignore this mail. Your password stays as it is.",
+    "path": "mail:reset.ignore",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Se non sei tu ad averlo richiesto, puoi ignorare questa email. La tua password non verrà modificata."
+  },
+  "5eb579d32137512b": {
+    "en": "If you forgot your password, request a new one on the sign-in page.",
+    "path": "mail:accountNotice.forgotten",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Se hai dimenticato la password, richiedine una nuova nella pagina di accesso."
+  },
+  "5fe96baef8d5a66e": {
+    "en": "Someone asked for a new password for the openplate account with this email address.",
+    "path": "mail:reset.intro",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Qualcuno ha chiesto una nuova password per l'account openplate associato a questo indirizzo email."
+  },
+  "718de6d461032d81": {
+    "en": "You are invited to openplate, a food diary that keeps your data on your own device.",
+    "path": "mail:invite.invited",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Hai un invito per openplate, un diario alimentare che conserva i tuoi dati sul tuo dispositivo."
+  },
+  "7da92124c6b6f10d": {
+    "en": "Someone invited you to openplate using this email address. You already have an account, so no invitation was sent.",
+    "path": "mail:accountNotice.invited",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Qualcuno ti ha inviato un invito per openplate usando questo indirizzo email. Hai già un account, quindi l'invito non è stato inviato."
+  },
+  "7f52431efba233db": {
+    "en": "Sign in with this email address and your password.",
+    "path": "mail:accountNotice.signIn",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Accedi con questo indirizzo email e la tua password."
+  },
+  "a3d6ab066512491d": {
+    "en": "Your openplate invitation",
+    "path": "mail:invite.subject",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Il tuo invito a openplate"
+  },
+  "a7260c33ade2c34a": {
+    "en": "Hello,",
+    "path": "mail:accountNotice.greeting",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Ciao,"
+  },
+  "af3831035487483a": {
+    "en": "The link works one time only, and it expires on {date}.",
+    "path": "mail:invite.expiry",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Il link funziona una sola volta e scade il {date}."
+  },
+  "bf6364b1afaff54f": {
+    "en": "The link works one time only, and it expires in one hour.",
+    "path": "mail:reset.expiry",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Il link funziona una sola volta e scade tra un'ora."
+  },
+  "c12af2b2af768271": {
+    "en": "Open this link and choose a new password:",
+    "path": "mail:reset.open",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Apri questo link e scegli una nuova password:"
+  },
+  "c522edff3ff862d2": {
+    "en": "Hello,",
+    "path": "mail:invite.greeting",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Ciao,"
+  },
+  "c62a9eacc89807aa": {
+    "en": "On that page you choose a password. From then on you sign in with your email address and this password, on any device.",
+    "path": "mail:invite.password",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "In quella pagina puoi scegliere una password. Da quel momento in poi potrai accedere con il tuo indirizzo email e questa password, su qualsiasi dispositivo."
+  },
+  "cc16990369e2dafc": {
+    "en": "Set a new openplate password",
+    "path": "mail:reset.subject",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Imposta una nuova password per openplate"
+  },
+  "f0ff55e9229e5747": {
+    "en": "Open this link on the device you want to use openplate on:",
+    "path": "mail:invite.open",
+    "model": "google/gemini-3.8-flash",
+    "at": "2026-09-14",
+    "it": "Apri questo link sul dispositivo su cui vuoi usare openplate:"
+  }
+}

@@ -1,5 +1,5 @@
 /**
- * The two letters this service sends, in both languages, asserted as strings.
+ * The letters this service sends, in every language, asserted as strings.
  *
  * THE BUILDERS ARE PURE, WHICH IS THE WHOLE REASON THIS FILE CAN EXIST. The
  * one thing that can actually be wrong in a mail is the LINK: a mistyped
@@ -29,12 +29,20 @@ const RESET_TOKEN = 'sr_a-reset-token-for-this-suite';
 const EXPIRES_AT = '2026-09-11T10:00:00.000Z';
 
 /**
- * Words no letter may contain, in either language.
+ * Words no letter may contain, in any language.
  *
  * EVERY ONE OF THESE NAMES A PIECE OF ARCHITECTURE. The 2026-09-04 invite
  * mail talked about a sync service and a gateway, and the person reading it
  * had to work out which of the two they were being invited to. There is one
  * service now, and the letters do not mention it either.
+ *
+ * The English and German are the original list. The French, Italian, Spanish
+ * and Turkish rows are what wordsmith (the workspace prose judge) answered on
+ * 2026-09-14 when asked for the same four terms as software UI would name
+ * them, plus the sentence-initial capital of each. `gateway` came back as
+ * `gateway` in all four, so the English row already covers it there. The
+ * loop below runs EVERY word against EVERY language: a Turkish letter that
+ * said "sync" in English would fail on the English row, which is the point.
  */
 const BANNED_WORDS = [
   'Sync',
@@ -45,6 +53,26 @@ const BANNED_WORDS = [
   'AI connection',
   'account link',
   'Konto-Link',
+  // French
+  'Synchronisation',
+  'synchronisation',
+  'connexion IA',
+  'liaison de compte',
+  // Italian
+  'Sincronizzazione',
+  'sincronizzazione',
+  'connessione IA',
+  'collegamento account',
+  // Spanish
+  'Sincronización',
+  'sincronización',
+  'conexión de IA',
+  'enlace de cuenta',
+  // Turkish
+  'Eşitleme',
+  'eşitleme',
+  'AI bağlantısı',
+  'hesap bağlantısı',
 ];
 
 /** Both dashes, banned workspace-wide in prose and unpredictable across mail clients. */
@@ -168,20 +196,47 @@ test('the two letters that DO carry a link still carry it, so the assertion abov
   }
 });
 
-test('both languages carry the identical key set, which the type also enforces', () => {
+test('every language carries the identical key set, which the type also enforces', () => {
   // The compiler already refuses a missing key. This asserts it at runtime too,
   // because the failure mode is a German letter with an English paragraph in
-  // the middle and that is worth catching twice.
-  assert.deepEqual(Object.keys(MAIL_STRINGS.en.invite).toSorted(), Object.keys(MAIL_STRINGS.de.invite).toSorted());
-  assert.deepEqual(Object.keys(MAIL_STRINGS.en.reset).toSorted(), Object.keys(MAIL_STRINGS.de.reset).toSorted());
-  assert.deepEqual(
-    Object.keys(MAIL_STRINGS.en.accountNotice).toSorted(),
-    Object.keys(MAIL_STRINGS.de.accountNotice).toSorted(),
-  );
+  // the middle and that is worth catching twice. Every language, not `de`
+  // alone: four of the six are generated modules, and a generator that dropped
+  // a key is exactly what this and the `satisfies` in `strings.ts` are for.
+  for (const language of INSTANCE_LANGUAGES) {
+    for (const letter of ['invite', 'reset', 'accountNotice'] as const) {
+      assert.deepEqual(
+        Object.keys(MAIL_STRINGS[language][letter]).toSorted(),
+        Object.keys(MAIL_STRINGS.en[letter]).toSorted(),
+        `${language}/${letter} does not carry the English key set`,
+      );
+    }
+    assert.deepEqual(Object.keys(MAIL_STRINGS[language]).toSorted(), Object.keys(MAIL_STRINGS.en).toSorted());
+  }
   // THREE LETTERS, EVER, and the number is in the type. A fourth added to one
   // language and not the other would already be a compile error; this catches
-  // a fourth added to both without the argument in `mail/mailer.ts`'s header.
+  // a fourth added to all without the argument in `mail/mailer.ts`'s header.
   assert.deepEqual(Object.keys(MAIL_STRINGS.en).toSorted(), ['accountNotice', 'invite', 'reset']);
+  // And the dictionary carries every language the protocol names, no more.
+  assert.deepEqual(Object.keys(MAIL_STRINGS).toSorted(), [...INSTANCE_LANGUAGES].toSorted());
+});
+
+test('no generated language is still the English it was seeded from', () => {
+  // A generated module starts life as a copy of the English so `strings.ts`
+  // resolves, and the buy overwrites it. This is what catches a seed that was
+  // committed instead: the long sentences, at least, must differ from English.
+  // The short ones ("Hello,") may legitimately coincide in some language, so
+  // only strings over 40 characters are held to it, as the website's parity
+  // test does.
+  for (const language of INSTANCE_LANGUAGES) {
+    if (language === 'en') continue;
+    for (const letter of ['invite', 'reset', 'accountNotice'] as const) {
+      for (const [key, english] of Object.entries(MAIL_STRINGS.en[letter])) {
+        if (english.length <= 40) continue;
+        const translated = Object.entries(MAIL_STRINGS[language][letter]).find(([name]) => name === key)?.[1];
+        assert.notEqual(translated, english, `${language}/${letter}.${key} is still the English`);
+      }
+    }
+  }
 });
 
 // ── The link, which is the thing that can silently be wrong ────────────────
@@ -298,12 +353,24 @@ test('the HTML part carries the link in the same position the text does', () => 
 test('the expiry renders as a date in the reader language, in UTC', () => {
   assert.equal(formatExpiryDate({ expiresAt: EXPIRES_AT, language: 'en' }), '11 September 2026');
   assert.equal(formatExpiryDate({ expiresAt: EXPIRES_AT, language: 'de' }), '11. September 2026');
+  // EVERY LANGUAGE ITS OWN DATE. The old `de ? 'de-DE' : 'en-GB'` rendered
+  // French, Italian, Spanish and Turkish readers an English date, and widening
+  // the type would not have said so. Six languages, six different strings:
+  // a language that fell through to another's locale would collide here.
+  const rendered = INSTANCE_LANGUAGES.map((language) => formatExpiryDate({ expiresAt: EXPIRES_AT, language }));
+  assert.equal(new Set(rendered).size, INSTANCE_LANGUAGES.length, `dates collide: ${rendered.join(' | ')}`);
+  // And the control that the set above is not six variants of English: the
+  // month is named in the reader's language, not in English, for each of them.
+  for (const [index, language] of INSTANCE_LANGUAGES.entries()) {
+    if (language === 'en' || language === 'de') continue;
+    assert.ok(!rendered[index]?.includes('September'), `${language} renders an English month: ${rendered[index]}`);
+  }
   // An unparseable value is passed through rather than rendered as "Invalid
   // Date": a caller's bug must not become a sentence in somebody's inbox.
   assert.equal(formatExpiryDate({ expiresAt: 'not a date', language: 'en' }), 'not a date');
 });
 
-test('the invite letter tells the reader what happens next, in both languages', () => {
+test('the invite letter tells the reader what happens next, in every language', () => {
   // A positive assertion, so the bans above cannot be satisfied by an empty
   // letter. The password sentence is the one that says what the link is for.
   for (const language of INSTANCE_LANGUAGES) {

@@ -1,18 +1,25 @@
 /**
- * Every word this service ever sends to a person, in the two languages it
+ * Every word this service ever sends to a person, in the six languages it
  * sends them in.
  *
- * ONE DICTIONARY, TWO LANGUAGES, ONE KEY SET, ENFORCED BY THE TYPE.
+ * ONE DICTIONARY, SIX LANGUAGES, ONE KEY SET, ENFORCED BY THE TYPE.
  * `Record<InstanceLanguage, MailStrings>` means a key added to `en` and
- * forgotten in `de` is a compile error rather than a German letter with an
- * English paragraph in the middle of it. There is no fallback and no lookup
- * that can miss.
+ * forgotten in any other language is a compile error rather than a German
+ * letter with an English paragraph in the middle of it. There is no fallback
+ * and no lookup that can miss.
  *
- * THESE STRINGS ARE FINAL AND ARE NOT EDITED HERE. They came out of the
- * workspace wordsmith pass of 2026-09-04 (Gemini 3.8 Flash; the rule is in the
- * workspace `CLAUDE.md`), and the German is a native register rather than a
- * translation of the English. Changing a sentence means running that pass
- * again and pasting the result, not rewriting it in this file.
+ * TWO HAND-WRITTEN, FOUR GENERATED (M230). `en` and `de` below ARE FINAL AND
+ * ARE NOT EDITED HERE. They came out of the workspace wordsmith pass of
+ * 2026-09-04 (Gemini 3.8 Flash; the rule is in the workspace `CLAUDE.md`), and
+ * the German is a native register rather than a translation of the English.
+ * Changing a sentence means running that pass again and pasting the result,
+ * not rewriting it in this file. `fr`, `it`, `es` and `tr` live in
+ * `strings.<lang>.ts`, one module each, written by `pnpm translate:mail`
+ * (`scripts/translate-mail.ts`) from the English here and the memory in
+ * `memory/<lang>.json`, by the same model under the same contract. They are
+ * imported and folded in below, so the compiler checks them with these two;
+ * a module edited by hand is put back by the next run, and `memory/README.md`
+ * says where a sentence is changed instead.
  *
  * THREE RULES THE TEXT OBEYS, AND `tests/unit/mail-messages.test.ts` HOLDS IT
  * TO THEM:
@@ -27,6 +34,10 @@
  *    an instruction or a fact about the link.
  */
 import type { InstanceLanguage } from '../protocol.js';
+import { MAIL_STRINGS_ES } from './strings.es.js';
+import { MAIL_STRINGS_FR } from './strings.fr.js';
+import { MAIL_STRINGS_IT } from './strings.it.js';
+import { MAIL_STRINGS_TR } from './strings.tr.js';
 
 /**
  * The invitation. One letter for every invite, with no variants: the M181-era
@@ -147,9 +158,16 @@ export const MAIL_STRINGS = {
       forgotten: 'Falls du dein Passwort vergessen hast, kannst du auf der Anmeldeseite ein neues anfordern.',
     },
   },
-  // `satisfies` rather than an annotation: the check that both languages carry
-  // the identical key set is what this line buys, and inference keeps each
-  // string's literal type so a typo in a lookup is still a compile error.
+  // THE GENERATED FOUR, folded in rather than looked up: a language dropped
+  // from this object is a compile error on the line below, exactly as `en`
+  // and `de` are.
+  fr: MAIL_STRINGS_FR,
+  it: MAIL_STRINGS_IT,
+  es: MAIL_STRINGS_ES,
+  tr: MAIL_STRINGS_TR,
+  // `satisfies` rather than an annotation: the check that every language
+  // carries the identical key set is what this line buys, and inference keeps
+  // each string's literal type so a typo in a lookup is still a compile error.
 } satisfies Record<InstanceLanguage, MailStrings>;
 
 /** The one placeholder any shipped string carries. Named so `fill` has a concrete contract rather than an open dictionary. */
@@ -169,6 +187,25 @@ export function fill(template: string, values: FillValues): string {
 }
 
 /**
+ * The `Intl` locale each language's date is rendered in.
+ *
+ * A RECORD OVER THE WHOLE TYPE, not a ternary with a default: the old code
+ * asked "is it German?" and rendered every other language as English, and
+ * widening `InstanceLanguage` would have made that wrong for four languages
+ * without a compile error anywhere. Here a seventh language is a missing key,
+ * and `tests/unit/mail-messages.test.ts` renders one date in every language
+ * and asserts no two come out the same.
+ */
+const DATE_LOCALES = {
+  en: 'en-GB',
+  de: 'de-DE',
+  fr: 'fr-FR',
+  it: 'it-IT',
+  es: 'es-ES',
+  tr: 'tr-TR',
+} satisfies Record<InstanceLanguage, string>;
+
+/**
  * The expiry as a person in that language reads it, in UTC.
  *
  * UTC AND NOT THE READER'S ZONE, because the server does not know theirs and
@@ -181,7 +218,7 @@ export function formatExpiryDate(input: { expiresAt: string; language: InstanceL
   // An unparseable value is passed through rather than rendered as "Invalid
   // Date": the caller's bug should not become a sentence in somebody's inbox.
   if (Number.isNaN(parsed)) return input.expiresAt;
-  return new Intl.DateTimeFormat(input.language === 'de' ? 'de-DE' : 'en-GB', {
+  return new Intl.DateTimeFormat(DATE_LOCALES[input.language], {
     day: 'numeric',
     month: 'long',
     year: 'numeric',

@@ -10,6 +10,7 @@ import {
   MIN_SERVER_SECRET_LENGTH,
   parseConfig,
 } from '../../src/config.js';
+import { INSTANCE_LANGUAGES } from '../../src/protocol.js';
 
 const SECRET = 'x'.repeat(MIN_SERVER_SECRET_LENGTH);
 
@@ -82,9 +83,13 @@ test('INSTANCE_NAME and INSTANCE_LANGUAGE are read, and a bad language is fatal'
   const config = parseConfig(baseEnv({ INSTANCE_NAME: 'Praxis Nord', INSTANCE_LANGUAGE: 'de' }));
   assert.equal(config.instanceName, 'Praxis Nord');
   assert.equal(config.instanceLanguage, 'de');
-  // Only the two languages the mails exist in. A third would silently fall
-  // back to English on the day somebody needs German.
-  assert.throws(() => parseConfig(baseEnv({ INSTANCE_LANGUAGE: 'fr' })), /INSTANCE_LANGUAGE/);
+  // Only the languages the mails exist in. Another would silently fall back
+  // to English on the day somebody needs it. Every one the protocol names is
+  // accepted, so a language that has letters is never a boot failure.
+  for (const language of INSTANCE_LANGUAGES) {
+    assert.equal(parseConfig(baseEnv({ INSTANCE_LANGUAGE: language })).instanceLanguage, language);
+  }
+  assert.throws(() => parseConfig(baseEnv({ INSTANCE_LANGUAGE: 'xx' })), /INSTANCE_LANGUAGE/);
 });
 
 test('CLIENT_BASE_URL and SERVER_PUBLIC_URL are absolute http(s) URLs, or fatal', () => {
