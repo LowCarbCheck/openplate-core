@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-14
+
 ### Added
 
 - **The member invite cap comes from the environment.**
@@ -20,7 +22,7 @@ change moves the minor.
   `MEMBER_INVITE_ALLOWANCE_DAYS` are unset is a boot failure naming it, because
   members cannot invite anybody there and the cap would narrow a door that is
   not open. Administrators stay exempt, and `AI_INSTANCE_DAILY_LIMIT` still
-  bounds what the whole instance may spend per day whatever the cap is.
+  bounds what the whole instance may spend per day whatever the cap is. ([62f6564](https://github.com/LowCarbCheck/openplate-core/commit/62f6564))
 
 ## [0.14.0] - 2026-09-12
 
