@@ -1,0 +1,6 @@
+# DELIBERATELY WRONG. This is the control case for `scripts/quadlet.sh check
+# --self-test-drift`: the self-test plants this file over a freshly generated
+# .container and expects the check to fail and name it. Nothing runs this unit.
+[Container]
+Image=ghcr.io/lowcarbcheck/openplate-core:hand-edited-drift
+PublishPort=9999:9999
