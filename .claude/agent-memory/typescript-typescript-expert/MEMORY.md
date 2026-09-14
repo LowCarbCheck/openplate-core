@@ -19,6 +19,8 @@
 
 - [oxlint bites plain JS in openplate too](project_openplate_oxlint_bites_plain_js_too.md): public/*.js is linted, typeof is banned, and clearTimeout reads as a second resolve
 - [An empty local store tombstones the whole diary](project_openplate_sync_tombstones_an_empty_store.md): stampSnapshot has no floor; the wipe spreads to healthy devices, and a backup restore undoes it
+- [A test can stage a state production never reaches](project_openplate_a_test_can_stage_a_state_production_never_reaches.md): the store singleton lets before() decide what the sync cycle sees
+- [A delete is recorded, never inferred](project_openplate_a_delete_is_recorded_not_inferred.md): the journal authorises the tombstone, so a bare delRow publishes nothing
 - [The openplate worker copies its pure logic](project_openplate_worker_copies_its_pure_logic.md): a classic service worker cannot import app code, so parity is a behavioural test with a mutation control
 
 ## Project (the sibling openplate app repo)
