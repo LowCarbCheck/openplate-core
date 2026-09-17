@@ -72,12 +72,25 @@ export interface BlobRollbackBody {
   targetVersion: number;
 }
 
+/**
+ * The body of `PATCH /v1/admin/settings` (M234).
+ *
+ * `string` RATHER THAN THE THREE NAMES, because this file knows nothing about
+ * the service's types on purpose: importing the protocol's union would put a
+ * `src/` module in the CLI's import graph for one three-member type. The CLI
+ * checks the value itself before it sends (`main.ts`), and the service checks
+ * it again.
+ */
+export interface SettingsPatchBody {
+  nutrientReferenceBasis: string;
+}
+
 export interface AdminRequest {
   readonly method: HttpMethod;
   /** Absolute path on the service, e.g. `/v1/admin/accounts`. */
   readonly path: string;
   /** Sent as JSON on a `POST` or a `PATCH`. Never carries a credential — the token stays in the header. */
-  readonly body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody;
+  readonly body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody;
 }
 
 export interface AdminClientOptions {
@@ -156,7 +169,7 @@ export class AdminClient {
   private async send(
     url: string,
     method: HttpMethod,
-    body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody,
+    body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody,
   ): Promise<Response> {
     // Named rather than an open dictionary, so the one header that carries the
     // credential is part of a fixed shape and cannot be joined by a key some

@@ -362,6 +362,26 @@ export interface InstanceInfo {
    * where the feature was never written.
    */
   feedback?: InstanceFeedback;
+  /**
+   * Which body's micronutrient reference values this instance shows
+   * (`NUTRIENT_REFERENCE_BASIS`, default `dge`), or ABSENT on a service that
+   * has no answer to give.
+   *
+   * OPTIONAL, LIKE `feedback` AND UNLIKE `plans`, and for the reason the whole
+   * handshake is additive: a client older than M234 has never heard of the
+   * field and must keep parsing this body exactly as it did, and a service
+   * older than the field says nothing rather than claiming a default it does
+   * not hold.
+   *
+   * IT IS THE ONE FIELD HERE AN ADMINISTRATOR CAN CHANGE WITHOUT A REDEPLOY.
+   * Everything else on this object is env config read once at boot; this is a
+   * stored row (`db/schema.ts`, `instance_settings`) that
+   * `PATCH /v1/admin/settings` writes. What `/health` publishes is the
+   * PROCESS-LOCAL copy of it, never a query: this path is the container's own
+   * healthcheck and is polled continuously, so a database hiccup here would
+   * restart the container. See `instance/instance-settings.ts`.
+   */
+  nutrientReferenceBasis?: NutrientReferenceBasis;
 }
 
 /**
@@ -392,6 +412,24 @@ export const INSTANCE_LANGUAGES: readonly InstanceLanguage[] = ['en', 'de', 'fr'
 
 export function isInstanceLanguage(value: JsonValue | undefined): value is InstanceLanguage {
   return INSTANCE_LANGUAGES.some((language) => language === value);
+}
+
+/**
+ * Which body's micronutrient reference values this instance shows: the German
+ * DGE, the EU's EFSA, or the US NASEM figures (M234).
+ *
+ * ONE BASIS PER INSTANCE, NEVER PER LANGUAGE AND NEVER PER PERSON. Language
+ * and reference body are orthogonal: a Turkish speaker living in Germany is
+ * advised by the same body a German speaker is, so a locale-following default
+ * would be a per-person basis wearing a translation's clothes.
+ */
+export type NutrientReferenceBasis = 'dge' | 'efsa' | 'us';
+
+/** Every valid {@link NutrientReferenceBasis}, for validation and exhaustive iteration. */
+export const NUTRIENT_REFERENCE_BASES: readonly NutrientReferenceBasis[] = ['dge', 'efsa', 'us'];
+
+export function isNutrientReferenceBasis(value: JsonValue | undefined): value is NutrientReferenceBasis {
+  return NUTRIENT_REFERENCE_BASES.some((basis) => basis === value);
 }
 
 /**

@@ -79,6 +79,7 @@ import express from 'express';
 import type { Express } from 'express';
 import { ENVELOPE_VERSION, PLANS_API_PREFIX, PROTOCOL_VERSION, SYNC_API_PREFIX } from '../protocol.js';
 import type { InstanceInfo, OperatorNotice, ProtocolHandshake } from '../protocol.js';
+import type { InstanceSettingsSurface } from '../instance/instance-settings.js';
 import type {
   SyncBlobRollbackStore,
   SyncResearchStore,
@@ -311,12 +312,31 @@ export interface CreateAppOptions {
    * not a mounted-but-refusing surface.
    */
   plans?: PlansUpstreamConfig | null;
+  /**
+   * The instance's stored settings (M234), or `null`/absent for a build that
+   * wires none, which is what an old test harness and nothing in production
+   * looks like.
+   *
+   * ABSENT IS A SILENT HANDSHAKE AND A 404, not a default. `/health` then omits
+   * `instance.nutrientReferenceBasis` entirely, exactly as a service older than
+   * the field does, and `PATCH /v1/admin/settings` answers the ordinary
+   * unknown-path 404. Publishing `dge` from a process that holds no row would
+   * be this service claiming a setting it cannot change.
+   *
+   * WHAT IS PASSED HERE IS A PROCESS-LOCAL READER, and `/health` calls it
+   * synchronously. See `instance/instance-settings.ts` for why that path must
+   * never reach the database.
+   */
+  settings?: InstanceSettingsSurface | null;
 }
 
 export function createApp(options: CreateAppOptions): Express {
   const app = express();
   const mailer = options.mailer ?? createNoopMailer();
   const now = options.now ?? ((): Date => new Date());
+  // Absent means this build publishes no basis and mounts no settings route,
+  // see {@link CreateAppOptions.settings}.
+  const settings = options.settings ?? null;
   app.set('trust proxy', options.trustProxy);
   // Nothing here serves HTML or benefits from an ETag; both only add
   // surface and a version banner.
@@ -341,7 +361,16 @@ export function createApp(options: CreateAppOptions): Express {
     // a grant: `ai` says an upstream key is configured, not that the caller may
     // use it. Omitted entirely when absent, so a client older than protocol 2
     // parses the response exactly as before. See `InstanceInfo`.
-    if (options.instance != null) handshake.instance = options.instance;
+    // THE STORED SETTING IS MERGED HERE, PER REQUEST, AND FROM MEMORY. Merged
+    // rather than written into `options.instance` once at boot, because an
+    // administrator changes it while the process runs and a copy taken at boot
+    // would keep publishing the old value until a redeploy. Read from the
+    // process-local copy rather than from the row, because this path is the
+    // container's own healthcheck: see `instance/instance-settings.ts`.
+    if (options.instance != null) {
+      handshake.instance =
+        settings === null ? options.instance : { ...options.instance, nutrientReferenceBasis: settings.current() };
+    }
     // The operator's notice rides on this same /health body, and only when
     // there is one: an instance with nothing to say sends no field at all, so
     // a client older than M181 parses the response exactly as before. It is
@@ -638,6 +667,11 @@ export function createApp(options: CreateAppOptions): Express {
       // The SAME minter the auth handlers use, so an operator-sent reset and a
       // self-service one produce tokens of the same shape.
       mintResetToken: options.authContext.mintResetToken,
+      // The SAME surface `/health` publishes from, so a PATCH and the next
+      // handshake on this process cannot report two different bases. `null`
+      // takes `PATCH /settings` away entirely, see
+      // {@link CreateAppOptions.settings}.
+      settings,
       now,
       logger: options.logger,
     }),

@@ -56,6 +56,7 @@ import {
   decodeRollback,
   formatBlobVersions,
   formatRollback,
+  decodeSettings,
 } from './views.js';
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
@@ -87,6 +88,9 @@ const USAGE = `sync-api, the openplate-core admin CLI
                                every version above it. Read the playbook first:
                                docs/operations/restoring-a-wiped-diary.md
     push keygen                Print a fresh VAPID key pair for the environment
+    settings get               What this instance's settings say
+    settings set nutrient-reference-basis dge|efsa|us
+                               Which body's reference values it shows
 
   Options:
     --url <base>   Service base URL (default: SYNC_SERVER_URL, else ${DEFAULT_BASE_URL})
@@ -529,6 +533,71 @@ function runPush(invocation: Invocation): void {
   );
 }
 
+/** The one settings key this service has, as an operator types it, and the JSON field it becomes. */
+const NUTRIENT_REFERENCE_BASIS_KEY = 'nutrient-reference-basis';
+
+/** The three values `settings set` accepts. Checked here so an obvious typo costs no round trip, as `--role` is. */
+const NUTRIENT_REFERENCE_BASES = ['dge', 'efsa', 'us'];
+
+/**
+ * `settings get` and `settings set <key> <value>`, the operator's side of the
+ * instance setting M234 added.
+ *
+ * `get` READS `/health`, not an admin endpoint, and that is deliberate: the
+ * handshake is where the setting is PUBLISHED, so reading it here proves the
+ * thing a client will actually see rather than the thing the row says. A
+ * separate admin read would be a second answer to one question.
+ */
+async function runSettings(client: AdminClient, invocation: Invocation): Promise<void> {
+  const subcommand = invocation.command[1] ?? '';
+
+  if (subcommand === 'get') {
+    const handshake = decodeHandshake(await client.request({ method: 'GET', path: '/health' }));
+    if (invocation.json) {
+      print(JSON.stringify({ nutrientReferenceBasis: handshake.nutrientReferenceBasis }, null, 2));
+      return;
+    }
+    // A service older than the field says nothing, and so does this: an
+    // invented `dge` would be a setting nobody chose.
+    print(
+      `${NUTRIENT_REFERENCE_BASIS_KEY}   ${handshake.nutrientReferenceBasis ?? '(this instance publishes none)'}`,
+    );
+    return;
+  }
+
+  if (subcommand === 'set') {
+    const key = invocation.command[2] ?? '';
+    const value = invocation.command[3] ?? '';
+    // Both checked BEFORE the request is built, so a typo sends nothing.
+    if (key !== NUTRIENT_REFERENCE_BASIS_KEY) {
+      throw new CliError(
+        `Unknown setting "${key}". This service has one: \`settings set ${NUTRIENT_REFERENCE_BASIS_KEY} <${NUTRIENT_REFERENCE_BASES.join('|')}>\`.`,
+      );
+    }
+    if (!NUTRIENT_REFERENCE_BASES.includes(value)) {
+      throw new CliError(`${NUTRIENT_REFERENCE_BASIS_KEY} must be one of ${NUTRIENT_REFERENCE_BASES.join(', ')}.`);
+    }
+
+    const settings = decodeSettings(
+      await client.request({
+        method: 'PATCH',
+        path: '/v1/admin/settings',
+        body: { nutrientReferenceBasis: value },
+      }),
+    );
+    if (invocation.json) {
+      print(JSON.stringify(settings, null, 2));
+      return;
+    }
+    // What the service answered, not what was asked for. Every client reads it
+    // from `/health` on its next connect.
+    print(`${NUTRIENT_REFERENCE_BASIS_KEY}   ${settings.nutrientReferenceBasis}`);
+    return;
+  }
+
+  throw new CliError(`Unknown settings subcommand "${subcommand}". Try: get, set.`);
+}
+
 async function runStatus(client: AdminClient, invocation: Invocation): Promise<void> {
   const handshake = decodeHandshake(await client.request({ method: 'GET', path: '/health' }));
   // The second call is the one that proves the ADMIN surface is reachable and
@@ -576,6 +645,10 @@ async function run(argv: string[]): Promise<void> {
 
   if (command === 'accounts') {
     await runAccounts(client, invocation);
+    return;
+  }
+  if (command === 'settings') {
+    await runSettings(client, invocation);
     return;
   }
   if (command === 'stats') {

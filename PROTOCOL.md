@@ -446,11 +446,17 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
   "protocolVersion": 2,
   "envelopeVersion": 1,
   "serviceVersion": "0.6.0",
-  "instance": { "name": "openplate", "language": "de", "mail": true, "ai": { "model": "google/gemini-3.7-flash" } }
+  "instance": {
+    "name": "openplate",
+    "language": "de",
+    "mail": true,
+    "nutrientReferenceBasis": "dge",
+    "ai": { "model": "google/gemini-3.7-flash" }
+  }
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), `nutrientReferenceBasis` says whose micronutrient reference values it shows, and `ai` is `null` when no upstream key is configured.
 
 `push` follows `plans` exactly: a boolean that says only whether a door exists. `false` means the whole `/v1/push` subtree answers the ordinary unknown-path `404`, so a client draws no notification settings. It says nothing about what a push contains, because a push contains a kind and nothing else (§5.24).
 
@@ -459,6 +465,10 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 `memberInvites` is **descriptive, never a grant**, like everything else in this block. A client reads it to decide whether to draw an invite card at all; it never reads it to decide whether it may mint. `false` means `POST /v1/auth/invites` answers the ordinary unknown-path `404`, and `true` still leaves the lifetime cap, the re-invite rule and the throttle to the service.
 
 It is **descriptive, never authoritative**. `mail: true` does not promise a letter arrives, and `ai` reports what the operator configured rather than granting anything; an account with `dailyAiLimit: 0` gets a `403` whatever this says.
+
+`nutrientReferenceBasis` is `dge`, `efsa` or `us`: which body's micronutrient reference values every client on this instance shows, the German DGE, the EU's EFSA, or the US NASEM figures. It is **optional**, so a service built before the field omits it and a client that has never heard of it ignores it. It is **one basis per instance, never per language and never per person**: language and reference body are orthogonal, and a locale-following default would be a per-person basis in disguise.
+
+It is also the **one field in this block an administrator can change while the service runs**. Everything else here is the operator's environment, fixed until a redeploy; this one is stored, and `PATCH /v1/admin/settings` (§5.20) writes it. A client therefore reads it on every connect rather than caching it for the life of an install. A service MUST serve this path from a process-local copy of the value and MUST NOT read its store to answer `/health`: this is the container healthcheck path, polled continuously, and a store read there turns a database hiccup into a restart.
 
 `instance.feedback` is the one field here that is a **promise rather than a description**, and it is the exception to the paragraph above. An instance that accepts reported estimates keeps a photograph of somebody's food, and it publishes how long for:
 
@@ -1115,6 +1125,7 @@ either token turns that `404` into the `401` a wrong value gets.
 | `POST /v1/admin/invites`                 | Mints one (§5.8). The token is returned **once**                          |
 | `POST /v1/admin/invites/:id/resend`      | A NEW token on the SAME row, and a new expiry                             |
 | `DELETE /v1/admin/invites/:id`           | Withdraws a pending invitation                                            |
+| `PATCH /v1/admin/settings`               | `{"nutrientReferenceBasis": "dge" \| "efsa" \| "us"}`. The instance-wide reference basis (§5.6). Required; anything else is `400` and NOTHING is written. Answers `{"settings": {...}}` with what the instance now holds |
 
 **`PATCH` is the one auth-adjacent write an operator has**, and it is bounded
 deliberately. It cannot set a passphrase, and there is no endpoint that can:

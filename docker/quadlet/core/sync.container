@@ -11,6 +11,7 @@ Environment=PORT=3000
 Environment=DATABASE_URL=postgres://openplate:openplate@postgres:5432/openplate_sync
 Environment=INSTANCE_NAME=openplate
 Environment=INSTANCE_LANGUAGE=en
+Environment=NUTRIENT_REFERENCE_BASIS=dge
 Environment=SERVER_PUBLIC_URL=
 Environment=CLIENT_BASE_URL=
 Environment=TRUST_PROXY=0

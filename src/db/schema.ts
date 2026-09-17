@@ -29,11 +29,12 @@ import {
   pgTable,
   primaryKey,
   serial,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { AccountRole, InstanceLanguage, SyncKeyRecordKind } from '../protocol.js';
+import type { AccountRole, InstanceLanguage, NutrientReferenceBasis, SyncKeyRecordKind } from '../protocol.js';
 import type { AccountTokenKind } from '../lib/tokens.js';
 import type { KdfDescriptor } from '../lib/kdf-descriptor.js';
 import type { JsonObject } from '../lib/json.js';
@@ -1230,6 +1231,62 @@ export const feedbackImages = pgTable('feedback_images', {
 
 export type InsertFeedbackImage = InferInsertModel<typeof feedbackImages>;
 export type SelectFeedbackImage = InferSelectModel<typeof feedbackImages>;
+
+// =============================================================================
+// The instance's own settings (M234)
+// =============================================================================
+
+/**
+ * THE ONE ROW THIS SERVICE LETS AN ADMINISTRATOR CHANGE WITHOUT A REDEPLOY.
+ *
+ * Everything else an instance decides about itself is an environment variable
+ * parsed once at boot by `config.ts`, which names every knob and refuses to
+ * start on a bad one. This table is the first exception, and it is built to
+ * keep that bargain rather than to escape it.
+ *
+ * A TYPED SINGLE ROW, NOT A KEY AND VALUE BAG. `id` is `1` and the check
+ * constraint says so, so "the settings" is one row that either exists or does
+ * not, and no code has to decide what two rows would mean. Each setting is a
+ * COLUMN with its own type and its own check, so the database refuses a value
+ * the service would refuse, in the same way and for the same reason. The next
+ * setting costs a column and a migration, and that is the honest price of
+ * having the database know what a setting is.
+ *
+ * NOTHING HERE IS PERSONAL DATA. It is the operator's choice about the whole
+ * instance, so there is no account id, no cascade and nothing for an erasure
+ * to reach.
+ *
+ * WHAT READS IT IS NOT WHAT SERVES IT. `/health` publishes a PROCESS-LOCAL
+ * copy, loaded at boot and refreshed on a timer, and never queries this table:
+ * that path is the container's own healthcheck and is polled continuously, so
+ * a database hiccup there would restart the container. See
+ * `instance/instance-settings.ts`.
+ */
+export const instanceSettings = pgTable(
+  'instance_settings',
+  {
+    /**
+     * Always `1`, enforced by the check below. The row is the settings, and a
+     * second one is not a newer version of them, it is an ambiguity.
+     */
+    id: smallint('id').primaryKey(),
+    /**
+     * Which body's micronutrient reference values this instance shows: `dge`,
+     * `efsa` or `us` (M234). Bounded by a check constraint as well as by the
+     * route's own validation, because a value that reached this column by any
+     * other path would be shown to a person as a nutrition target.
+     */
+    nutrientReferenceBasis: text('nutrient_reference_basis').$type<NutrientReferenceBasis>().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    check('instance_settings_single_row', sql`${table.id} = 1`),
+    check('instance_settings_nutrient_reference_basis', sql`${table.nutrientReferenceBasis} in ('dge', 'efsa', 'us')`),
+  ],
+);
+
+export type InsertInstanceSettings = InferInsertModel<typeof instanceSettings>;
+export type SelectInstanceSettings = InferSelectModel<typeof instanceSettings>;
 
 // =============================================================================
 // Relations

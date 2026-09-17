@@ -77,6 +77,20 @@ export interface HandshakeView {
   serviceVersion: string;
   /** What the instance calls itself, or `null` on a service older than protocol 2. */
   instanceName: string | null;
+  /**
+   * Which body's reference values the instance shows (M234), or `null` on a
+   * service older than the field.
+   *
+   * NOT REFUSED WHEN ABSENT, and not defaulted to `dge` either. A diagnostic
+   * tool that demanded a field could not talk to an older instance, and one
+   * that invented a value would report a setting nobody chose.
+   */
+  nutrientReferenceBasis: string | null;
+}
+
+/** What `settings set` reports back: what the instance holds now, read off its own answer. */
+export interface SettingsView {
+  nutrientReferenceBasis: string;
 }
 
 /** The one sentence every decode failure gets: the far end is not what we expected, and we do not quote it. */
@@ -324,7 +338,27 @@ export function decodeHandshake(value: JsonValue): HandshakeView {
   // Optional on the wire, so absent is a `null` here rather than a refusal:
   // demanding it would make this CLI unable to talk to a service older than
   // protocol 2, which is the opposite of what a diagnostic tool is for.
-  return { protocolVersion, envelopeVersion, serviceVersion, instanceName: asString(asObject(body?.instance)?.name) };
+  const instance = asObject(body?.instance);
+  return {
+    protocolVersion,
+    envelopeVersion,
+    serviceVersion,
+    instanceName: asString(instance?.name),
+    nutrientReferenceBasis: asString(instance?.nutrientReferenceBasis),
+  };
+}
+
+/**
+ * The body of `PATCH /v1/admin/settings`.
+ *
+ * It reads the SERVICE'S answer rather than echoing what was sent, so
+ * `settings set` prints what the instance now holds. A printed confirmation
+ * built from the request would say "efsa" for a write that did not land.
+ */
+export function decodeSettings(value: JsonValue): SettingsView {
+  const basis = asString(asObject(asObject(value)?.settings)?.nutrientReferenceBasis);
+  if (basis === null) throw undocumentedResponse('settings');
+  return { nutrientReferenceBasis: basis };
 }
 
 /** Bytes as something an operator can read at a glance. Binary units, because that is what a disk quota is in. */

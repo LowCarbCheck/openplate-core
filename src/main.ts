@@ -29,6 +29,8 @@ import { createDrizzleInviteStore } from './db/invite-store.js';
 import { createDrizzleShareStore } from './db/share-store.js';
 import { createDrizzleRotationStore } from './db/rotation-store.js';
 import { createDrizzleResearchStore } from './db/research-store.js';
+import { createDrizzleInstanceSettingsStore } from './db/settings-store.js';
+import { startInstanceSettings } from './instance/instance-settings.js';
 import { deriveServerSecrets } from './lib/server-secrets.js';
 import { createThrottleStore } from './lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
@@ -201,6 +203,13 @@ async function main(): Promise<void> {
     // settings. It says nothing about what a push contains, because a push
     // contains a kind. See ADR-0008.
     push: config.push !== null,
+    // `nutrientReferenceBasis` IS DELIBERATELY NOT HERE, and this is where a
+    // reader looking for it will look. Every field above is env config read
+    // once, so a copy taken at boot stays true for the life of the process.
+    // That one is a stored row an administrator changes while this process
+    // runs, so `create-app.ts` merges it into the handshake per request from
+    // the process-local settings surface. A copy here would keep publishing
+    // the value the instance started on until somebody redeployed.
   };
 
   // `null` unless SYNC_SHARING is on, which leaves both share subtrees
@@ -256,6 +265,18 @@ async function main(): Promise<void> {
   const push =
     config.push === null ? null : { store: createDrizzlePushStore(database.db), publicKey: config.push.publicKey };
 
+  // THE ONE SETTING AN ADMINISTRATOR CHANGES WITHOUT A REDEPLOY (M234). It is
+  // read ONCE here and then served from memory, because `/health` publishes it
+  // and `/health` is this container's own healthcheck: a read of the row on
+  // that path would turn a database hiccup into a restart. A row this process
+  // cannot read costs an error log and the environment default, never a boot
+  // failure. See `instance/instance-settings.ts`.
+  const settings = await startInstanceSettings({
+    store: createDrizzleInstanceSettingsStore(database.db),
+    fallback: config.nutrientReferenceBasis,
+    logger,
+  });
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
@@ -278,6 +299,7 @@ async function main(): Promise<void> {
     feedback,
     pulse,
     push,
+    settings,
   });
 
   // NO HOST MEANS EVERY INTERFACE, and that is the production default on
@@ -314,6 +336,9 @@ async function main(): Promise<void> {
       plans: config.plans !== null,
       // Whether this instance can send a notification, never a key and never the subject.
       push: config.push !== null,
+      // What the instance is showing right now, which is the stored row when
+      // there is one and `NUTRIENT_REFERENCE_BASIS` when there is not.
+      nutrientReferenceBasis: settings.current(),
     });
   });
 
@@ -392,6 +417,7 @@ async function main(): Promise<void> {
   async function shutdown(signal: string): Promise<void> {
     logger.info('Shutting down', { signal });
     clearInterval(sweeper);
+    settings.stop();
     feedbackRetention?.stop();
     aiUsageRetention.stop();
     pulseRetention.stop();

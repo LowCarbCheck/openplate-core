@@ -65,8 +65,14 @@ const ADMIN_TOKEN = 'admin-9d41c7b8e0a25f36471dcb9e';
  * decision it forced: NEITHER is on the biller's allow list. A subscription
  * buys an allowance, and nothing a biller pays for gives it a reason to read
  * somebody's blob history or to delete their accepted writes.
+ *
+ * M234 took it to twenty with `PATCH /settings`, the instance's reference
+ * basis. The decision it forced: NOT on the allow list either. That endpoint
+ * decides which country's nutrition advice every person on the instance is
+ * shown, and a credential that pays for an allowance has no business moving
+ * it.
  */
-const ADMIN_ROUTE_COUNT = 19;
+const ADMIN_ROUTE_COUNT = 20;
 
 let harness: AdminHarness;
 let routes: AdminRouteRef[];
@@ -113,6 +119,10 @@ function buildAdminRouters(): Router[] {
       links: null,
       aiInstanceDailyLimit: null,
       memberInvites: null,
+      // `null` is what a build that wires no settings surface passes. The route
+      // is registered either way, which is what this enumeration needs: the
+      // scope gate must refuse it whether or not the surface behind it exists.
+      settings: null,
       mintResetToken: fixture.ctx.mintResetToken,
       now: fixture.now,
       logger: createSilentLogger(),

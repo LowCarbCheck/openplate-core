@@ -7,6 +7,20 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **The instance chooses whose reference values it shows.**
+  A new `instance_settings` row holds one setting, the micronutrient reference
+  basis: `dge` (the German DGE, the default), `efsa` (the EU) or `us` (NASEM).
+  `PATCH /v1/admin/settings` changes it, `pnpm sync-api settings set
+  nutrient-reference-basis efsa` is the operator's command for it, and every
+  client reads it from `GET /health` as `instance.nutrientReferenceBasis` on
+  its next connect. It is the first setting on this service an administrator
+  can change without a redeploy; `NUTRIENT_REFERENCE_BASIS` in the environment
+  is now only the boot default. `/health` serves a process-local copy of the
+  value and never queries the row: that path is the container's own
+  healthcheck, so a read there would turn a database hiccup into a restart.
+
 ## [0.16.0] - 2026-09-14
 
 ### Added

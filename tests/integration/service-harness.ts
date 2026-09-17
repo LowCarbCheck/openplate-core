@@ -43,6 +43,9 @@ import type { Database } from '../../src/db/client.js';
 import { SHARE_WRAPPED_DEK_BYTES } from '../../src/server/share-routes.js';
 import { RESEARCH_BODY_MIN_BYTES } from '../../src/server/research-routes.js';
 import { createDrizzleBlobRollbackStore } from '../../src/db/blob-rollback-store.js';
+import { createDrizzleInstanceSettingsStore } from '../../src/db/settings-store.js';
+import { startInstanceSettings, type InstanceSettings } from '../../src/instance/instance-settings.js';
+import type { NutrientReferenceBasis } from '../../src/protocol.js';
 
 export interface HttpResponse<T> {
   status: number;
@@ -113,6 +116,8 @@ export interface SignupThroughInviteInput {
 
 export interface ServiceHarness {
   baseUrl: string;
+  /** The process-local settings surface the app publishes from, so a test can read what `/health` will say. */
+  settings: InstanceSettings;
   authContext: AuthContext;
   mailer: RecordingMailer;
   advance(ms: number): void;
@@ -252,6 +257,22 @@ export interface StartServiceOptions {
    * the routes need is a store and a string to hand a browser.
    */
   push?: { publicKey?: string } | null;
+  /**
+   * `NUTRIENT_REFERENCE_BASIS`, the boot default the settings surface falls
+   * back to (M234). Absent means `dge`, which is what every instance that says
+   * nothing runs on.
+   *
+   * THE REAL DRIZZLE STORE IS ALWAYS WIRED, with no flag beside it, exactly as
+   * the pulse is: every instance has a basis, and a harness that could turn the
+   * surface off would let a `create-app` that forgot to publish it pass a
+   * suite.
+   */
+  nutrientReferenceBasis?: NutrientReferenceBasis;
+  /**
+   * Injected so `settings.test.ts` does not wait a minute for the replica
+   * refresh. Absent is the production interval.
+   */
+  settingsRefreshIntervalMs?: number;
 }
 
 /** The application server key the harness advertises when a suite opts in. Public by definition, and not a real one. */
@@ -333,6 +354,16 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ? null
       : { store: createDrizzlePushStore(options.db), publicKey: options.push.publicKey ?? TEST_VAPID_PUBLIC_KEY };
 
+  // The REAL store against the real table, always: see
+  // `StartServiceOptions.nutrientReferenceBasis`.
+  const settings = await startInstanceSettings({
+    store: createDrizzleInstanceSettingsStore(options.db),
+    fallback: options.nutrientReferenceBasis ?? 'dge',
+    logger: options.logger ?? createSilentLogger(),
+    now: () => new Date(clock),
+    refreshIntervalMs: options.settingsRefreshIntervalMs,
+  });
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(options.db),
@@ -361,6 +392,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     // `null` by default, which takes the whole `/v1/push` subtree away, see
     // `StartServiceOptions.push`.
     push: pushSurface,
+    // `main.ts` wires this the same way: one surface, read by `/health` and
+    // written by `PATCH /v1/admin/settings`.
+    settings,
     // `main.ts` builds this the same way, and the harness mirrors it rather
     // than omitting it: `/health` is the ONLY way a client learns whether this
     // instance can scan a plate at all, so a fixture that left it off would
@@ -394,6 +428,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
 
   const harness: ServiceHarness = {
     baseUrl,
+    settings,
     authContext,
     mailer,
     advance(ms: number) {
@@ -469,6 +504,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       return { status: response.status, body, headers: response.headers };
     },
     async close() {
+      settings.stop();
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     },
   };

@@ -12,7 +12,15 @@
  * kept in step with it.
  */
 import { isLogLevel, type LogLevel } from './logger.js';
-import { INSTANCE_LANGUAGES, isInstanceLanguage, type InstanceLanguage, type OperatorNotice } from './protocol.js';
+import {
+  INSTANCE_LANGUAGES,
+  NUTRIENT_REFERENCE_BASES,
+  isInstanceLanguage,
+  isNutrientReferenceBasis,
+  type InstanceLanguage,
+  type NutrientReferenceBasis,
+  type OperatorNotice,
+} from './protocol.js';
 import type { HttpMailConfig } from './mail/mailer.js';
 import type { AiUpstreamConfig } from './ai/proxy.js';
 import type { PlansUpstreamConfig } from './server/plans-proxy.js';
@@ -326,6 +334,19 @@ export interface ServiceConfig {
    * themselves, outside this service.
    */
   notice: OperatorNotice | null;
+  /**
+   * Which body's micronutrient reference values this instance shows at BOOT
+   * (`NUTRIENT_REFERENCE_BASIS`, default `dge`).
+   *
+   * THE ONLY KNOB IN THIS FILE THAT IS NOT THE LAST WORD (M234). Every other
+   * value here is decided by the environment and changed by a redeploy; this
+   * one is a DEFAULT. An administrator changes the live setting with
+   * `PATCH /v1/admin/settings`, which writes the `instance_settings` row, and
+   * the row wins from the moment it exists. This value is what the service
+   * runs on before the row is read, and what it falls back to when the row
+   * cannot be read at all, see `instance/instance-settings.ts`.
+   */
+  nutrientReferenceBasis: NutrientReferenceBasis;
   logLevel: LogLevel;
 }
 
@@ -516,6 +537,28 @@ function parseInstanceLanguage(env: NodeJS.ProcessEnv): InstanceLanguage {
   if (raw === undefined || raw === '') return 'en';
   if (!isInstanceLanguage(raw)) {
     throw new Error(`Invalid INSTANCE_LANGUAGE: expected ${INSTANCE_LANGUAGES.join('/')}, got "${raw}"`);
+  }
+  return raw;
+}
+
+/** The basis an instance starts on when no `instance_settings` row can be read. */
+export const DEFAULT_NUTRIENT_REFERENCE_BASIS: NutrientReferenceBasis = 'dge';
+
+/**
+ * `NUTRIENT_REFERENCE_BASIS`, the boot default for M234's reference values.
+ *
+ * A TYPO IS A BOOT FAILURE, exactly as `INSTANCE_LANGUAGE` is, and not a
+ * silent fall back to `dge`. The three values name three different sets of
+ * numbers a person is shown beside their food, and an operator who typed
+ * `dach` meant something by it.
+ */
+function parseNutrientReferenceBasis(env: NodeJS.ProcessEnv): NutrientReferenceBasis {
+  const raw = env.NUTRIENT_REFERENCE_BASIS?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return DEFAULT_NUTRIENT_REFERENCE_BASIS;
+  if (!isNutrientReferenceBasis(raw)) {
+    throw new Error(
+      `Invalid NUTRIENT_REFERENCE_BASIS: expected ${NUTRIENT_REFERENCE_BASES.join('/')}, got "${raw}"`,
+    );
   }
   return raw;
 }
@@ -981,6 +1024,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
       DEFAULT_FEEDBACK_MAX_REQUEST_BYTES,
     ),
     notice: parseNotice(env),
+    nutrientReferenceBasis: parseNutrientReferenceBasis(env),
     logLevel: parseLogLevel(env),
   };
 }

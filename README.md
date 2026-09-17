@@ -381,6 +381,7 @@ Under Compose, put the value in `.env`: `docker/compose.yml` already forwards
 `ADMIN_TOKEN` into the container. Compose passes only the variables that file's
 `environment:` block names, so a variable you add to `.env` and nowhere else
 never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
+`NUTRIENT_REFERENCE_BASIS`,
 `SERVER_PUBLIC_URL`, `CLIENT_BASE_URL`, `TRUST_PROXY`, `LOG_LEVEL`,
 `SYNC_SHARING`, `SYNC_RESEARCH`, `DATABASE_SSL`, `SYNC_NOTICE`,
 `SYNC_NOTICE_URL`, `MAIL_API_*`, `UPSTREAM_BASE_URL`, `UPSTREAM_API_KEY`,
@@ -449,7 +450,18 @@ ADMIN_TOKEN=... pnpm sync-api accounts reset-mail 42
 ADMIN_TOKEN=... pnpm sync-api accounts delete 42 --yes
 ADMIN_TOKEN=... pnpm sync-api invites create --email anna@example.org --daily-limit 200
 ADMIN_TOKEN=... pnpm sync-api invites resend 7
+ADMIN_TOKEN=... pnpm sync-api settings get
+ADMIN_TOKEN=... pnpm sync-api settings set nutrient-reference-basis efsa
 ```
+
+`settings` is the one thing here that changes what the instance IS rather than
+what one account may do, and it is the only setting on this service an
+administrator changes without a redeploy. It decides which body's micronutrient
+reference values every client shows, `dge` (the German DGE, the default),
+`efsa` (the EU) or `us` (NASEM). The value is stored in one row, published on
+`GET /health` as `instance.nutrientReferenceBasis`, and read there by each
+client on its next connect. `NUTRIENT_REFERENCE_BASIS` in the environment is
+only the boot default.
 
 The token comes from `ADMIN_TOKEN` and nowhere else: there is no `--token`
 flag, because a credential in argv lands in shell history and is visible in

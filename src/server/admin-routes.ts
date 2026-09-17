@@ -74,7 +74,16 @@ import {
   type InviteSummary,
 } from '../admin/invite-store.js';
 import { invitesLeft, type MemberInvitePolicy } from '../accounts/member-invites.js';
-import { isAccountRole, type AccountRole, type AccountView, type SyncKeyRecordKind } from '../protocol.js';
+import {
+  NUTRIENT_REFERENCE_BASES,
+  isAccountRole,
+  isNutrientReferenceBasis,
+  type AccountRole,
+  type AccountView,
+  type SyncKeyRecordKind,
+} from '../protocol.js';
+import type { InstanceSettingsSurface } from '../instance/instance-settings.js';
+import { handleNotFound } from './error-middleware.js';
 import type { Logger } from '../logger.js';
 import type { Mailer } from '../mail/mailer.js';
 import { parseDisplayName, parseEmail } from '../accounts/auth-input.js';
@@ -624,6 +633,17 @@ export interface AdminRoutesOptions {
    * that no route enforces.
    */
   memberInvites: MemberInvitePolicy | null;
+  /**
+   * The instance's stored settings (M234), or `null` for a build that wires
+   * none, which takes `PATCH /settings` away and leaves it answering the
+   * ordinary unknown-path 404.
+   *
+   * IT IS NOT CONFIGURED HERE, for the reason `aiInstanceDailyLimit` is not:
+   * `create-app.ts` hands over the SAME surface `/health` publishes from, so a
+   * PATCH and the handshake that follows it on this process cannot report two
+   * different bases.
+   */
+  settings: InstanceSettingsSurface | null;
   /** Mints the `sr_` token `POST /accounts/:id/reset-mail` writes. Injected so a test can name it. */
   mintResetToken(): GeneratedToken;
   /** Injected, like every clock in this repo, so a test can pin "today" and an invite's status. */
@@ -1371,6 +1391,65 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       }
       logger.info('Signup invite revoked', { inviteId });
       res.status(204).end();
+    }),
+  );
+
+  /**
+   * `PATCH /v1/admin/settings`, the one endpoint on this service that changes
+   * what an instance is without a redeploy (M234).
+   *
+   * BEHIND THE SAME DOOR AS EVERYTHING ELSE HERE and behind nothing else: the
+   * admin middleware `create-app.ts` mounts in front of this router is what
+   * authenticates it, and the service-principal scope refuses it by default
+   * because it is not in that allow list. A biller may move an allowance; it
+   * may not decide which country's nutrition advice an instance shows.
+   *
+   * THE VALUE IS CHECKED AGAINST THE THREE NAMES, TWICE. Here, so a typo is a
+   * 400 with the alternatives in it and NOTHING is written, and again by the
+   * check constraint on the column, because what this decides is a set of
+   * numbers a person is shown beside their food.
+   *
+   * WHAT IT ANSWERS WITH IS WHAT THE PROCESS NOW HOLDS, read back off the same
+   * surface `/health` publishes from rather than echoed from the request body:
+   * a response that quoted the request would say "changed" for a write that
+   * did not land.
+   */
+  router.patch(
+    '/settings',
+    express.json({ limit: 4 * 1024 }),
+    asyncHandler(async (req, res) => {
+      const settings = options.settings;
+      if (settings === null) {
+        // This build wires no settings surface, so the endpoint does not exist
+        // here: the ordinary unknown-path answer, never a 501 announcing a
+        // feature that is merely off.
+        handleNotFound(req, res);
+        return;
+      }
+
+      // SAFETY: `express.json()` above has already parsed this body, so it is
+      // JSON-shaped by construction; `asObject` re-establishes that at the type
+      // level and yields `null` for anything that is not an object.
+      const body = asObject(req.body as JsonValue) ?? {};
+      const basis = body.nutrientReferenceBasis;
+      if (basis === undefined) {
+        // An empty PATCH is a caller that believes it changed something, and
+        // it is refused for the reason `PATCH /accounts/:id` refuses one.
+        res.status(400).json({ error: 'a patch must name nutrientReferenceBasis' });
+        return;
+      }
+      if (!isNutrientReferenceBasis(basis)) {
+        res.status(400).json({
+          error: `nutrientReferenceBasis must be one of ${NUTRIENT_REFERENCE_BASES.join(', ')}`,
+        });
+        return;
+      }
+
+      await settings.set({ nutrientReferenceBasis: basis });
+      // The choice, never who made it: this is an instance-wide setting and the
+      // value is published unauthenticated on `/health` anyway.
+      logger.info('Instance settings changed by admin', { nutrientReferenceBasis: basis });
+      res.status(200).json({ settings: { nutrientReferenceBasis: settings.current() } });
     }),
   );
 

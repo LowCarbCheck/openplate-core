@@ -10,7 +10,7 @@ import {
   MIN_SERVER_SECRET_LENGTH,
   parseConfig,
 } from '../../src/config.js';
-import { INSTANCE_LANGUAGES } from '../../src/protocol.js';
+import { INSTANCE_LANGUAGES, NUTRIENT_REFERENCE_BASES } from '../../src/protocol.js';
 
 const SECRET = 'x'.repeat(MIN_SERVER_SECRET_LENGTH);
 
@@ -90,6 +90,18 @@ test('INSTANCE_NAME and INSTANCE_LANGUAGE are read, and a bad language is fatal'
     assert.equal(parseConfig(baseEnv({ INSTANCE_LANGUAGE: language })).instanceLanguage, language);
   }
   assert.throws(() => parseConfig(baseEnv({ INSTANCE_LANGUAGE: 'xx' })), /INSTANCE_LANGUAGE/);
+});
+
+test('NUTRIENT_REFERENCE_BASIS defaults to dge, accepts the three, and a typo is fatal', () => {
+  // The default is the one this milestone decided on, and it is what every
+  // instance that says nothing runs on.
+  assert.equal(parseConfig(baseEnv()).nutrientReferenceBasis, 'dge');
+  for (const basis of NUTRIENT_REFERENCE_BASES) {
+    assert.equal(parseConfig(baseEnv({ NUTRIENT_REFERENCE_BASIS: basis })).nutrientReferenceBasis, basis);
+  }
+  // `dach` is the plausible wrong one: a typo here would otherwise show a
+  // person a different country's nutrition targets without saying so.
+  assert.throws(() => parseConfig(baseEnv({ NUTRIENT_REFERENCE_BASIS: 'dach' })), /NUTRIENT_REFERENCE_BASIS/);
 });
 
 test('CLIENT_BASE_URL and SERVER_PUBLIC_URL are absolute http(s) URLs, or fatal', () => {

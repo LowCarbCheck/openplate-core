@@ -78,6 +78,41 @@ test('with the token AND --yes the delete is actually sent, so the guards above 
   assert.deepEqual(server.requests.slice(requestsBefore), ['DELETE /v1/admin/accounts/5']);
 });
 
+test('settings set refuses an unknown key and an unknown value, and sends nothing', async () => {
+  const requestsBefore = server.requests.length;
+
+  const badKey = await runCli({
+    args: ['settings', 'set', 'nutrient-basis', 'efsa', '--url', server.baseUrl],
+    adminToken: ADMIN_TOKEN,
+  });
+  assert.notEqual(badKey.exitCode, 0);
+  assert.ok(badKey.stderr.includes('nutrient-reference-basis'), `stderr must name the key, saw: ${badKey.stderr}`);
+
+  // `dach` is the plausible wrong value, and the one the service refuses too.
+  const badValue = await runCli({
+    args: ['settings', 'set', 'nutrient-reference-basis', 'dach', '--url', server.baseUrl],
+    adminToken: ADMIN_TOKEN,
+  });
+  assert.notEqual(badValue.exitCode, 0);
+  assert.ok(badValue.stderr.includes('dge'), `stderr must list the alternatives, saw: ${badValue.stderr}`);
+
+  assert.equal(server.requests.length, requestsBefore, 'neither typo may reach the network');
+});
+
+test('a valid settings set IS sent, so the refusals above are not vacuous', async () => {
+  const requestsBefore = server.requests.length;
+
+  // The counting server answers `{}`, which this CLI refuses to decode, so the
+  // exit status is not the assertion here. The REQUEST is: it proves the two
+  // refusals above stopped something that would otherwise have gone out.
+  await runCli({
+    args: ['settings', 'set', 'nutrient-reference-basis', 'efsa', '--url', server.baseUrl],
+    adminToken: ADMIN_TOKEN,
+  });
+
+  assert.deepEqual(server.requests.slice(requestsBefore), ['PATCH /v1/admin/settings']);
+});
+
 test('the admin token never appears in the CLI output', async () => {
   const run = await runCli({ args: ['stats', '--url', server.baseUrl], adminToken: ADMIN_TOKEN });
 

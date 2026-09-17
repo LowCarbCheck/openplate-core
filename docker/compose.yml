@@ -78,6 +78,11 @@ services:
       # written in (en | de).
       INSTANCE_NAME: ${INSTANCE_NAME:-openplate}
       INSTANCE_LANGUAGE: ${INSTANCE_LANGUAGE:-en}
+      # Which body's micronutrient reference values it shows: dge | efsa | us.
+      # Only the BOOT default: an administrator changes the live setting with
+      # `pnpm sync-api settings set nutrient-reference-basis efsa`, and the
+      # stored row wins from then on.
+      NUTRIENT_REFERENCE_BASIS: ${NUTRIENT_REFERENCE_BASIS:-dge}
       # Both or neither: they build the link in an invitation and in a
       # password-reset mail. With neither, the admin API returns the raw token.
       SERVER_PUBLIC_URL: ${SERVER_PUBLIC_URL:-}
