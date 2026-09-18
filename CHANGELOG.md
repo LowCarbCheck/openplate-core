@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-18
+
 ### Added
 
 - **The instance chooses whose reference values it shows.**
