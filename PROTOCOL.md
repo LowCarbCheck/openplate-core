@@ -17,7 +17,7 @@ Each repo has a unit test asserting its constants against transcribed literals (
 
 ## 1. The one-paragraph summary
 
-The client holds all the keys. It serializes its whole local store, gzips it, encrypts it with AES-256-GCM under a key the server has never seen, and pushes the result as one opaque blob. The server stores bytes, versions them, and refuses writes that would clobber another device's. It also stores two small **key records** (the same data-encryption key wrapped under two different key-encryption keys, one derived from the user's passphrase and one from a recovery code) so a second device can bootstrap. The server cannot decrypt any of it. That is not a policy; it is what the math permits.
+The client holds all the keys. It serializes its whole local store, gzips it, encrypts it with AES-256-GCM under a key the server has never seen, and pushes the result as one opaque blob. The server stores bytes, versions them, and refuses writes that would clobber another device's. It also stores two small **key records** (the same data-encryption key wrapped under two different key-encryption keys, one derived from the user's passphrase and one from a recovery code) so a second device can bootstrap. No code path on the server decrypts any of it. The server does keep each account's recovery code, sealed under a secret of its own (§3.1), so the operator of a managed instance holds what it takes to open a diary. §9 states exactly what the server knows.
 
 The picture below is one whole session. The version handshake runs first, and it is not
 advisory: on a mismatch, or on a service it cannot reach, the client stops there rather than
@@ -1126,6 +1126,10 @@ either token turns that `404` into the `401` a wrong value gets.
 | `POST /v1/admin/invites/:id/resend`      | A NEW token on the SAME row, and a new expiry                             |
 | `DELETE /v1/admin/invites/:id`           | Withdraws a pending invitation                                            |
 | `PATCH /v1/admin/settings`               | `{"nutrientReferenceBasis": "dge" \| "efsa" \| "us"}`. The instance-wide reference basis (§5.6). Required; anything else is `400` and NOTHING is written. Answers `{"settings": {...}}` with what the instance now holds |
+| `GET /v1/admin/feedback`                 | A page of reported estimates (§5.25), newest first: `{ id, accountId, hasImage, consentWordingVersion, createdAt }` each, plus `total`, `limit` and `offset`. No figures and no photograph |
+| `GET /v1/admin/feedback/:id`             | One report: the list fields, `measurements` exactly as the device sent them, and `consent: { agreedAt, wordingVersion }` |
+| `GET /v1/admin/feedback/:id/image`       | The photograph's bytes under its stored `Content-Type`, with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. `404` when the report has none. Every read is logged with the report id and which credential asked |
+| `DELETE /v1/admin/feedback/:id`          | Deletes the photograph, then the report. `204`, or `404` for an unknown id |
 
 **`PATCH` is the one auth-adjacent write an operator has**, and it is bounded
 deliberately. It cannot set a passphrase, and there is no endpoint that can:
@@ -1315,7 +1319,7 @@ The operator configures `PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, **both
 
 ### 5.23 `/v1/pulse/*`: the community pulse (ADR-0007)
 
-**Opt in on the device, and off until a person turns it on.** Nothing here is derived from a diary the server can read, because it cannot read one. Every number below arrives as a small delta from a device whose owner asked for it, and [ADR-0007](./docs/adr/0007-the-pulse-is-a-named-exception.md) states exactly what leaves the device and why.
+**Opt in on the device, and off until a person turns it on.** Nothing here is derived from a diary: no code path on the server decrypts one. Every number below arrives as a small delta from a device whose owner asked for it, and [ADR-0007](./docs/adr/0007-the-pulse-is-a-named-exception.md) states exactly what leaves the device and why.
 
 Four routes, all behind the account's ordinary **access token** (§4.1). An anonymous caller gets the ordinary `401`.
 
@@ -1438,6 +1442,39 @@ No route ever returns an endpoint or a device key, and the routes log a path, a 
 
 `GET /v1/admin/stats` (§5.20) reports `push: { subscriptions, sentToday }` to the operator, which is two integers and never a row.
 
+### 5.25 `POST /v1/feedback`: a reported estimate (ADR-0006)
+
+**Present only when the operator set `SYNC_FEEDBACK`.** Without it the path answers the ordinary unknown-path `404` to everybody, credentialed or not, and `GET /health` carries no `instance.feedback` (§5.6). A client MUST read `instance.feedback` before it offers a report. It MUST state the retention window that field advertises and no other.
+
+**This is the one write in this protocol that the server can read.** A person who thinks an estimate is wrong sends the figures of that entry. If the device still has the plate photograph, it sends that too. The person must first agree that both leave the device. The server keeps them readable until the window runs out. [ADR-0006](./docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md) explains why this exception exists.
+
+Authenticated with the account's ordinary **access token** (§4.1). An anonymous caller gets the ordinary `401`.
+
+```
+POST /v1/feedback
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "idempotencyKey": "6f1c3a1e-9d7b-4a2f-8b31-0f4e9a2c7d55",
+  "measurements": { "…": "…" },
+  "consent": { "agreedAt": "2026-09-19T08:12:00.000Z", "wordingVersion": "1" },
+  "image": { "contentType": "image/jpeg", "data": "<base64>" }
+}
+
+201 { "reportId": 17, "hasImage": true, "createdAt": "2026-09-19T08:12:03.000Z" }
+```
+
+Seven properties a conforming implementation MUST hold:
+
+1. **Every field except `image` is required.** `idempotencyKey` is 1 to 128 characters after trimming, `consent.wordingVersion` is 1 to 64, and `consent.agreedAt` is an instant. It is stored as the device's own clock and never corrected. The server's `createdAt` sits beside it. `measurements` is a JSON object of at most 16 KB once serialised. The server has no schema for it and MUST NOT grow one: the bound exists so nobody can park a diary in the field. Any other body is `400 {"error":"invalid request body"}`, one sentence for every field.
+2. **`image` is optional, and absent is not an error.** A missing key or `null` means no photograph. The device's photo cache may already have evicted it, and the figures are still worth reviewing. When present, it is `{ "contentType", "data" }`. `contentType` is `image/jpeg`, `image/png` or `image/webp`. It is never `image/svg+xml`, which can carry script. `data` is base64 that decodes to 1 to 5,000,000 bytes. Larger is `413`, and empty or another type is `400`.
+3. **The body limit is `FEEDBACK_MAX_REQUEST_BYTES`**, 8 MB by default, and applies to this route only. It sits above the image cap because base64 grows by a third. A larger body is `413 {"error":"request body exceeds the maximum accepted size"}`.
+4. **The idempotency key makes a retry safe.** It is unique per account. A second submission with an existing key answers `200` with the stored report instead of `201`. It stores no second report and does not count against the daily limit. It writes the photograph again if one was included. That repairs a report whose first photograph write was interrupted.
+5. **A daily limit per account**, `FEEDBACK_DAILY_LIMIT`, 5 by default, counted per UTC day in the same transaction as the insert. Over it is `429 {"error":"daily limit reached: 5 reports per day for this account"}`, which names no identifier.
+6. **What is stored is the photograph, the figures, the consent record, the account id and the arrival time, and nothing else.** Not the request headers, the IP address, the user agent or a device identifier.
+7. **A report and its photograph go after `instance.feedback.retentionDays`** (30 in this implementation, deleted by an hourly sweep), sooner when an operator deletes the report (§5.20), and with the account.
+
 ## 6. Version handshake: required, and required to fail closed
 
 **A client MUST read this document from the service and check it before its first sync of a session.**
@@ -1499,7 +1536,7 @@ The flat five was the whole rule before M224, and it was thin as a safety net: a
 
 ### 9.1 What it cannot know
 
-The server never receives the DEK, either KEK, the passphrase, or the recovery code. It stores `wrappedDek` blobs it has no key for. Decryption is not withheld by policy; it is unavailable.
+The server never receives the DEK, either KEK, or the passphrase. It does receive the recovery code at signup and at every rotation, and keeps that code sealed (§3.1 and the escrow entry in §9.2). No code path in this service derives a key from the code or decrypts a blob. For the service's own code, decryption is unavailable, not withheld. For whoever holds both the database and `SERVER_SECRET`, it is available. That means the operator of a managed instance, or you on your own.
 
 **And it still cannot aggregate one.** The community pulse of §5.23 looks like the server counting meals, and it is not: nothing in §9.2 is derived from a blob, and a deployment where nobody turned the pulse on counts nothing at all. The sums exist because devices whose owners opted in sent them, which is why the pulse is listed below as something the server knows rather than something it works out.
 
@@ -1534,7 +1571,9 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
   without the flag has no table to hold a study graph.
 - **The sharing graph**, on a deployment with `SYNC_SHARING` set (§5.16): which account has granted read access to which other account, when the grant was made, and when the grantee exercises it. That is a relationship graph, and a genuine expansion of what this service knows, and in the setting the feature was built for (a patient and their dietician), an edge in that graph is itself health-adjacent personal data, because it says someone is under care. It is the minimum needed to authorise the read; both ends consent, since the grantor creates the row and the grantee can delete their side; and the edge is hard-deleted on revocation and cascades away when either account is deleted. A deployment that does not set `SYNC_SHARING` stores no such graph and has no table to put one in.
 
-Not knowable from the above: what was eaten, when, how much, or anything else inside the payload.
+- **Reported estimates**, on a deployment with `SYNC_FEEDBACK` set (§5.25, ADR-0006): the figures of each entry a person chose to report, the plate photograph when the device still had one, the account id, the consent record and the arrival time, all readable. They are kept for `instance.feedback.retentionDays`, then deleted by a sweep, and they go with the account. An operator can read them through §5.20, and every read of a photograph is logged. A deployment without the flag has no report and no photograph to hold.
+
+Not knowable from the metadata above: what was eaten, when, how much, or anything else inside the payload. Two entries above do give it away. The sealed recovery code opens the whole diary to whoever also holds `SERVER_SECRET`, and a reported estimate shows the one entry it carries.
 
 ## 10. Implementing an alternative server
 

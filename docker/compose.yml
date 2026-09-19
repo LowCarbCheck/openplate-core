@@ -16,7 +16,7 @@
 # does not depend on where you run from.)
 #
 # An account is an EMAIL ADDRESS plus a passphrase, and it is created by
-# redeeming an invite you addressed to somebody — signup is invite-only,
+# redeeming an invite you addressed to somebody. Signup is invite-only,
 # always. Mail is optional: with none configured, an invitation comes back as a
 # link for you to paste rather than as a letter. The old SMTP and PIGEON_*
 # names are boot failures, not no-ops. See .env.example.
@@ -27,11 +27,11 @@
 # the integration suite use the shared workspace Postgres (see
 # `tests/integration/db-harness.ts`), never this database. If you are an
 # outside contributor with no shared Postgres to point at, bring up
-# `docker/compose.dev.yml` instead — it is a test database only, and it is the
+# `docker/compose.dev.yml` instead. It is a test database only, and it is the
 # one thing in `docker/` a self-hoster can ignore entirely.
 
 # Pin the Compose project name. Without it Compose names the project after
-# this file's parent directory — "docker" — and every container and volume
+# this file's parent directory, "docker", and every container and volume
 # inherits that.
 name: openplate-core
 
@@ -69,7 +69,7 @@ services:
       # host side with SYNC_PORT instead.
       PORT: 3000
       DATABASE_URL: postgres://${POSTGRES_USER:-openplate}:${POSTGRES_PASSWORD:-openplate}@postgres:5432/${POSTGRES_DB:-openplate_sync}
-      SERVER_SECRET: ${SERVER_SECRET:?set SERVER_SECRET in .env — see .env.example}
+      SERVER_SECRET: ${SERVER_SECRET:?set SERVER_SECRET in .env, see .env.example}
       # Signup is INVITE-ONLY, always: there is no mode to set. SIGNUP_MODE and
       # the older SIGNUPS_OPEN are both boot failures, so neither is forwarded
       # here. Mint an invite with `pnpm sync-api invites create --email …`.
@@ -91,12 +91,18 @@ services:
       # per-IP throttle collapses into one bucket anyone can lock for everyone.
       TRUST_PROXY: ${TRUST_PROXY:-0}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Off by default, and each is inert until forwarded here — Compose passes
+      # Off by default, and each is inert until forwarded here: Compose passes
       # only what this block names, so a variable set in `.env` alone never
       # reaches the container.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       SYNC_SHARING: ${SYNC_SHARING:-false}
       SYNC_RESEARCH: ${SYNC_RESEARCH:-false}
+      # Reported estimates. On, this service KEEPS the photograph and the
+      # figures a person reports, readable, for its retention window. The two
+      # limits are per account per UTC day, and per request.
+      SYNC_FEEDBACK: ${SYNC_FEEDBACK:-false}
+      FEEDBACK_DAILY_LIMIT: ${FEEDBACK_DAILY_LIMIT:-5}
+      FEEDBACK_MAX_REQUEST_BYTES: ${FEEDBACK_MAX_REQUEST_BYTES:-8000000}
       # The operator notice: one short sentence /health publishes and the
       # client shows. Empty means no notice. SYNC_NOTICE_URL without
       # SYNC_NOTICE is a boot failure. See .env.example for the length cap.
@@ -117,6 +123,23 @@ services:
       AI_RATE_LIMIT_PER_MINUTE: ${AI_RATE_LIMIT_PER_MINUTE:-20}
       # Sized for a camera photograph after base64, NOT for a stored blob.
       AI_MAX_REQUEST_BYTES: ${AI_MAX_REQUEST_BYTES:-8000000}
+      # The whole instance's AI requests per UTC day. Empty means no ceiling.
+      AI_INSTANCE_DAILY_LIMIT: ${AI_INSTANCE_DAILY_LIMIT:-}
+      # Members inviting people: the first two together or neither, and the
+      # cap only with the pair. Empty means only an administrator invites.
+      MEMBER_INVITE_DAILY_AI_LIMIT: ${MEMBER_INVITE_DAILY_AI_LIMIT:-}
+      MEMBER_INVITE_ALLOWANCE_DAYS: ${MEMBER_INVITE_ALLOWANCE_DAYS:-}
+      MEMBER_INVITE_LIFETIME_CAP: ${MEMBER_INVITE_LIFETIME_CAP:-}
+      # Web push: all three or none. Empty means no notifications.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # Paid plans: the URL and the secret together or neither, and only with
+      # a billing service behind this instance. BILLING_TOKEN is that service's
+      # own scoped credential. Empty means no plans.
+      PLANS_UPSTREAM_URL: ${PLANS_UPSTREAM_URL:-}
+      PLANS_UPSTREAM_SECRET: ${PLANS_UPSTREAM_SECRET:-}
+      BILLING_TOKEN: ${BILLING_TOKEN:-}
       # Only for an EXTERNAL database. The bundled Postgres above speaks plain
       # TCP on the compose network.
       DATABASE_SSL: ${DATABASE_SSL:-false}

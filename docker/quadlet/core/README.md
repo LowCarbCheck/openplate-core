@@ -5,7 +5,7 @@ The files here come from `docker/compose.yml`. They run Postgres and openplate-c
 ## What is in this directory
 
 - `postgres.container`: `docker.io/library/postgres:17-alpine` on the volume below, `pg_isready` healthcheck as `Notify=healthy`. Not published to the host.
-- `sync.container`: openplate-core, `ghcr.io/lowcarbcheck/openplate-core:latest`, published on 3000, `Requires=` and `After=` Postgres, healthcheck against `/health` as `Notify=healthy`. Every optional setting from the compose file (mail, upstream AI, admin token, instance name) is there as an `Environment=` line with its default.
+- `sync.container`: openplate-core, `ghcr.io/lowcarbcheck/openplate-core:latest`, published on 3000, `Requires=` and `After=` Postgres, healthcheck against `/health` as `Notify=healthy`. Every optional setting from the compose file (mail, upstream AI, admin token, instance name, reported estimates, push, plans and member invites) is there as an `Environment=` line with its default.
 - `postgres-data.volume`: the data volume; Podman names it `systemd-postgres-data`.
 - `openplate-core.network`: the private network both join.
 - `README.md`: this file.
@@ -16,7 +16,7 @@ The files here come from `docker/compose.yml`. They run Postgres and openplate-c
 
 - `SERVER_SECRET`: `openssl rand -hex 32`. Back it up with the database; a restored database with a lost secret is one nobody can log into.
 
-You can add any other variable from `.env.example` to the same file (`ADMIN_TOKEN`, `MAIL_API_URL`, `SERVER_PUBLIC_URL`, and so on). A value in the file overrides the `Environment=` default in the unit. Do not set `SIGNUP_MODE` or any `SMTP_*`. The service rejects them at boot.
+Do not put any other setting in this file. Podman gives an `Environment=` line priority over the same key in an environment file. Every other setting already has an `Environment=` line in `sync.container`, so a value here has no effect. Change a setting with a drop-in instead: `sync.container.d/local.conf` beside the unit, with a `[Container]` section and one `Environment=KEY=value` line per key. A later `Environment=` line for the same key replaces the earlier one. Keep the drop-in at mode 600 if it holds a token or a key. Do not set `SIGNUP_MODE` or any `SMTP_*`. The service rejects them at boot.
 
 ## Install
 

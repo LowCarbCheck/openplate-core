@@ -7,6 +7,28 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The compose file forwards every optional setting.**
+  The service read thirteen variables that the shipped `docker/compose.yml`
+  never passed on: `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
+  `FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`, the three
+  `MEMBER_INVITE_*`, the three `VAPID_*`, `PLANS_UPSTREAM_URL`,
+  `PLANS_UPSTREAM_SECRET` and `BILLING_TOKEN`. A value set for one of them in
+  `.env` was ignored without a word. Each now has a line in the `sync`
+  service's `environment:` block. Its default parses exactly like the
+  unset variable. The generated Quadlet unit carries the same lines.
+- **The Quadlet README said the wrong file wins.** It said a value in
+  `openplate-core.env` overrides a unit's `Environment=` line. Podman does the
+  opposite, so a setting put there had no effect. It now tells you to change a
+  setting with a drop-in.
+- **`PROTOCOL.md` documents reported estimates, and no longer says the server
+  cannot decrypt.** §5.25 specifies `POST /v1/feedback`. §5.20 lists the four
+  `/v1/admin/feedback` routes. §1, §5.23 and §9.1 said the server cannot
+  decrypt a diary and never receives the recovery code. Since protocol 2 the
+  server keeps that code sealed, and those sections now match §3.1 and §9.2.
+  §9.2 also lists reported estimates among what the server knows.
+
 ## [0.17.0] - 2026-09-18
 
 ### Added

@@ -19,6 +19,9 @@ Environment=LOG_LEVEL=info
 Environment=ADMIN_TOKEN=
 Environment=SYNC_SHARING=false
 Environment=SYNC_RESEARCH=false
+Environment=SYNC_FEEDBACK=false
+Environment=FEEDBACK_DAILY_LIMIT=5
+Environment=FEEDBACK_MAX_REQUEST_BYTES=8000000
 Environment=SYNC_NOTICE=
 Environment=SYNC_NOTICE_URL=
 Environment=MAIL_API_URL=
@@ -30,6 +33,16 @@ Environment=UPSTREAM_TIMEOUT_MS=120000
 Environment=AI_ADVERTISED_MODEL=
 Environment=AI_RATE_LIMIT_PER_MINUTE=20
 Environment=AI_MAX_REQUEST_BYTES=8000000
+Environment=AI_INSTANCE_DAILY_LIMIT=
+Environment=MEMBER_INVITE_DAILY_AI_LIMIT=
+Environment=MEMBER_INVITE_ALLOWANCE_DAYS=
+Environment=MEMBER_INVITE_LIFETIME_CAP=
+Environment=VAPID_PUBLIC_KEY=
+Environment=VAPID_PRIVATE_KEY=
+Environment=VAPID_SUBJECT=
+Environment=PLANS_UPSTREAM_URL=
+Environment=PLANS_UPSTREAM_SECRET=
+Environment=BILLING_TOKEN=
 Environment=DATABASE_SSL=false
 EnvironmentFile=openplate-core.env
 HealthCmd=["node","-e","fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

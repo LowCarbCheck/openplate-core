@@ -264,9 +264,8 @@ Leave `SYNC_FEEDBACK` unset and none of this exists. The whole `/v1/feedback`
 subtree answers the same `404` any unknown path does, to everybody, with or
 without a valid token.
 
-The shipped `docker/compose.yml` does not forward `SYNC_FEEDBACK` or the two
-limits. Under Compose, add them to the `sync` service's `environment:` block, or
-the value in `.env` never reaches the service.
+Under Compose, set them in `.env`. The shipped `docker/compose.yml` forwards
+`SYNC_FEEDBACK` and both limits to the service.
 
 ### The two letters are the whole of what it sends
 
@@ -274,8 +273,8 @@ An invitation and a password reset. Neither is a channel for anything else:
 there is no breach notification, no "this instance is moving", no "your account
 will be deleted on Friday". The bound is deliberate rather than unfinished. A
 service that can send arbitrary mail grows a notification system, and a
-notification system is a reason to keep reaching for the address column beside a
-diary the operator cannot read.
+notification system is a reason to keep reaching for the address column beside
+an encrypted diary.
 
 **So if you need to reach your users about anything else, keep that list
 yourself, outside this service.** You already know who they are: you addressed
@@ -315,7 +314,7 @@ Your reverse proxy must also allow request bodies of about **2.75 MB**. Blobs ar
   `/v1/sync/study` endpoints, which is what brings the openplate client's `/study` console to
   life, and makes this server hold a study graph of health-adjacent personal data.
   Read [`.env.example`](./.env.example) before you set it; it is a different undertaking from
-  holding ciphertext you cannot read.
+  holding ciphertext.
 
 Also worth knowing: **`ADMIN_TOKEN`** is the operator's break-glass credential, and it is optional. An account with `role: "admin"` reaches `/v1/admin` with its own access token, which is what puts the console in the app rather than in a shell. With neither configured nor existing, the whole `/v1/admin` tree answers the ordinary unknown-path 404, not a 401, which would announce that a credential exists here worth guessing.
 
@@ -416,19 +415,15 @@ never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
 `SERVER_PUBLIC_URL`, `CLIENT_BASE_URL`, `TRUST_PROXY`, `LOG_LEVEL`,
 `SYNC_SHARING`, `SYNC_RESEARCH`, `DATABASE_SSL`, `SYNC_NOTICE`,
 `SYNC_NOTICE_URL`, `MAIL_API_*`, `UPSTREAM_BASE_URL`, `UPSTREAM_API_KEY`,
-`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL`, `AI_RATE_LIMIT_PER_MINUTE` and
-`AI_MAX_REQUEST_BYTES` are forwarded there too. If you run your own Compose file
-rather than the one in `docker/`, name each variable you rely on in its
-`environment:` block.
-
-**The shipped file does not forward these.** Each one you use needs its own line
-in that block, matching the format of the others
-(`SYNC_FEEDBACK: ${SYNC_FEEDBACK:-}`): `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
+`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL`, `AI_RATE_LIMIT_PER_MINUTE`,
+`AI_MAX_REQUEST_BYTES`, `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
 `FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`,
 `MEMBER_INVITE_DAILY_AI_LIMIT`, `MEMBER_INVITE_ALLOWANCE_DAYS`,
 `MEMBER_INVITE_LIFETIME_CAP`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
 `VAPID_SUBJECT`, `PLANS_UPSTREAM_URL`, `PLANS_UPSTREAM_SECRET` and
-`BILLING_TOKEN`.
+`BILLING_TOKEN` are forwarded there too. If you run your own Compose file
+rather than the one in `docker/`, name each variable you rely on in its
+`environment:` block.
 
 What it can never do, by design rather than by default:
 
@@ -481,7 +476,7 @@ erase or promote accounts. Generate it as you would `ADMIN_TOKEN`. Values under
 
 ## How it works
 
-The client encrypts your data before it ever leaves the device, using a key derived from your passphrase; the server only ever sees and stores opaque ciphertext blobs and wrapped key records, never a passphrase or a key that could decrypt them. This is a zero-knowledge design: authentication and sync both work without the server holding anything that unwraps your data.
+The client encrypts your data before it leaves the device, under a key derived from your passphrase. The server stores opaque ciphertext blobs and wrapped key records. It never receives your passphrase or a key that decrypts them. It does hold one thing that can open them: each account's recovery code, sealed under `SERVER_SECRET`, so that a forgotten password restores the diary. Whoever holds both the database and that secret can open any account on the instance. On a self-hosted instance, that is you. No code path in this service decrypts a diary.
 
 Full detail, including the exact protocol, HKDF labels, and token lifetimes: [`PROTOCOL.md`](./PROTOCOL.md).
 
