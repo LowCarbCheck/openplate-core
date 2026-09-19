@@ -4,9 +4,9 @@ The account service for [openplate](https://github.com/LowCarbCheck/openplate). 
 
 **What this server holds, in one paragraph.** An email address, an opaque ciphertext blob per account, wrapped key records it cannot unwrap, and each account's recovery code sealed under a key in the environment. It cannot read the ciphertext, not as a policy, but as a consequence of never receiving a key: your passphrase never leaves your device, and what reaches the server is a derived value that authenticates you and decrypts nothing. The escrowed recovery code is the deliberate exception, and it is what makes "forgot password" restore the diary rather than only the login. **It also means the operator of a hosted instance can open any account on it**, not through an endpoint, there is none, but by reading that column with `SERVER_SECRET` in hand. A self-hosted instance is its own operator. The full argument, including what it costs and why it was taken, is [ADR-0005](./docs/adr/0005-organization-accounts-and-escrowed-recovery.md).
 
-**And four places the zero-knowledge claim does not hold.** All four are optional, all four are off until somebody turns them on, and they are not the same kind of thing.
+**And five places the zero-knowledge claim does not hold.** All five are optional, all five are off until somebody turns them on, and they are not the same kind of thing.
 
-The first is the AI proxy. If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged: not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. It SEES a photograph and keeps nothing. Leave `UPSTREAM_API_KEY` unset and the route does not exist.
+The first is the AI proxy. If the operator configures a provider key, this service proxies the app's food-photo requests to that provider at `POST /v1/chat/completions`, so the photograph and the model's answer cross this process. Neither is written, cached or logged: not the body, not a prefix, not a decoded buffer. What a log line carries is an account id, an upstream status, byte counts and a duration. It SEES a photograph and keeps nothing. Leave `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY` unset, and the route does not exist.
 
 The second is reported estimates. With `SYNC_FEEDBACK` on, a person who saw a wrong measurement can send that entry's figures and its photograph here, having agreed to it in plain words, and this service KEEPS what it is given: the photograph sits in the operator's database and the operator can look at it. That is a different undertaking from holding ciphertext nobody can read, and [ADR-0006](./docs/adr/0006-a-reported-photograph-is-the-second-hole-in-the-claim.md) states both holes side by side. Leave `SYNC_FEEDBACK` unset and the whole `/v1/feedback` subtree answers the ordinary unknown-path 404.
 
@@ -14,7 +14,9 @@ The third is the community pulse. A person who turns it on in the app sends thre
 
 The fourth is push scheduling. With `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` set, a person can register a device at `/v1/push` and ask for two things: a morning catch-up at a minute of their own local day, and an alert when a fast reaches its target. The server stores one row per device: where to send, in which zone, at which minute, when it was last seen, and the instant it asked to be woken. What it never stores is a word of what the notification says. Every push carries a kind, `{"kind":"catch-up"}` or `{"kind":"fast-target"}`, and the device writes the sentence out of the diary only it can read. At most two pushes a day per device, nothing at all for somebody who has not opened the app in seven days, and a subscription the push service disowns is deleted. [ADR-0008](./docs/adr/0008-push-is-a-scheduling-exception.md) states all four holes side by side, including the fact that a `wake_at` row and the pulse's presence row describe the same fast. Leave the three variables unset and the whole `/v1/push` subtree answers the ordinary unknown-path 404.
 
-**One opinion about a blob, and it is not a fifth hole.** This service used to accept any correctly versioned blob without looking at it at all. Since M224 it refuses one shape: a push whose ciphertext is under half the size of the stored one, unless the request explicitly says the deletion is intended. A person lost her whole diary to a client that found its local store evicted, concluded she had deleted everything, and pushed a tombstone per entry, and a second device then pulled that blob and deleted its own rows. The guard compares two byte counts this service already stored for the storage figure it already reports, so it learns nothing new about anybody; what it gives up is the claim to be a store with no opinion. An operator can put an account back with `pnpm sync-api accounts rollback`, and [`docs/operations/restoring-a-wiped-diary.md`](./docs/operations/restoring-a-wiped-diary.md) is the procedure, including the step on the person's own devices that the rollback cannot do. [ADR-0009](./docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md) states what it costs when it is wrong.
+The fifth is the plans pass-through. With `PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET` both set, a signed-in request to `/v1/plans/*` goes on to the one plans service the operator configured. This service tells that plans service who is asking. Every forwarded request carries `X-Account-Id`, `X-Account-Email` read from the account row, and `X-Plans-Secret`. All three are built here, and none are copied from the request. The caller's own token is never forwarded. An address stored here is sent, on every call, to a second service. Leave both variables unset, and the whole `/v1/plans` subtree answers the ordinary unknown-path 404. [Paid plans](#paid-plans-and-what-the-plans-service-can-reach) has the details.
+
+**One opinion about a blob, and it is not a sixth hole.** This service used to accept any correctly versioned blob without looking at it at all. Since M224 it refuses one shape: a push whose ciphertext is under half the size of the stored one, unless the request explicitly says the deletion is intended. A person lost her whole diary to a client that found its local store evicted, concluded she had deleted everything, and pushed a tombstone per entry, and a second device then pulled that blob and deleted its own rows. The guard compares two byte counts this service already stored for the storage figure it already reports, so it learns nothing new about anybody; what it gives up is the claim to be a store with no opinion. An operator can put an account back with `pnpm sync-api accounts rollback`, and [`docs/operations/restoring-a-wiped-diary.md`](./docs/operations/restoring-a-wiped-diary.md) is the procedure, including the step on the person's own devices that the rollback cannot do. [ADR-0009](./docs/adr/0009-a-shrinking-blob-is-acknowledged-or-refused.md) states what it costs when it is wrong.
 
 **Start with [`PROTOCOL.md`](./PROTOCOL.md).** It is the normative specification of the wire protocol, written so a third party can implement either side of it without reading this code: an alternative client against this service, or an alternative server that an openplate client can be pointed at with `SYNC_SERVER_URL`.
 
@@ -81,7 +83,7 @@ Then point your openplate app at it by setting `SYNC_SERVER_URL` to this service
 An account is an **email address plus a passphrase**, and it is created by redeeming an invite you addressed to somebody. There is no open registration and no closed mode: the invite is the only door.
 
 ```bash
-pnpm sync-api invites create --email anna@example.org --name "Anna"
+pnpm sync-api invites create --email anna@example.org --display-name "Anna"
 ```
 
 That prints a link (or, if you configured no `CLIENT_BASE_URL`, the raw token) **once**. It is not stored, only its digest is. One invite creates one account, at the address it names, and a failed attempt does not spend it.
@@ -112,6 +114,7 @@ UPSTREAM_API_KEY=sk-...            # both, or neither. One alone is a boot failu
 AI_ADVERTISED_MODEL=some/model     # optional, advertising copy for the app
 AI_RATE_LIMIT_PER_MINUTE=20        # per account, default 20
 UPSTREAM_TIMEOUT_MS=120000         # per request, default two minutes
+AI_INSTANCE_DAILY_LIMIT=2000       # optional, whole instance, per UTC day
 ```
 
 With both set, a signed-in account posts an ordinary OpenAI-compatible request
@@ -125,7 +128,7 @@ invite hands out no AI at all unless you say otherwise, so an operator who
 mints an ordinary invitation has not given away their provider key by accident:
 
 ```bash
-pnpm sync-api invites create --email anna@example.org --name Anna --daily-limit 200
+pnpm sync-api invites create --email anna@example.org --display-name Anna --daily-ai-limit 200
 pnpm sync-api accounts set-limit 42 200      # or change it later
 pnpm sync-api accounts set-limit 42 0        # or turn it off
 ```
@@ -147,6 +150,29 @@ different bound for a different failure: a stuck client that retries on every
 error would otherwise spend a whole day's allowance in ten seconds, and the
 first thing the person sees is that the feature stopped working.
 
+**The whole instance can have a ceiling as well.** The allowance and the minute
+limiter both count per account. Ten accounts at 200 requests a day equal 2000
+requests a day on your provider key. `AI_INSTANCE_DAILY_LIMIT` caps the instance
+in requests per UTC day. A request consumes from the instance ceiling first and
+from the account allowance second. A full instance never spends an individual
+user's allowance. At the ceiling, the proxy answers `503 ai-instance-ceiling`,
+with `Retry-After` naming the next UTC midnight. Unset means no ceiling, which
+is the default. `0` stops the boot rather than turning AI off. To disable AI
+completely, unset `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY`. The ceiling is not
+published on `/health`. `GET /v1/admin/stats` reports it to you.
+
+**Members can hand out an AI trial, if you let them.** Set
+`MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`, both or
+neither. An ordinary member can then invite someone through
+`POST /v1/auth/invites`. The invited account receives that many AI requests per
+UTC day, for that many days after signup. `MEMBER_INVITE_LIFETIME_CAP`, default
+5, sets how many invitations one member may create. Once an allowance expires,
+the proxy answers `403 allowance-expired`, while sync keeps working. With
+neither variable set, the route answers the ordinary unknown-path 404.
+openplate's
+[configuration guide](https://github.com/LowCarbCheck/openplate/blob/main/docs/configuration.md#member-invites)
+has the full rules.
+
 **The counters are kept for 90 days and then deleted.** Spending is recorded as
 one integer per account per UTC day, and nothing else: no prompt, no response,
 no model, no time of day. An hourly sweep inside the service deletes every row
@@ -157,9 +183,10 @@ statement as the rest of the erasure. Ninety days is also the longest activity
 window `/admin` will show you for one person, so a strip you read is never
 zeroes standing in for rows that expired.
 
-Leave `UPSTREAM_API_KEY` unset and none of this exists. The route answers the
-same `404` any unknown path does, and `/health` reports `instance.ai: null` so
-the app knows not to offer a scan.
+Leave `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY` unset, and none of this exists.
+If you set one without the other, the service refuses to boot. The route answers
+with the same `404` any unknown path returns. `/health` reports
+`instance.ai: null`, so the app knows not to offer a scan.
 
 Setting any of the removed variables (`SIGNUP_MODE`, `SIGNUPS_OPEN`, `EMAIL_FROM`, `SMTP_*`, `PIGEON_*`, `REQUIRE_EMAIL_VERIFICATION`) is a **boot failure**, not a no-op. See [`.env.example`](./.env.example) for why refusing to start is the safer answer.
 
@@ -236,6 +263,10 @@ image store for the bytes afterwards rather than by trusting the cascade.
 Leave `SYNC_FEEDBACK` unset and none of this exists. The whole `/v1/feedback`
 subtree answers the same `404` any unknown path does, to everybody, with or
 without a valid token.
+
+The shipped `docker/compose.yml` does not forward `SYNC_FEEDBACK` or the two
+limits. Under Compose, add them to the `sync` service's `environment:` block, or
+the value in `.env` never reaches the service.
 
 ### The two letters are the whole of what it sends
 
@@ -385,10 +416,19 @@ never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
 `SERVER_PUBLIC_URL`, `CLIENT_BASE_URL`, `TRUST_PROXY`, `LOG_LEVEL`,
 `SYNC_SHARING`, `SYNC_RESEARCH`, `DATABASE_SSL`, `SYNC_NOTICE`,
 `SYNC_NOTICE_URL`, `MAIL_API_*`, `UPSTREAM_BASE_URL`, `UPSTREAM_API_KEY`,
-`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL` and `AI_RATE_LIMIT_PER_MINUTE` are
-forwarded there too. If you run your own Compose file
+`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL`, `AI_RATE_LIMIT_PER_MINUTE` and
+`AI_MAX_REQUEST_BYTES` are forwarded there too. If you run your own Compose file
 rather than the one in `docker/`, name each variable you rely on in its
 `environment:` block.
+
+**The shipped file does not forward these.** Each one you use needs its own line
+in that block, matching the format of the others
+(`SYNC_FEEDBACK: ${SYNC_FEEDBACK:-}`): `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
+`FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`,
+`MEMBER_INVITE_DAILY_AI_LIMIT`, `MEMBER_INVITE_ALLOWANCE_DAYS`,
+`MEMBER_INVITE_LIFETIME_CAP`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+`VAPID_SUBJECT`, `PLANS_UPSTREAM_URL`, `PLANS_UPSTREAM_SECRET` and
+`BILLING_TOKEN`.
 
 What it can never do, by design rather than by default:
 
@@ -407,6 +447,35 @@ What it can never do, by design rather than by default:
 
 The reasoning in full is in
 [`docs/adr/0001-an-admin-api-for-a-zero-knowledge-service.md`](./docs/adr/0001-an-admin-api-for-a-zero-knowledge-service.md).
+
+### Paid plans, and what the plans service can reach
+
+**Off by default, and nothing in this repository takes a payment.** If you sell
+plans, run a plans service of your own. This service handles two tasks for it.
+
+**It forwards `/v1/plans/*`.** Set `PLANS_UPSTREAM_URL` and
+`PLANS_UPSTREAM_SECRET`, both or neither. A signed-in account's `GET` or `POST`
+under that prefix goes to your plans service, and the answer returns. Any other
+method returns a `405` that never leaves this host. With neither set, the whole
+subtree answers the ordinary unknown-path `404`. The headers sent upstream are
+built here, never copied from the request: `X-Account-Id` from the session,
+`X-Account-Email` from the account row, `X-Plans-Secret` from
+`PLANS_UPSTREAM_SECRET`, and the request's `Content-Type`. The caller's own
+token is never forwarded, so a stolen token cannot be used there. `/health`
+reports `instance.plans: true` when the subtree exists. The app reads that
+before it shows a plan screen.
+[PROTOCOL.md §5.22](./PROTOCOL.md#522-v1plans-the-pass-through-to-a-biller) is the contract.
+
+**It gives the plans service a narrow admin credential.** `BILLING_TOKEN`
+provides a third credential for `/v1/admin`, beside the two above. An allowlist
+limits everything it can do: `GET /v1/admin/accounts/expiring`,
+`GET /v1/admin/accounts/:id`, and `PATCH /v1/admin/accounts/:id` naming only
+`allowanceExpiresAt` and `dailyAiLimit`. Every other admin route answers it
+`403 service-scope`. A `PATCH` naming any other field is refused completely and
+writes nothing. It can change an allowance and its end date. It cannot suspend,
+erase or promote accounts. Generate it as you would `ADMIN_TOKEN`. Values under
+24 characters cause a boot failure. Once set, an invalid credential on
+`/v1/admin` gets a `401` rather than the `404` described above.
 
 ---
 
@@ -448,10 +517,13 @@ ADMIN_TOKEN=... pnpm sync-api accounts set-limit 42 200
 ADMIN_TOKEN=... pnpm sync-api accounts suspend 42
 ADMIN_TOKEN=... pnpm sync-api accounts reset-mail 42
 ADMIN_TOKEN=... pnpm sync-api accounts delete 42 --yes
-ADMIN_TOKEN=... pnpm sync-api invites create --email anna@example.org --daily-limit 200
+ADMIN_TOKEN=... pnpm sync-api accounts blob-versions 42
+ADMIN_TOKEN=... pnpm sync-api accounts rollback 42 --to-version 5 --yes
+ADMIN_TOKEN=... pnpm sync-api invites create --email anna@example.org --daily-ai-limit 200
 ADMIN_TOKEN=... pnpm sync-api invites resend 7
 ADMIN_TOKEN=... pnpm sync-api settings get
 ADMIN_TOKEN=... pnpm sync-api settings set nutrient-reference-basis efsa
+pnpm sync-api push keygen
 ```
 
 `settings` is the one thing here that changes what the instance IS rather than
@@ -463,11 +535,20 @@ reference values every client shows, `dge` (the German DGE, the default),
 client on its next connect. `NUTRIENT_REFERENCE_BASIS` in the environment is
 only the boot default.
 
+`accounts blob-versions` and `accounts rollback` restore a diary that a client
+wiped. The first lists the blob versions the service still holds. The second
+makes an older version current again and deletes every version above it. Read
+[`docs/operations/restoring-a-wiped-diary.md`](./docs/operations/restoring-a-wiped-diary.md)
+before you run the rollback, because the server side alone does not finish the
+repair. `push keygen` prints a fresh VAPID key pair for `VAPID_PUBLIC_KEY` and
+`VAPID_PRIVATE_KEY`, once. It contacts nothing and is the one command that needs
+no `ADMIN_TOKEN`.
+
 The token comes from `ADMIN_TOKEN` and nowhere else: there is no `--token`
 flag, because a credential in argv lands in shell history and is visible in
 `ps`. The target is `--url`, then `SYNC_SERVER_URL`, then
-`http://localhost:3000`. Deletion requires `--yes`. The CLI is not part of the
-Docker image.
+`http://localhost:3000`. `accounts delete`, `accounts rollback` and
+`invites revoke` require `--yes`. The CLI is not part of the Docker image.
 
 Two optional conveniences:
 
