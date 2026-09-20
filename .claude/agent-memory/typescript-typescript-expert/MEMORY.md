@@ -27,7 +27,9 @@
 
 - [openplate app gate gotchas](project_openplate_app_gate_gotchas.md): an English-only i18n key reddens the gate, and the settings hub fixture is frozen
 - [openplate app anti-slop lint](project_openplate_app_anti_slop_lint.md): Record<K,string> annotations and Record<string,unknown> are lint errors, in tests too
+- [A third i18n namespace reddens the German rebuild](project_openplate_app_i18n_third_namespace.md): namespaces are discovered, not listed, and a JSON key hoists at "10"
 - [An openplate-notify grep counts peer comments](project_openplate_notify_grep_check_reads_peer_comments.md): push-decision.ts names the literal in prose and breaks the check
+- [openplate app e2e and build traps](project_openplate_app_e2e_and_build_traps.md): Playwright cannot load a JSON module, prettier is not in the gate, and BUILD.version can be missing from releases.json
 
 ## Feedback
 

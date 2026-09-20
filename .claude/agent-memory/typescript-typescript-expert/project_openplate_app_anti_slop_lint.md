@@ -22,6 +22,17 @@ JS plugin over `app/` AND `tests/`. Two rules bite on ordinary-looking code:
   zod schema at the I/O boundary and export `z.infer` as the type.
 - `no-shape-in-symbol-names`: a variable called `shapes` is an error.
 
+`oxc/no-map-spread` runs beside them: a `flatMap` whose callback returns an
+array literal with a `...spread` inside is an error, in tests too. Write the
+`for` loop with `push` instead.
+
+PRETTIER IS NOT A GATE STAGE, and two files fail it at HEAD. `.githooks/pre-push`
+runs docs manifest, quadlet, changelog, lint, typecheck, unit, integration,
+build, e2e, and never prettier. `AGENTS.md` and `.adr/README.md` both carry a
+ragged ADR index table that `prettier --check` rejects today, so a new row goes
+on its own line in the existing ragged style and you compare against
+`git show HEAD:<file>` before calling a prettier warning yours.
+
 `unicorn` runs beside it, and `prefer-add-event-listener` makes
 `request.onsuccess = ...` on an `IDBRequest` an error. Use
 `request.addEventListener('success', fn, { once: true })`; `fake-indexeddb`
