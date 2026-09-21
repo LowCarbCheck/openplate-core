@@ -7,6 +7,32 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-21
+
+### Added
+
+- **The service now takes a cancellation or a withdrawal from anyone, with no
+  login.** `POST /v1/legal/declarations` is always mounted, and it accepts the
+  two declarations German law obliges a seller to accept, the cancellation of
+  § 312k BGB and the withdrawal of § 356a BGB. The declaration is written to a
+  new `legal_declarations` table before anything else runs, so nothing later
+  can lose it, and a lookup by the typed address records the matching account
+  when there is one. The forward to the billing service and the two letters, a
+  receipt to the person and an alert to the operator, are all best effort. The
+  answer is the same `202` whether or not an address matched an account, so it
+  tells a caller nothing about who holds an account. Migration `0018` creates
+  the table and a rate limit caps what one address and one address range can
+  send. ([77e84cd](https://github.com/LowCarbCheck/openplate-core/commit/77e84cd))
+
+### Changed
+
+- **The mail block takes a fourth variable, `MAIL_OPERATOR_EMAIL`.** The block
+  is all or nothing, so an instance that sends mail must now set this address
+  as well, and it is where the alert for each declaration goes. An instance
+  that sends no mail is unaffected. The shipped `docker/compose.yml` and the
+  generated Quadlet unit both carry the
+  line. ([77e84cd](https://github.com/LowCarbCheck/openplate-core/commit/77e84cd)) ([35ed53c](https://github.com/LowCarbCheck/openplate-core/commit/35ed53c))
+
 ## [0.17.1] - 2026-09-20
 
 ### Fixed
