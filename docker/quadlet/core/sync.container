@@ -27,6 +27,7 @@ Environment=SYNC_NOTICE_URL=
 Environment=MAIL_API_URL=
 Environment=MAIL_API_KEY=
 Environment=MAIL_API_FROM=
+Environment=MAIL_OPERATOR_EMAIL=
 Environment=UPSTREAM_BASE_URL=
 Environment=UPSTREAM_API_KEY=
 Environment=UPSTREAM_TIMEOUT_MS=120000
