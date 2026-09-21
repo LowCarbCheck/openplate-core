@@ -51,6 +51,7 @@ import { createDrizzlePushStore } from './push/push-store.js';
 import { createWebPushSender } from './push/web-push-sender.js';
 import { PUSH_DAILY_SEND_CAP, startPushScheduler } from './push/push-scheduler.js';
 import { createApp } from './server/create-app.js';
+import { createDrizzleLegalDeclarationsStore } from './legal/legal-declarations-store.js';
 import type { AuthContext } from './accounts/auth-handlers.js';
 import type { InstanceInfo } from './protocol.js';
 import { SERVICE_VERSION } from './version.js';
@@ -300,6 +301,9 @@ async function main(): Promise<void> {
     pulse,
     push,
     settings,
+    // ALWAYS BUILT, no flag beside it, exactly as `pulse` is: the two
+    // statutory buttons exist on every instance. See `server/create-app.ts`.
+    legal: { store: createDrizzleLegalDeclarationsStore(database.db) },
   });
 
   // NO HOST MEANS EVERY INTERFACE, and that is the production default on

@@ -164,6 +164,7 @@ test('the mail block is all-or-nothing, and a gap names the missing variable', (
     MAIL_API_URL: 'http://pigeon:3601/v1/emails',
     MAIL_API_KEY: 'a-pigeon-tenant-key',
     MAIL_API_FROM: 'openplate <openplate@mail.openplate.de>',
+    MAIL_OPERATOR_EMAIL: 'operator@example.org',
     SERVER_PUBLIC_URL: 'https://sync.openplate.de',
     CLIENT_BASE_URL: 'https://openplate.de',
   };
@@ -171,13 +172,14 @@ test('the mail block is all-or-nothing, and a gap names the missing variable', (
     url: 'http://pigeon:3601/v1/emails',
     apiKey: 'a-pigeon-tenant-key',
     from: 'openplate <openplate@mail.openplate.de>',
+    operatorEmail: 'operator@example.org',
   });
 
   // A HALF-CONFIGURED BLOCK IS A BOOT FAILURE, and the message NAMES the
   // missing variable. The alternative is an operator who believes invitations
   // are being delivered while every one of them silently comes back as a link
   // nobody looks at.
-  for (const missing of ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM'] as const) {
+  for (const missing of ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM', 'MAIL_OPERATOR_EMAIL'] as const) {
     const env = baseEnv(complete);
     delete env[missing];
     assert.throws(() => parseConfig(env), new RegExp(missing), `${missing} missing must be fatal`);
@@ -197,12 +199,13 @@ test('the mail block is all-or-nothing, and a gap names the missing variable', (
 });
 
 test('configured mail without the two link bases is a boot failure', () => {
-  // Both letters exist to carry a link, so mail with nowhere to point is a
-  // letter with nothing in it to click.
+  // Both account letters exist to carry a link, so mail with nowhere to point
+  // is a letter with nothing in it to click.
   const mailOnly = {
     MAIL_API_URL: 'http://pigeon:3601/v1/emails',
     MAIL_API_KEY: 'k',
     MAIL_API_FROM: 'f',
+    MAIL_OPERATOR_EMAIL: 'operator@example.org',
   };
   assert.throws(() => parseConfig(baseEnv(mailOnly)), /SERVER_PUBLIC_URL/);
   assert.throws(

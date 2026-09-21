@@ -104,6 +104,8 @@ import type { PulseStore } from '../pulse/pulse-store.js';
 import { PUSH_API_PREFIX, registerPushRoutes } from './register-push-routes.js';
 import type { PushStore } from '../push/push-store.js';
 import { registerPlansRoutes, type PlansUpstreamConfig } from './plans-proxy.js';
+import { registerLegalDeclarationsRoute } from './legal-declarations.js';
+import type { LegalDeclarationsStore } from '../legal/legal-declarations-store.js';
 import type { FeedbackAdminStore } from '../feedback/feedback-admin-store.js';
 import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
 import type { FeedbackStore } from '../feedback/feedback-store.js';
@@ -328,6 +330,27 @@ export interface CreateAppOptions {
    * never reach the database.
    */
   settings?: InstanceSettingsSurface | null;
+  /**
+   * `POST /v1/legal/declarations` (M214/09), REQUIRED, AND THERE IS NO FLAG,
+   * unlike every optional surface above. §312k Absatz 6 BGB makes the absence
+   * of a working cancellation button the expensive outcome — it voids the
+   * notice-period term for every customer it touches — so this route is
+   * mounted on every instance whether or not a biller (`plans` above) stands
+   * behind it. See `server/legal-declarations.ts`.
+   */
+  legal: LegalDeclarationsSurfaceOptions;
+}
+
+/** What the two statutory buttons need to exist. */
+export interface LegalDeclarationsSurfaceOptions {
+  store: LegalDeclarationsStore;
+  /**
+   * Requests one IP may file per minute. Absent means
+   * `LEGAL_DECLARATIONS_RATE_LIMIT_PER_MINUTE`, which is what every real
+   * instance runs on; a harness that is not ABOUT the limiter sets this high,
+   * exactly as `AiSurfaceOptions.perMinute` does.
+   */
+  rateLimitPerMinute?: number;
 }
 
 export function createApp(options: CreateAppOptions): Express {
@@ -609,6 +632,21 @@ export function createApp(options: CreateAppOptions): Express {
       logger: options.logger,
     });
   }
+
+  // THE TWO STATUTORY BUTTONS (M214/09), ALWAYS MOUNTED. Unlike the plans
+  // pass-through just above, this route does not need one configured: an
+  // absent `plans` here means every declaration is still persisted and
+  // mailed, and stamped `forward_error: 'plans-not-configured'`, not a 404.
+  // See `server/legal-declarations.ts`.
+  registerLegalDeclarationsRoute(app, {
+    store: options.legal.store,
+    accounts: options.authContext.store,
+    mailer,
+    plans,
+    logger: options.logger,
+    now,
+    rateLimitPerMinute: options.legal.rateLimitPerMinute,
+  });
 
   // The admin API, ALWAYS mounted, and its middleware decides what to admit
   // to. An instance with no `ADMIN_TOKEN` and no admin account is

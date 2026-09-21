@@ -108,11 +108,13 @@ services:
       # SYNC_NOTICE is a boot failure. See .env.example for the length cap.
       SYNC_NOTICE: ${SYNC_NOTICE:-}
       SYNC_NOTICE_URL: ${SYNC_NOTICE_URL:-}
-      # Mail: all three or none. Unset means invitations and resets come back
-      # to you as links instead of being posted. See .env.example.
+      # Mail: all four or none. Unset means invitations and resets come back
+      # to you as links instead of being posted, and a cancellation or a
+      # withdrawal is recorded but mailed to nobody. See .env.example.
       MAIL_API_URL: ${MAIL_API_URL:-}
       MAIL_API_KEY: ${MAIL_API_KEY:-}
       MAIL_API_FROM: ${MAIL_API_FROM:-}
+      MAIL_OPERATOR_EMAIL: ${MAIL_OPERATOR_EMAIL:-}
       # The AI proxy: both or neither. Unset means POST /v1/chat/completions
       # answers the ordinary unknown-path 404 and /health reports no AI at all.
       # The per-account daily allowance is in the database, not here.

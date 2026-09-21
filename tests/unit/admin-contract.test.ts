@@ -46,6 +46,7 @@ import { createAuthFixture } from './auth-context-fixture.js';
 import { createFakeStorageAdapter } from './fake-storage-adapter.js';
 import { createFakeRotationStore } from './fake-rotation-store.js';
 import { createFakePulseStore } from './fake-pulse-store.js';
+import { createFakeLegalDeclarationsStore } from './fake-legal-declarations-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createFakeBlobRollbackStore } from './fake-blob-rollback-store.js';
@@ -112,6 +113,7 @@ async function startHarness({ basis }: { basis: NutrientReferenceBasis | null })
     storage: createFakeStorageAdapter(),
     rotation: createFakeRotationStore(),
     pulse: createFakePulseStore(),
+    legal: { store: createFakeLegalDeclarationsStore() },
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: createSilentLogger(),
     trustProxy: false,

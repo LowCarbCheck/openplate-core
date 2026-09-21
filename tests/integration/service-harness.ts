@@ -37,7 +37,15 @@ import { generateFamilyId, generatePasswordResetToken, generateToken } from '../
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import type { AuthContext, SessionResponse } from '../../src/accounts/auth-handlers.js';
 import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
-import type { Mailer, SendAccountNoticeInput, SendInviteInput, SendResetInput } from '../../src/mail/mailer.js';
+import type {
+  Mailer,
+  SendAccountNoticeInput,
+  SendDeclarationOperatorAlertInput,
+  SendDeclarationReceiptInput,
+  SendInviteInput,
+  SendResetInput,
+} from '../../src/mail/mailer.js';
+import { createDrizzleLegalDeclarationsStore } from '../../src/legal/legal-declarations-store.js';
 import type { SyncKeyRecordKind } from '../../src/protocol.js';
 import type { Database } from '../../src/db/client.js';
 import { SHARE_WRAPPED_DEK_BYTES } from '../../src/server/share-routes.js';
@@ -75,16 +83,24 @@ export interface RecordingMailer extends Mailer {
   resets: SendResetInput[];
   /** The M212 notes, so a suite can assert that an invited address which already has an account got one INSTEAD. */
   accountNotices: SendAccountNoticeInput[];
+  /** M214/09. One entry per address a receipt went to — up to two per declaration, see `mail/mailer.ts`. */
+  declarationReceipts: SendDeclarationReceiptInput[];
+  /** M214/09. One entry per declaration, matched or not. */
+  declarationOperatorAlerts: SendDeclarationOperatorAlertInput[];
 }
 
 function createRecordingMailer(): RecordingMailer {
   const invites: SendInviteInput[] = [];
   const resets: SendResetInput[] = [];
   const accountNotices: SendAccountNoticeInput[] = [];
+  const declarationReceipts: SendDeclarationReceiptInput[] = [];
+  const declarationOperatorAlerts: SendDeclarationOperatorAlertInput[] = [];
   return {
     invites,
     resets,
     accountNotices,
+    declarationReceipts,
+    declarationOperatorAlerts,
     async sendInvite(input: SendInviteInput): Promise<void> {
       invites.push(input);
     },
@@ -93,6 +109,12 @@ function createRecordingMailer(): RecordingMailer {
     },
     async sendAccountNotice(input: SendAccountNoticeInput): Promise<void> {
       accountNotices.push(input);
+    },
+    async sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void> {
+      declarationReceipts.push(input);
+    },
+    async sendDeclarationOperatorAlert(input: SendDeclarationOperatorAlertInput): Promise<void> {
+      declarationOperatorAlerts.push(input);
     },
   };
 }
@@ -273,6 +295,23 @@ export interface StartServiceOptions {
    * refresh. Absent is the production interval.
    */
   settingsRefreshIntervalMs?: number;
+  /**
+   * `PLANS_UPSTREAM_URL`/`PLANS_UPSTREAM_SECRET`. Absent (the default) is
+   * what every instance without a biller runs on: the `/v1/plans` proxy is a
+   * 404, and `POST /v1/legal/declarations` (M214/09) still answers `202` and
+   * persists, with every row stamped `forward_error: 'plans-not-configured'`.
+   * Set it to point BOTH at a real listening upstream — `legal-declarations.test.ts`
+   * opts in; `plans-harness.ts` remains the harness for the authenticated
+   * proxy itself, which this file does not mount a fake account session for.
+   */
+  plans?: { baseUrl: string; secret: string; timeoutMs?: number } | null;
+  /**
+   * M214/09's rate limit. Absent means a HIGH ceiling (10,000/minute), so a
+   * suite that is not ABOUT the limiter never trips it — exactly the
+   * `PERMISSIVE_THROTTLE` argument, applied to this route's own limiter.
+   * `legal-declarations.test.ts` opts in to a small number deliberately.
+   */
+  legal?: { rateLimitPerMinute?: number };
 }
 
 /** The application server key the harness advertises when a suite opts in. Public by definition, and not a real one. */
@@ -392,6 +431,15 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     // `null` by default, which takes the whole `/v1/push` subtree away, see
     // `StartServiceOptions.push`.
     push: pushSurface,
+    // `null` by default, which is a 404 on `/v1/plans` and `forward_error:
+    // 'plans-not-configured'` on every declaration. See `StartServiceOptions.plans`.
+    plans: options.plans ?? null,
+    // ALWAYS BUILT, no flag beside it, exactly as `pulse` is: the two
+    // statutory buttons exist on every instance. See `create-app.ts`.
+    legal: {
+      store: createDrizzleLegalDeclarationsStore(options.db),
+      rateLimitPerMinute: options.legal?.rateLimitPerMinute ?? 10_000,
+    },
     // `main.ts` wires this the same way: one surface, read by `/health` and
     // written by `PATCH /v1/admin/settings`.
     settings,
@@ -407,10 +455,11 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       // does it, so a `create-app` that forgot to report it fails a suite.
       memberInvites: memberInviteSurface !== null,
       ai: aiSurface === null ? null : { model: options.ai?.advertisedModel ?? null },
-      // No biller reaches the integration instance, so the whole `/v1/plans`
-      // subtree is the ordinary unknown-path 404 there. `tests/unit` owns both
-      // halves of that field, see `plans-404-when-unset.test.ts`.
-      plans: false,
+      // Reported from the SAME binding the subtree is mounted on, so a suite
+      // that opts in to `StartServiceOptions.plans` sees `true` here too.
+      // `tests/unit` owns both halves of the unconfigured case, see
+      // `plans-404-when-unset.test.ts`.
+      plans: options.plans != null,
       // Reported from the SAME surface the routes are mounted on, as `main.ts`
       // does it, so a `create-app` that forgot to report it fails a suite.
       push: pushSurface !== null,

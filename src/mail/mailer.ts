@@ -2,13 +2,17 @@
  * The mail PORT — what this service needs from a mailer, and nothing about how
  * one is built.
  *
- * THREE LETTERS, EVER. An invitation, a password reset, and the note that
- * says an invited address already has an account. That bound is the design: a
+ * FIVE LETTERS NOW, EACH ONE NAMED HERE AND NOWHERE ELSE. The bound that used
+ * to read "three letters, ever" held while every letter this service sent was
+ * part of the account lifecycle: an invitation, a password reset, and the note
+ * that says an invited address already has an account. M214/09 added two more
+ * for a different reason — a statutory acknowledgement of a cancellation or a
+ * withdrawal that a person files WITHOUT an account at all — and the bound is
+ * now "every letter is named on this interface", not a literal count. A
  * service that can send arbitrary mail grows a notification system, and a
- * notification system needs an address for people who did not ask for one.
- * All three go to an address somebody typed into an invitation (the invite and
- * the note) or to an address that is already the account's own identity (the
- * reset).
+ * notification system needs an address for people who did not ask for one;
+ * naming every message this port can send is what keeps that from happening
+ * by accretion.
  *
  * THE THIRD ONE IS THE PRICE OF AN INDISTINGUISHABLE `202` (M212).
  * `POST /v1/auth/invites` answers the same thing whatever is true about the
@@ -18,13 +22,20 @@
  * second account or an unrequested password reset, see
  * `account-notice-message.ts`.
  *
+ * THE FOURTH AND FIFTH ARE `sendDeclarationReceipt` AND
+ * `sendDeclarationOperatorAlert` (M214/09, `mail/declaration-message.ts`). Both
+ * go out from `server/legal-declarations.ts` on every declaration, matched or
+ * not: the receipt to the person who filed it (and again to a matched
+ * account's own address, when it differs), the alert to the operator. Neither
+ * carries a link either — there is no account and no token to put one behind.
+ *
  * WHY AN INTERFACE AND NOT AN HTTP CLIENT. Everything upstream of the
  * transport has to be testable without one: the admin invite route has real
  * branching (mail configured or not, send succeeded or not, and what the
  * response says in each case), and none of it should require a mail server to
  * exercise. This is the seam; the messages themselves are built by
- * `invite-message.ts` and `reset-message.ts`, which are pure. An instance with
- * no mail configured gets {@link createNoopMailer}.
+ * `invite-message.ts`, `reset-message.ts` and `declaration-message.ts`, which
+ * are pure. An instance with no mail configured gets {@link createNoopMailer}.
  *
  * NOTHING HERE THROWS ON A FAILED SEND, and that is a contract rather than an
  * omission. `POST /v1/auth/reset/request` answers `202` whether or not the
@@ -37,6 +48,13 @@ import type { Logger } from '../logger.js';
 import { buildAccountNoticeMessage } from './account-notice-message.js';
 import { buildInviteMessage } from './invite-message.js';
 import { buildResetMessage } from './reset-message.js';
+import {
+  buildDeclarationOperatorAlertMessage,
+  buildDeclarationReceiptMessage,
+  type DeclarationFields,
+  type DeclarationLanguage,
+  type DeclarationOperatorAlertInput,
+} from './declaration-message.js';
 
 export interface SendInviteInput {
   /** The address the invitation goes to — the invite's own `email`, never one from a request body. */
@@ -67,11 +85,31 @@ export interface SendResetInput {
   expiresAt: IsoTimestamp;
 }
 
+/**
+ * The receipt for one declaration (M214/09). Sent once to the address the
+ * person typed, and sent AGAIN, separately, to a matched account's own
+ * address when it differs — this input carries one recipient, so two sends
+ * are two calls, the same pattern `sendInvite` and `sendReset` already use.
+ */
+export interface SendDeclarationReceiptInput extends DeclarationFields {
+  /** Where THIS send goes. Either the typed address or the matched account's, chosen by the caller. */
+  to: string;
+  /** Which of the two reviewed languages to write in. From the request body; an instance's `INSTANCE_LANGUAGE` plays no part here. */
+  language: DeclarationLanguage;
+}
+
+/** The operator's copy, sent once per declaration regardless of how many receipts went out. English only, see `declaration-message.ts`. */
+export type SendDeclarationOperatorAlertInput = DeclarationOperatorAlertInput;
+
 export interface Mailer {
   sendInvite(input: SendInviteInput): Promise<void>;
   sendReset(input: SendResetInput): Promise<void>;
   /** The M212 note. See `SendAccountNoticeInput` above and the module header. */
   sendAccountNotice(input: SendAccountNoticeInput): Promise<void>;
+  /** M214/09. See `SendDeclarationReceiptInput` above and the module header. */
+  sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void>;
+  /** M214/09. See `SendDeclarationOperatorAlertInput` above and the module header. */
+  sendDeclarationOperatorAlert(input: SendDeclarationOperatorAlertInput): Promise<void>;
 }
 
 /**
@@ -99,6 +137,15 @@ export function createNoopMailer(): Mailer {
       // the member's `202` is unchanged, which is exactly the property the
       // route promises.
     },
+    async sendDeclarationReceipt(): Promise<void> {
+      // Deliberately nothing. `server/legal-declarations.ts` still answers
+      // `202` and the row is still persisted: the statutory record is the
+      // row, not the letter, and this instance has told nobody it can mail.
+    },
+    async sendDeclarationOperatorAlert(): Promise<void> {
+      // Deliberately nothing, for the same reason. An operator running with
+      // no mail configured reads the row instead.
+    },
   };
 }
 
@@ -118,6 +165,14 @@ export interface HttpMailConfig {
   url: string;
   apiKey: string;
   from: string;
+  /**
+   * Where `sendDeclarationOperatorAlert` sends, `MAIL_OPERATOR_EMAIL` (M214/09).
+   * Part of the same all-or-nothing mail block as `url`/`apiKey`/`from`: an
+   * instance that can mail at all can name who reads its compliance mail, and
+   * a mailer with three of the four set would silently drop every declaration
+   * alert rather than fail at boot where the operator would see why.
+   */
+  operatorEmail: string;
 }
 
 export interface CreateHttpMailerOptions {
@@ -251,6 +306,30 @@ export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
       });
       // No address, and nothing that says which member's mint caused it.
       logger.info('Account notice mailed');
+    },
+
+    async sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void> {
+      const message = buildDeclarationReceiptMessage(input);
+      await postMail({
+        mail,
+        timeoutMs,
+        outgoing: { to: input.to, subject: message.subject, text: message.text, html: message.html },
+      });
+      // No address and no field the person typed, for the reason the module
+      // doc gives: this letter carries no link, but it carries their name,
+      // their reason and their contract reference, and none of that belongs
+      // in a log line either.
+      logger.info('Declaration receipt mailed', { kind: input.kind });
+    },
+
+    async sendDeclarationOperatorAlert(input: SendDeclarationOperatorAlertInput): Promise<void> {
+      const message = buildDeclarationOperatorAlertMessage(input);
+      await postMail({
+        mail,
+        timeoutMs,
+        outgoing: { to: mail.operatorEmail, subject: message.subject, text: message.text, html: message.html },
+      });
+      logger.info('Declaration operator alert mailed', { kind: input.kind, matched: input.matched });
     },
   };
 }

@@ -688,12 +688,12 @@ function parseTrustProxy(env: NodeJS.ProcessEnv): boolean | number {
   return hops;
 }
 
-/** The three names that make up the mail block. Listed once so every message below can name them all. */
-const MAIL_VARIABLES = ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM'] as const;
+/** The four names that make up the mail block. Listed once so every message below can name them all. */
+const MAIL_VARIABLES = ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM', 'MAIL_OPERATOR_EMAIL'] as const;
 
 /**
- * `MAIL_API_URL` + `MAIL_API_KEY` + `MAIL_API_FROM`, all or none, and only
- * alongside the two base URLs a link is built from.
+ * `MAIL_API_URL` + `MAIL_API_KEY` + `MAIL_API_FROM` + `MAIL_OPERATOR_EMAIL`,
+ * all or none, and only alongside the two base URLs a link is built from.
  *
  * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
  * and never a value: a key or a URL in a startup log is a credential in a log.
@@ -701,9 +701,17 @@ const MAIL_VARIABLES = ['MAIL_API_URL', 'MAIL_API_KEY', 'MAIL_API_FROM'] as cons
  * believes invitations are being delivered while every one of them silently
  * comes back as a link nobody looks at.
  *
- * REQUIRING THE LINK BASES IS THE SAME ARGUMENT ONE STEP OUT. Both letters
- * exist to carry a link. Configured mail with no `CLIENT_BASE_URL` would send
- * a letter with nothing in it to click.
+ * `MAIL_OPERATOR_EMAIL` JOINED THE GROUP IN M214/09, and it is all-or-nothing
+ * with the other three for the same reason: an instance that can mail at all
+ * can name who reads a cancellation or a withdrawal notice, and a mailer
+ * configured to send everything else but silently drop the operator's own
+ * copy is exactly the half-configured state this whole block refuses.
+ *
+ * REQUIRING THE LINK BASES IS THE SAME ARGUMENT ONE STEP OUT. Both account
+ * letters carry a link. Configured mail with no `CLIENT_BASE_URL` would send
+ * one of them with nothing in it to click. The two declaration letters carry
+ * no link at all, so they do not depend on the base URLs, only on the mail
+ * block itself.
  */
 function parseMail(
   env: NodeJS.ProcessEnv,
@@ -716,7 +724,7 @@ function parseMail(
   if (missing.length > 0) {
     throw new Error(
       `Incomplete mail configuration: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set. ` +
-        `${MAIL_VARIABLES.join(', ')} are all-or-nothing, set all three, or none and hand out links yourself.`,
+        `${MAIL_VARIABLES.join(', ')} are all-or-nothing, set all four, or none and hand out links yourself.`,
     );
   }
 
@@ -727,15 +735,16 @@ function parseMail(
   if (missingUrls.length > 0) {
     throw new Error(
       `Mail is configured but ${missingUrls.join(' and ')} ${missingUrls.length === 1 ? 'is' : 'are'} not set. ` +
-        'Both letters this service sends exist to carry a link, and a link needs both values.',
+        'The invitation and the password reset both carry a link, and a link needs both values.',
     );
   }
 
-  // SAFETY: `present.length === 3` above, so every name has a non-empty value.
+  // SAFETY: `present.length === 4` above, so every name has a non-empty value.
   return {
     url: env.MAIL_API_URL?.trim() ?? '',
     apiKey: env.MAIL_API_KEY?.trim() ?? '',
     from: env.MAIL_API_FROM?.trim() ?? '',
+    operatorEmail: env.MAIL_OPERATOR_EMAIL?.trim() ?? '',
   };
 }
 

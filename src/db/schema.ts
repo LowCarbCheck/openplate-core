@@ -1289,6 +1289,67 @@ export type InsertInstanceSettings = InferInsertModel<typeof instanceSettings>;
 export type SelectInstanceSettings = InferSelectModel<typeof instanceSettings>;
 
 // =============================================================================
+// Legal declarations (M214 spec 09, the two statutory buttons)
+// =============================================================================
+
+/**
+ * A cancellation (§312k BGB) or a withdrawal (§356a BGB), exactly as the
+ * person typed it, unauthenticated.
+ *
+ * `id` IS THE RECEIPT ID a person sees, which is why it is a UUID minted in
+ * application code rather than the `serial` every other table here uses. A
+ * sequential id handed to an anonymous caller would count how many
+ * declarations this instance has ever received; a UUID does not.
+ *
+ * PERSISTED BEFORE ANYTHING ELSE HAPPENS, in `server/legal-declarations.ts`.
+ * The row is the record that the statute was honoured; the forward to the
+ * biller and the mail are best-effort work that happens after it, and a
+ * failure in either must not make the row disappear.
+ *
+ * NO FOREIGN-KEY CASCADE FROM `account_id`. Unlike every other table here,
+ * this one is a compliance record: it exists to prove a person exercised a
+ * statutory right on a given day, and an account erasure must not erase the
+ * proof that the right was exercised. `set null` keeps the row and drops only
+ * the pointer, the same choice `signup_invites.redeemed_account_id` makes.
+ */
+export const legalDeclarations = pgTable('legal_declarations', {
+  id: text('id').primaryKey(),
+  kind: text('kind').$type<'kuendigung' | 'widerruf'>().notNull(),
+  /** Exactly as typed, never normalized: this is what the person wrote on the form. */
+  name: text('name').notNull(),
+  /**
+   * Exactly as typed (trimmed, never case-folded). `account_id` below is
+   * looked up by `normalizeEmail(email)`, a SEPARATE value that is never
+   * stored: two people who read the receipt need to see what they actually
+   * typed, and `server/legal-declarations.ts` compares this column against
+   * the matched account's own (normalized) address to decide whether the
+   * receipt goes out once or twice.
+   */
+  email: text('email').notNull(),
+  contractReference: text('contract_reference'),
+  terminationType: text('termination_type').$type<'ordentlich' | 'ausserordentlich'>(),
+  reason: text('reason'),
+  requestedDate: date('requested_date', { mode: 'string' }),
+  timing: text('timing').$type<'earliest' | 'onDate'>(),
+  language: text('language').$type<'de' | 'en'>().notNull(),
+  /** This service's own clock, at the moment the row was written. What the receipt and both letters show as "received". */
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  /** The account found by `normalizeEmail(email)`, or `null` for nobody this instance recognizes. */
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+  /** Set once the biller accepted the forward. `null` means not forwarded, whether because it failed or because no biller is configured. */
+  forwardedAt: timestamp('forwarded_at', { withTimezone: true }),
+  /** Why the forward above is `null`: `plans-not-configured`, `unreachable`, `timeout` or `rejected`. `null` means it succeeded. */
+  forwardError: text('forward_error'),
+});
+
+export type InsertLegalDeclaration = InferInsertModel<typeof legalDeclarations>;
+export type SelectLegalDeclaration = InferSelectModel<typeof legalDeclarations>;
+
+export const legalDeclarationsRelations = relations(legalDeclarations, ({ one }) => ({
+  account: one(accounts, { fields: [legalDeclarations.accountId], references: [accounts.id] }),
+}));
+
+// =============================================================================
 // Relations
 // =============================================================================
 

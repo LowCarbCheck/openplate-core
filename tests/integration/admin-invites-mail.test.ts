@@ -26,6 +26,7 @@ import { createDrizzleAdminStore } from '../../src/db/admin-store.js';
 import { createDrizzleInviteStore } from '../../src/db/invite-store.js';
 import { createDrizzleRotationStore } from '../../src/db/rotation-store.js';
 import { createDrizzlePulseStore } from '../../src/pulse/pulse-store.js';
+import { createDrizzleLegalDeclarationsStore } from '../../src/legal/legal-declarations-store.js';
 import { createSilentLogger } from '../../src/logger.js';
 import { createThrottleStore } from '../../src/lib/throttle.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
@@ -105,6 +106,7 @@ before(async () => {
       url: `http://127.0.0.1:${mailPort}/v1/emails`,
       apiKey: 'a-pigeon-tenant-key',
       from: 'openplate <openplate@mail.openplate.de>',
+      operatorEmail: 'operator@example.org',
     },
     links,
     language: 'en',
@@ -140,6 +142,7 @@ before(async () => {
     storage: createDrizzleStorageAdapter(database.db),
     rotation: createDrizzleRotationStore(database.db),
     pulse: createDrizzlePulseStore(database.db),
+    legal: { store: createDrizzleLegalDeclarationsStore(database.db) },
     throttle: createThrottleStore(PERMISSIVE_THROTTLE),
     logger,
     trustProxy: false,

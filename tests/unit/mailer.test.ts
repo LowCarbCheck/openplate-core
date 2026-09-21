@@ -111,7 +111,12 @@ const LINKS = { clientBaseUrl: 'https://openplate.de', serverPublicUrl: 'https:/
 
 function mailerFor(url: string, logger: Logger, timeoutMs?: number): Mailer {
   const options: CreateHttpMailerOptions = {
-    mail: { url, apiKey: 'a-mail-api-key-nobody-should-see', from: 'openplate <openplate@mail.openplate.de>' },
+    mail: {
+      url,
+      apiKey: 'a-mail-api-key-nobody-should-see',
+      from: 'openplate <openplate@mail.openplate.de>',
+      operatorEmail: 'operator@example.org',
+    },
     links: LINKS,
     language: 'en',
     logger,
@@ -158,7 +163,7 @@ test('a reset send posts the reset letter, in the configured language', async ()
   const captured = createCapturingLogger();
 
   const german = createHttpMailer({
-    mail: { url: api.url, apiKey: 'k', from: 'f' },
+    mail: { url: api.url, apiKey: 'k', from: 'f', operatorEmail: 'operator@example.org' },
     links: LINKS,
     language: 'de',
     logger: captured.logger,
@@ -296,7 +301,7 @@ test('createMailer answers the no-op when mail or the link bases are absent', as
   // Mail but no links, which `config.ts` refuses at boot — the narrowing here
   // is belt and braces rather than a second policy.
   await createMailer({
-    mail: { url: 'http://unreachable.invalid', apiKey: 'k', from: 'f' },
+    mail: { url: 'http://unreachable.invalid', apiKey: 'k', from: 'f', operatorEmail: 'operator@example.org' },
     links: null,
     language: 'en',
     logger: captured.logger,
@@ -306,12 +311,105 @@ test('createMailer answers the no-op when mail or the link bases are absent', as
   assert.deepEqual(captured.lines, []);
 });
 
-test('the no-op mailer accepts all three letters and sends none', async () => {
+test('the no-op mailer accepts all five letters and sends none', async () => {
   const mailer = createNoopMailer();
   await mailer.sendInvite({ email: 'a@b.test', displayName: null, inviteToken: 'si_x', expiresAt: 'x' });
   await mailer.sendReset({ email: 'a@b.test', resetToken: 'sr_x', expiresAt: 'x' });
   await mailer.sendAccountNotice({ email: 'a@b.test' });
+  await mailer.sendDeclarationReceipt({ ...sampleDeclarationFields(), to: 'a@b.test', language: 'en' });
+  await mailer.sendDeclarationOperatorAlert({
+    ...sampleDeclarationFields(),
+    receiptId: 'a-receipt-id',
+    matched: false,
+  });
   // Nothing to assert but the absence of a throw: an instance without mail must
   // not fail the request that would have sent one.
   assert.ok(true);
+});
+
+// ── The two declaration letters (M214/09) ──────────────────────────────────
+
+interface SampleDeclarationFields {
+  kind: 'kuendigung' | 'widerruf';
+  name: string;
+  email: string;
+  contractReference: string | null;
+  terminationType: 'ordentlich' | 'ausserordentlich' | null;
+  reason: string | null;
+  requestedDate: string | null;
+  timing: 'earliest' | 'onDate' | null;
+  receivedAt: Date;
+}
+
+function sampleDeclarationFields(): SampleDeclarationFields {
+  return {
+    kind: 'kuendigung',
+    name: 'Anna Beispiel',
+    email: 'anna@example.org',
+    contractReference: 'K-1234',
+    terminationType: 'ordentlich',
+    reason: null,
+    requestedDate: null,
+    timing: 'earliest',
+    receivedAt: new Date('2026-09-21T10:00:00.000Z'),
+  };
+}
+
+test('a declaration receipt posts the reviewed letter, in the requested language, to the given address', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+
+  await mailerFor(api.url, captured.logger).sendDeclarationReceipt({
+    ...sampleDeclarationFields(),
+    to: 'anna@example.org',
+    language: 'de',
+  });
+
+  assert.equal(api.received.length, 1);
+  // SAFETY: as above — our own adapter posted this body.
+  const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  assert.deepEqual(payload.to, ['anna@example.org']);
+  assert.equal(payload.subject, 'Ihre Kündigung');
+  assert.ok(payload.text.includes('K-1234'), 'the receipt must name every field the person typed');
+  // No link at all: there is no account and no token to put one behind.
+  assert.ok(!payload.html.includes('href'), 'a declaration receipt must carry no link');
+});
+
+test('a declaration operator alert posts to the configured operator address, in English, naming the receipt id', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+
+  await mailerFor(api.url, captured.logger).sendDeclarationOperatorAlert({
+    ...sampleDeclarationFields(),
+    kind: 'widerruf',
+    receiptId: 'a-receipt-id-9',
+    matched: true,
+  });
+
+  assert.equal(api.received.length, 1);
+  // SAFETY: as above — our own adapter posted this body.
+  const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  // Configured in `mailerFor`, never a value the call site named.
+  assert.deepEqual(payload.to, ['operator@example.org']);
+  assert.ok(payload.subject.includes('a-receipt-id-9'));
+  assert.ok(payload.text.includes('a-receipt-id-9'));
+  assert.ok(payload.text.includes('yes'), 'the alert must say whether the declaration matched an account');
+});
+
+test('nothing a declaration send logs carries a name, a reason or a contract reference', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+
+  await mailerFor(api.url, captured.logger).sendDeclarationReceipt({
+    ...sampleDeclarationFields(),
+    reason: 'a very personal reason nobody else should read',
+    to: 'anna@example.org',
+    language: 'en',
+  });
+
+  const serialized = JSON.stringify(captured.lines);
+  assert.ok(serialized.includes('Declaration receipt mailed'), 'a send must be recorded');
+  for (const secret of ['anna@example.org', 'Anna Beispiel', 'K-1234', 'a very personal reason']) {
+    assert.ok(!serialized.includes(secret), `the log carries "${secret}"`);
+  }
 });

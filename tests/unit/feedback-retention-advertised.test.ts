@@ -42,6 +42,7 @@ import { createAuthFixture } from './auth-context-fixture.js';
 import { createFakeStorageAdapter } from './fake-storage-adapter.js';
 import { createFakeRotationStore } from './fake-rotation-store.js';
 import { createFakePulseStore } from './fake-pulse-store.js';
+import { createFakeLegalDeclarationsStore } from './fake-legal-declarations-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createFakeFeedbackAdminStore, createFakeFeedbackImageStore } from './feedback-harness.js';
@@ -88,6 +89,7 @@ async function readHandshake(instance: InstanceInfo): Promise<JsonObject> {
     // Required on every app. The pulse has no operator flag, so a harness that
     // is not about it still has to hand one over. See ADR-0007.
     pulse: createFakePulseStore(),
+    legal: { store: createFakeLegalDeclarationsStore() },
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: createSilentLogger(),
     trustProxy: false,

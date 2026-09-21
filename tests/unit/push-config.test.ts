@@ -39,6 +39,7 @@ import { asBoolean, asObject, type JsonValue } from '../../src/lib/json.js';
 import { createFakeStorageAdapter } from './fake-storage-adapter.js';
 import { createFakeRotationStore } from './fake-rotation-store.js';
 import { createFakePulseStore } from './fake-pulse-store.js';
+import { createFakeLegalDeclarationsStore } from './fake-legal-declarations-store.js';
 import { createFakeAdminStore } from './fake-admin-store.js';
 import { createFakeInviteStore } from './fake-invite-store.js';
 import { createAuthFixture } from './auth-context-fixture.js';
@@ -89,6 +90,7 @@ async function startConfigHarness(options: { push: boolean }): Promise<ConfigHar
     storage: createFakeStorageAdapter(),
     rotation: createFakeRotationStore(),
     pulse: createFakePulseStore(),
+    legal: { store: createFakeLegalDeclarationsStore() },
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: createSilentLogger(),
     trustProxy: false,
