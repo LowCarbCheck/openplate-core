@@ -86,6 +86,7 @@ async function mintInvite(email: string): Promise<string> {
     // suite wants.
     invitedByAccountId: null,
     source: null,
+    trialScans: null,
   });
   if (!minted.ok) throw new Error(`could not mint an invite for ${email}: ${minted.reason}`);
   return minted.minted.token;

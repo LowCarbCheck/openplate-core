@@ -28,6 +28,7 @@ import type { VapidCredentials } from './push/web-push-sender.js';
 import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
 import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 import type { TurnstileConfig } from './accounts/captcha.js';
+import { MAX_TRIAL_SCANS, type TrialPolicy } from './accounts/scan-trial.js';
 
 /**
  * Minimum accepted `SERVER_SECRET` length. 32 characters is the shortest
@@ -196,6 +197,47 @@ export interface ServiceConfig {
    * one thing separating this route from the operator's.
    */
   memberInvites: MemberInvitePolicy | null;
+  /**
+   * The instance's scan trial (M253): `TRIAL_SCANS` free AI scans with no end
+   * date, at `TRIAL_DAILY_AI_LIMIT` requests a day, or `null` for an instance
+   * that runs none, which is the default.
+   *
+   * BOTH OR NEITHER, and half is a boot failure that names the missing one. A
+   * count with no daily bound is an unbounded retry loop on a flaky provider,
+   * and a daily bound with no count is a standing grant nobody meant.
+   *
+   * WHAT READS IT: the open sign-up door, a member invite under
+   * `MEMBER_INVITE_TRIAL=true`, and an operator mint with `"trial": true`.
+   * Every door that creates a trial account writes exactly this pair on the
+   * invite row, and `/health` publishes the count as `instance.trial`.
+   */
+  trial: TrialPolicy | null;
+  /**
+   * What all scan-trial accounts together may spend per UTC day
+   * (`AI_TRIAL_INSTANCE_DAILY_LIMIT`, M253), or `null` for no sub-ceiling.
+   *
+   * IT EXISTS SO FARMING CANNOT STARVE PAYING PEOPLE. It sits below
+   * `AI_INSTANCE_DAILY_LIMIT` and refuses only scan-trial accounts, with the
+   * same `503 ai-instance-ceiling`, so a burst of new trials runs out of their
+   * own budget first. Zero is a boot failure, and so is setting it on an
+   * instance with no trial: a dial with no door.
+   */
+  aiTrialInstanceDailyLimit: number | null;
+  /**
+   * The secret the one mailbox, one trial rule hashes addresses with
+   * (`TRIAL_ADDRESS_PEPPER`, M253), or `null`.
+   *
+   * REQUIRED BESIDE THE TRIAL PAIR, optional without it. With it, an invite
+   * row carries a keyed hash of its mailbox, and deleting an account scrubs
+   * the address from every invite row and keeps ONE thing: that hash, when
+   * the account held a trial (`db/schema.ts`, `trial_address_hashes`). With
+   * none, invite rows keep their address after a deletion, as they always
+   * have, for the member re-invite rule.
+   *
+   * CHANGING IT FORGETS EVERY MAILBOX that already had its trial, because the
+   * old hashes no longer match. Generate it once, like `SERVER_SECRET`.
+   */
+  trialAddressPepper: string | null;
   /**
    * Whether anybody may ask this instance for an account with their own
    * address (`OPEN_SIGNUP=true`, M253). `false`, the default, and what every
@@ -923,9 +965,14 @@ const MEMBER_INVITE_CAP_VARIABLE = 'MEMBER_INVITE_LIFETIME_CAP';
  * window mints an allowance that has already ended when the person opens it.
  * Somebody who wants members not to invite unsets both.
  */
-function parseMemberInvites(env: NodeJS.ProcessEnv): MemberInvitePolicy | null {
+function parseMemberInvites(env: NodeJS.ProcessEnv, trial: TrialPolicy | null): MemberInvitePolicy | null {
   const present = MEMBER_INVITE_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
   const capIsSet = (env[MEMBER_INVITE_CAP_VARIABLE]?.trim() ?? '') !== '';
+  // THE SCAN-TRIAL SWITCH (M253) is the other way to open this door, and never
+  // together with the day pair: a member invite grants one or the other.
+  if (parseBoolean(env, MEMBER_INVITE_TRIAL_VARIABLE, false)) {
+    return parseMemberInviteTrial({ env, trial, dayPairSet: present });
+  }
   if (present.length === 0) {
     if (capIsSet) {
       throw new Error(
@@ -1026,6 +1073,124 @@ function parseTurnstile(env: NodeJS.ProcessEnv, openSignup: boolean): TurnstileC
   };
 }
 
+/** The switch that opens the member door on the scan trial instead of the day pair (M253). */
+const MEMBER_INVITE_TRIAL_VARIABLE = 'MEMBER_INVITE_TRIAL';
+
+/**
+ * `MEMBER_INVITE_TRIAL=true`: a member's invitation grants the instance's scan
+ * trial rather than a day trial (M253).
+ *
+ * A BOOT FAILURE BESIDE EITHER DAY VARIABLE, because the door grants one
+ * thing: an operator with both set believes in two trials and gets neither
+ * sentence right. A boot failure WITHOUT the trial pair, because the switch
+ * would open a door that grants nothing. `MEMBER_INVITE_LIFETIME_CAP` narrows
+ * it exactly as it narrows the day door.
+ */
+function parseMemberInviteTrial(input: {
+  env: NodeJS.ProcessEnv;
+  trial: TrialPolicy | null;
+  dayPairSet: readonly string[];
+}): MemberInvitePolicy {
+  if (input.dayPairSet.length > 0) {
+    throw new Error(
+      `${MEMBER_INVITE_TRIAL_VARIABLE}=true cannot stand beside ${input.dayPairSet.join(' and ')}: a member ` +
+        'invitation grants the scan trial or a day trial, never both. Unset one of them.',
+    );
+  }
+  if (input.trial === null) {
+    throw new Error(
+      `${MEMBER_INVITE_TRIAL_VARIABLE}=true needs the trial it grants: set TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT, ` +
+        `or unset ${MEMBER_INVITE_TRIAL_VARIABLE}.`,
+    );
+  }
+  return {
+    kind: 'trial',
+    dailyAiLimit: input.trial.dailyAiLimit,
+    trialScans: input.trial.scans,
+    lifetimeCap: parseNonNegativeInteger(input.env, MEMBER_INVITE_CAP_VARIABLE, DEFAULT_MEMBER_INVITE_LIFETIME_CAP),
+  };
+}
+
+/** The two names that make up the trial block. Listed once so every message below can name both. */
+const TRIAL_VARIABLES = ['TRIAL_SCANS', 'TRIAL_DAILY_AI_LIMIT'] as const;
+
+/**
+ * `TRIAL_SCANS` (1 to {@link MAX_TRIAL_SCANS}) + `TRIAL_DAILY_AI_LIMIT` (1 to
+ * `MAX_DAILY_AI_LIMIT`), both or neither (M253).
+ *
+ * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE.
+ * ZERO IS REFUSED FOR EITHER: a trial of no scans is not a trial, and a daily
+ * bound of zero refuses every scan with `ai-not-allowed`.
+ */
+function parseTrial(env: NodeJS.ProcessEnv): TrialPolicy | null {
+  const present = TRIAL_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = TRIAL_VARIABLES.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete trial configuration: ${missing.join(', ')} is not set. ` +
+        `${TRIAL_VARIABLES.join(' and ')} are all-or-nothing: set both to give new accounts free scans, or neither.`,
+    );
+  }
+
+  // The fallbacks are unreachable: both names are non-empty by the check above.
+  const scans = parsePositiveInteger(env, 'TRIAL_SCANS', 0);
+  if (scans > MAX_TRIAL_SCANS) {
+    throw new Error(`TRIAL_SCANS must be at most ${MAX_TRIAL_SCANS} (got ${scans})`);
+  }
+  const dailyAiLimit = parsePositiveInteger(env, 'TRIAL_DAILY_AI_LIMIT', 0);
+  if (dailyAiLimit > MAX_DAILY_AI_LIMIT) {
+    throw new Error(`TRIAL_DAILY_AI_LIMIT must be at most ${MAX_DAILY_AI_LIMIT} (got ${dailyAiLimit})`);
+  }
+  return { scans, dailyAiLimit };
+}
+
+/**
+ * `AI_TRIAL_INSTANCE_DAILY_LIMIT` (M253), optional. Zero is a boot failure for
+ * the reason `AI_INSTANCE_DAILY_LIMIT`'s is, and so is a value on an instance
+ * with no trial to bound.
+ */
+function parseAiTrialInstanceDailyLimit(env: NodeJS.ProcessEnv, trial: TrialPolicy | null): number | null {
+  const raw = env.AI_TRIAL_INSTANCE_DAILY_LIMIT?.trim();
+  if (raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `Invalid AI_TRIAL_INSTANCE_DAILY_LIMIT: expected a positive integer, got "${raw}". ` +
+        'Zero would refuse every trial scan; unset it for no sub-ceiling.',
+    );
+  }
+  if (trial === null) {
+    throw new Error(
+      'AI_TRIAL_INSTANCE_DAILY_LIMIT is set, but this instance runs no scan trial (TRIAL_SCANS and ' +
+        'TRIAL_DAILY_AI_LIMIT), so there is nothing for it to bound. Unset it, or set the trial.',
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `TRIAL_ADDRESS_PEPPER` (M253): optional, at least
+ * {@link MIN_SERVER_SECRET_LENGTH} characters, and REQUIRED when the instance
+ * runs a scan trial, because the one mailbox, one trial rule cannot recognise
+ * a deleted mailbox without it. The message names the variable, never a value.
+ */
+function parseTrialAddressPepper(env: NodeJS.ProcessEnv, trial: TrialPolicy | null): string | null {
+  const raw = env.TRIAL_ADDRESS_PEPPER?.trim();
+  if (raw === undefined || raw === '') {
+    if (trial === null) return null;
+    throw new Error(
+      'TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT need TRIAL_ADDRESS_PEPPER: the one trial per mailbox rule keeps a ' +
+        'keyed hash of each mailbox, and the key is this secret. Generate it with `openssl rand -hex 32`.',
+    );
+  }
+  if (raw.length < MIN_SERVER_SECRET_LENGTH) {
+    throw new Error(`TRIAL_ADDRESS_PEPPER must be at least ${MIN_SERVER_SECRET_LENGTH} characters, generate it`);
+  }
+  return raw;
+}
+
 function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {
   const raw = env.LOG_LEVEL?.trim().toLowerCase() ?? 'info';
   if (!isLogLevel(raw)) throw new Error(`Invalid LOG_LEVEL: expected debug/info/warn/error, got "${raw}"`);
@@ -1112,6 +1277,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   // without mail and the captcha refuses to boot without open sign-up.
   const mail = parseMail(env, { serverPublicUrl, clientBaseUrl });
   const openSignup = parseOpenSignup(env, mail);
+  // Read before the member door, which may grant it.
+  const trial = parseTrial(env);
 
   return {
     port: parsePositiveInteger(env, 'PORT', 3000),
@@ -1129,7 +1296,10 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),
     aiInstanceDailyLimit: parseAiInstanceDailyLimit(env),
-    memberInvites: parseMemberInvites(env),
+    memberInvites: parseMemberInvites(env, trial),
+    trial,
+    aiTrialInstanceDailyLimit: parseAiTrialInstanceDailyLimit(env, trial),
+    trialAddressPepper: parseTrialAddressPepper(env, trial),
     openSignup,
     turnstile: parseTurnstile(env, openSignup),
     aiMaxRequestBytes: parsePositiveInteger(env, 'AI_MAX_REQUEST_BYTES', DEFAULT_AI_MAX_REQUEST_BYTES),

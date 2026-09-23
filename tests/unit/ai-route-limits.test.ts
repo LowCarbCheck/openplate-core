@@ -35,6 +35,7 @@ import { createSilentLogger } from '../../src/logger.js';
 import { hashToken } from '../../src/lib/tokens.js';
 import { MAX_BLOB_BYTES } from '../../src/protocol.js';
 import { createAuthFixture } from './auth-context-fixture.js';
+import { createUnusedTrialScanStore } from './fake-trial-scans.js';
 
 /** The production default, transcribed rather than imported: a test that reads the value it checks proves nothing. */
 const DEFAULT_AI_MAX_REQUEST_BYTES = 8_000_000;
@@ -51,6 +52,7 @@ after(async () => {
 function createAllowingQuota(): AiQuotaStore {
   let used = 0;
   return {
+    ...createUnusedTrialScanStore(),
     async reserve(): Promise<ReserveResult> {
       used += 1;
       return { ok: true, used, limit: 1000 };
@@ -131,6 +133,7 @@ async function startRoute(options: { maxRequestBytes?: number } = {}): Promise<R
     // No instance ceiling: this file is about the body parser in front of the
     // handler, and `ai-proxy.test.ts` owns the ceiling's own properties.
     instanceDailyLimit: null,
+    trialInstanceDailyLimit: null,
   });
   // The terminal handler the real app mounts last. Present so a test can see
   // that the route's own handler answered rather than falling through to it.

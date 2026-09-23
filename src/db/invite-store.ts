@@ -28,9 +28,10 @@ import type {
   ReissueInviteInput,
 } from '../admin/invite-store.js';
 import { generateSignupInviteToken } from '../lib/tokens.js';
-import { trialKeyFor } from '../accounts/trial-key.js';
+import type { TrialAddressHasher } from '../accounts/trial-address.js';
 import type { Database } from './client.js';
-import { accounts, signupInvites } from './schema.js';
+import { accounts, signupInvites, trialAddressHashes } from './schema.js';
+import { mailboxHadTrial } from './trial-mailbox.js';
 
 /** The columns an operator may see. `tokenHash` is deliberately absent from this list. */
 const SUMMARY_COLUMNS = {
@@ -39,6 +40,7 @@ const SUMMARY_COLUMNS = {
   displayName: signupInvites.displayName,
   role: signupInvites.role,
   dailyAiLimit: signupInvites.dailyAiLimit,
+  trialScans: signupInvites.trialScans,
   createdAt: signupInvites.createdAt,
   expiresAt: signupInvites.expiresAt,
   redeemedAt: signupInvites.redeemedAt,
@@ -46,7 +48,18 @@ const SUMMARY_COLUMNS = {
   redeemedAccountId: signupInvites.redeemedAccountId,
 } as const;
 
-export function createDrizzleInviteStore(db: Database): InviteStore {
+/** What the store needs beyond a database. */
+export interface DrizzleInviteStoreOptions {
+  /**
+   * The keyed mailbox hash (`TRIAL_ADDRESS_PEPPER`, M253), or `null`/absent
+   * on an instance with no pepper. With it every new row carries the hash and
+   * a trial mint checks it; without it `trial_key` stays `NULL`.
+   */
+  hashAddress?: TrialAddressHasher | null;
+}
+
+export function createDrizzleInviteStore(db: Database, options: DrizzleInviteStoreOptions = {}): InviteStore {
+  const hashAddress = options.hashAddress ?? null;
   return {
     async mint(input: MintInviteInput): Promise<MintInviteResult> {
       // Same primitive the session tokens use: 256 bits of `randomBytes`,
@@ -81,6 +94,18 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
             ),
           );
 
+        // THE ONE MAILBOX, ONE TRIAL RULE, AT MINT (M253). A trial for a
+        // mailbox that already had one is written as `0`: the person still
+        // gets an account, and the app shows the plan offer at the first scan.
+        const trialKey = hashAddress === null ? null : hashAddress(input.email);
+        const trialScans =
+          input.trialScans !== null &&
+          input.trialScans > 0 &&
+          trialKey !== null &&
+          (await mailboxHadTrial(tx, { hash: trialKey }))
+            ? 0
+            : input.trialScans;
+
         const [row] = await tx
           .insert(signupInvites)
           .values({
@@ -89,15 +114,16 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
             displayName: input.displayName,
             role: input.role,
             dailyAiLimit: input.dailyAiLimit,
+            trialScans,
             expiresAt: input.expiresAt,
             // `null` for an operator mint, which is what makes the admin door
             // exempt from the cap and from the re-invite rule (M212).
             invitedByAccountId: input.invitedByAccountId,
-            // Which door, and the mailbox's trial key (M253). The key is
+            // Which door, and the mailbox's keyed hash (M253). The hash is
             // derived HERE, from the same canonical address the row keeps, so
             // no caller can store a key that disagrees with its own address.
             source: input.source,
-            trialKey: trialKeyFor(input.email),
+            trialKey,
           })
           .returning(SUMMARY_COLUMNS);
         if (!row) throw new Error('Failed to insert invite');
@@ -184,7 +210,18 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
           ),
         )
         .limit(1);
-      return found.length > 0;
+      if (found.length > 0) return true;
+      // A DELETED MAILBOX (M253). With a pepper the deletion scrubbed the
+      // address from these rows and kept a keyed hash instead; that hash is
+      // written only for an account that held a trial, which a member-caused
+      // invite always was.
+      if (hashAddress === null) return false;
+      const deleted = await db
+        .select({ hash: trialAddressHashes.hash })
+        .from(trialAddressHashes)
+        .where(eq(trialAddressHashes.hash, hashAddress(input.email)))
+        .limit(1);
+      return deleted.length > 0;
     },
 
     async findPendingInvite(input: { email: string; now: Date }): Promise<PendingInvite | null> {

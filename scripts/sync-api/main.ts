@@ -37,7 +37,13 @@
  * command in this tool that cannot be undone.
  */
 import { parseArgs } from 'node:util';
-import { AdminClient, CliError, type AccountPatchBody, type MintInviteRequestBody } from './client.js';
+import {
+  AdminClient,
+  CliError,
+  type AccountPatchBody,
+  type LapsedGrantBody,
+  type MintInviteRequestBody,
+} from './client.js';
 import { generateVapidKeys } from '../../src/push/vapid-keys.js';
 import {
   decodeAccountPage,
@@ -57,6 +63,8 @@ import {
   formatBlobVersions,
   formatRollback,
   decodeSettings,
+  decodeLapsedGrant,
+  formatLapsedGrant,
 } from './views.js';
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
@@ -75,10 +83,13 @@ const USAGE = `sync-api, the openplate-core admin CLI
     accounts set-limit <id> <n>           Change its AI requests per UTC day
     accounts set-expiry <id> --allowance-expires <iso|none>
                                Set or clear the date its AI allowance ends
+    accounts set-trial <id> <n|none>      Set its free AI scans (0-100), or
+                               take the scan trial away
     accounts suspend <id>      Lock it out and revoke every session, reversibly
     accounts reactivate <id>   Let it back in
     invites list               Outstanding and spent signup invites
     invites create --email <address>   Mint one addressed invite; prints the link ONCE
+                               (--trial: the instance's free scans instead of an allowance)
     invites resend <id>        Mint a NEW token for the same invite and send it
     invites revoke <id> --yes  Withdraw an unredeemed invite
     accounts reset-mail <id>   Send this account a password-reset letter
@@ -87,6 +98,9 @@ const USAGE = `sync-api, the openplate-core admin CLI
                                Make an older blob version current again, deleting
                                every version above it. Read the playbook first:
                                docs/operations/restoring-a-wiped-diary.md
+    trials grant-lapsed --trial-days <n> [--apply] [--exclude <id,id>]
+                               Give the scan trial to day trials that ran out
+                               unpaid. A dry run unless --apply
     push keygen                Print a fresh VAPID key pair for the environment
     settings get               What this instance's settings say
     settings set nutrient-reference-basis dge|efsa|us
@@ -107,6 +121,10 @@ const USAGE = `sync-api, the openplate-core admin CLI
     --allowance-expires <iso|none>  When an account's AI allowance ends.
                            "none" clears the date, so the allowance never ends
     --expires-in-days <n>  Invite lifetime, 1-30 (default 7)
+    --trial                The invite carries the instance's free scans
+    --trial-days <n>       How long the old day trial was (for grant-lapsed)
+    --apply                Write the grant; without it, grant-lapsed only lists
+    --exclude <id,id>      Accounts grant-lapsed must leave alone
 
   Authentication:
     ADMIN_TOKEN must be set in the environment. There is no --token flag, on
@@ -128,6 +146,10 @@ interface Invocation {
   allowanceExpires: string | null;
   expiresInDays: string | null;
   toVersion: string | null;
+  trial: boolean;
+  trialDays: string | null;
+  apply: boolean;
+  exclude: string | null;
   json: boolean;
   yes: boolean;
   help: boolean;
@@ -148,6 +170,10 @@ function parseInvocation(argv: string[]): Invocation {
       'allowance-expires': { type: 'string' },
       'expires-in-days': { type: 'string' },
       'to-version': { type: 'string' },
+      trial: { type: 'boolean', default: false },
+      'trial-days': { type: 'string' },
+      apply: { type: 'boolean', default: false },
+      exclude: { type: 'string' },
       json: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -167,6 +193,10 @@ function parseInvocation(argv: string[]): Invocation {
     allowanceExpires: parsed.values['allowance-expires'] ?? null,
     expiresInDays: parsed.values['expires-in-days'] ?? null,
     toVersion: parsed.values['to-version'] ?? null,
+    trial: parsed.values.trial === true,
+    trialDays: parsed.values['trial-days'] ?? null,
+    apply: parsed.values.apply === true,
+    exclude: parsed.values.exclude ?? null,
     json: parsed.values.json === true,
     yes: parsed.values.yes === true,
     help: parsed.values.help === true,
@@ -199,6 +229,20 @@ function limitFrom(value: string): AccountPatchBody {
     throw new CliError('accounts set-limit needs a whole number of requests a day, 0 or more.');
   }
   return { dailyAiLimit: limit };
+}
+
+/**
+ * The count argument of `accounts set-trial` (M253), or a refusal. `none`
+ * takes the scan trial away, which is a different statement from `0`: an
+ * account with `0` is refused every scan, one with none is a standing grant.
+ */
+function trialFrom(value: string): AccountPatchBody {
+  if (value === 'none') return { trialScans: null };
+  const scans = Number(value);
+  if (!Number.isInteger(scans) || scans < 0 || scans > 100) {
+    throw new CliError('accounts set-trial needs a whole number of scans from 0 to 100, or "none".');
+  }
+  return { trialScans: scans };
 }
 
 /**
@@ -279,6 +323,13 @@ function listQuery(invocation: Invocation): string {
 
 function print(line: string): void {
   process.stdout.write(`${line}\n`);
+}
+
+/** The PATCH body of the three one-value `accounts` commands. */
+function patchFor(input: { subcommand: 'set-role' | 'set-limit' | 'set-trial'; value: string }): AccountPatchBody {
+  if (input.subcommand === 'set-role') return roleFrom(input.value);
+  if (input.subcommand === 'set-limit') return limitFrom(input.value);
+  return trialFrom(input.value);
 }
 
 async function runAccounts(client: AdminClient, invocation: Invocation): Promise<void> {
@@ -370,12 +421,12 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
     return;
   }
 
-  if (subcommand === 'set-role' || subcommand === 'set-limit') {
+  if (subcommand === 'set-role' || subcommand === 'set-limit' || subcommand === 'set-trial') {
     const id = accountIdArgument(invocation);
     // The third positional, because a value this short is clearer beside the id
     // than behind a flag: `accounts set-role 7 admin` reads as the sentence it is.
     const value = invocation.command[3] ?? '';
-    const patch = subcommand === 'set-role' ? roleFrom(value) : limitFrom(value);
+    const patch = patchFor({ subcommand, value });
     const account = decodeSingleAccount(
       await client.request({ method: 'PATCH', path: `/v1/admin/accounts/${id}`, body: patch }),
     );
@@ -414,7 +465,7 @@ async function runAccounts(client: AdminClient, invocation: Invocation): Promise
   }
 
   throw new CliError(
-    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, set-expiry, suspend, reactivate, reset-mail, blob-versions, rollback.`,
+    `Unknown accounts subcommand "${subcommand}". Try: list, get, delete, set-role, set-limit, set-expiry, set-trial, suspend, reactivate, reset-mail, blob-versions, rollback.`,
   );
 }
 
@@ -445,6 +496,13 @@ async function runInvites(client: AdminClient, invocation: Invocation): Promise<
         throw new CliError('--role must be "admin" or "member".');
       }
       body.role = invocation.role;
+    }
+    if (invocation.trial) {
+      // The service refuses a trial beside an allowance; say so before sending.
+      if (invocation.dailyAiLimit !== null) {
+        throw new CliError('--trial carries the instance\'s own daily limit: leave out --daily-ai-limit.');
+      }
+      body.trial = true;
     }
     if (invocation.dailyAiLimit !== null) {
       const limit = Number(invocation.dailyAiLimit);
@@ -531,6 +589,34 @@ function runPush(invocation: Invocation): void {
       'instance sends no notifications at all.',
     ].join('\n'),
   );
+}
+
+/**
+ * `trials grant-lapsed` (M253): the one-off grant of the scan trial to day
+ * trials that ran out unpaid. A DRY RUN UNLESS `--apply`, so the operator can
+ * hold the list against the biller before anything is written.
+ */
+async function runTrials(client: AdminClient, invocation: Invocation): Promise<void> {
+  const subcommand = invocation.command[1] ?? '';
+  if (subcommand !== 'grant-lapsed') {
+    throw new CliError(`Unknown trials subcommand "${subcommand}". Try: grant-lapsed.`);
+  }
+  const trialDays = Number(invocation.trialDays ?? '');
+  if (!Number.isInteger(trialDays) || trialDays < 1 || trialDays > 30) {
+    throw new CliError('trials grant-lapsed needs --trial-days <n>, the old day trial\'s length, e.g. 3.');
+  }
+  const excludeAccountIds = (invocation.exclude ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .map((part) => {
+      const id = Number(part);
+      if (!Number.isInteger(id) || id < 1) throw new CliError(`--exclude takes account ids, and "${part}" is not one.`);
+      return id;
+    });
+  const body: LapsedGrantBody = { trialDays, apply: invocation.apply, excludeAccountIds };
+  const grant = decodeLapsedGrant(await client.request({ method: 'POST', path: '/v1/admin/trials/grant-lapsed', body }));
+  print(invocation.json ? JSON.stringify(grant, null, 2) : formatLapsedGrant(grant));
 }
 
 /** The one settings key this service has, as an operator types it, and the JSON field it becomes. */
@@ -649,6 +735,10 @@ async function run(argv: string[]): Promise<void> {
   }
   if (command === 'settings') {
     await runSettings(client, invocation);
+    return;
+  }
+  if (command === 'trials') {
+    await runTrials(client, invocation);
     return;
   }
   if (command === 'stats') {

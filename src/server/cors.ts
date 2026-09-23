@@ -38,11 +38,14 @@ const ALLOWED_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
  * pulse writes were walked in a browser, and `Access-Control-Max-Age` then kept
  * the refusal cached for a day.
  *
+ * `X-Intake-Id` (M253) is the AI proxy's: one id per person action, which
+ * a retry of that action reuses so it costs one free scan and not two.
+ *
  * ADDING A ROUTE THAT READS A REQUEST HEADER MEANS ADDING IT HERE.
  * `tests/integration/cors-preflight.test.ts` walks the source for
  * `req.header(...)` and fails when a name is missing from this line.
  */
-const ALLOWED_HEADERS = 'Authorization, Content-Type, Idempotency-Key';
+const ALLOWED_HEADERS = 'Authorization, Content-Type, Idempotency-Key, X-Intake-Id';
 /**
  * EVERY RESPONSE HEADER A CROSS-ORIGIN CALLER IS ALLOWED TO READ, and this is a
  * separate list from the one above for a separate browser rule.
@@ -54,11 +57,16 @@ const ALLOWED_HEADERS = 'Authorization, Content-Type, Idempotency-Key';
  * service compute reached nobody. The client then has to guess a backoff on the
  * one answer that tells it exactly how long to wait.
  *
- * ONE NAME, NOT A WILDCARD. `*` would publish every header this service ever
+ * NAMES, NOT A WILDCARD. `*` would publish every header this service ever
  * sends to any page on the internet, and the list of those is not a decision
  * this line should make for a route added later.
+ *
+ * THE AI PROXY'S THREE (M253): `X-Trial-Scans-Left`, so the app counts free
+ * scans down from the answer without asking for the account again, and the
+ * two quota headers, which the proxy has sent since M192 and no browser could
+ * read.
  */
-const EXPOSED_HEADERS = 'Retry-After';
+const EXPOSED_HEADERS = 'Retry-After, X-Trial-Scans-Left, X-Quota-Used, X-Quota-Limit';
 /** How long a browser may cache the preflight. 24h — the policy is static, so re-asking is pure latency. */
 const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
 

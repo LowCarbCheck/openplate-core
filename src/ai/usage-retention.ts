@@ -28,6 +28,7 @@
 import type { AiQuotaStore } from './quota-store.js';
 import type { Logger } from '../logger.js';
 import { utcDayKeyDaysBefore } from '../lib/utc-day.js';
+import { INTAKE_RETENTION_MS } from '../accounts/scan-trial.js';
 
 /**
  * How many UTC days of AI usage counters are kept, counting today.
@@ -107,10 +108,18 @@ export function startAiUsageRetention(options: AiUsageRetentionOptions): AiUsage
   const { logger } = options;
 
   async function runOnce(): Promise<{ deleted: number }> {
+    const now = options.now();
     const result = await purgeExpiredAiUsage({
       quota: options.quota,
-      before: aiUsageRetentionCutoffDay(options.now()),
+      before: aiUsageRetentionCutoffDay(now),
     });
+    // THE SCAN TRIAL'S INTAKE ROWS (M253), on the same tick: one opaque id and a
+    // time per AI action of a trial account, kept a day and no longer. A count
+    // in the log line, never an account.
+    const intakes = await options.quota.purgeTrialIntakesBefore({
+      before: new Date(now.getTime() - INTAKE_RETENTION_MS),
+    });
+    if (intakes > 0) logger.info('Deleted trial intake rows older than a day', { deleted: intakes });
     // The COUNT and the window, never an account id and never a day. This line
     // says the limit was kept; naming whose counter expired would put a person
     // back into a log that outlives the row it describes.

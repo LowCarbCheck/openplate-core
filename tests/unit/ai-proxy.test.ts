@@ -27,6 +27,7 @@ import type { JsonValue } from '../../src/lib/json.js';
 import { hashToken } from '../../src/lib/tokens.js';
 import type { LogFields, Logger } from '../../src/logger.js';
 import { createAuthFixture, type AuthFixture } from './auth-context-fixture.js';
+import { createUnusedTrialScanStore } from './fake-trial-scans.js';
 
 const servers: Server[] = [];
 
@@ -131,6 +132,7 @@ interface RecordingQuota extends AiQuotaStore {
 
 function createRecordingQuota(options: { failAt?: number; instanceFailAt?: number } = {}): RecordingQuota {
   const store: RecordingQuota = {
+    ...createUnusedTrialScanStore(),
     reserves: 0,
     releases: 0,
     count: 0,
@@ -245,6 +247,7 @@ async function startProxy(options: {
       accounts: fixture.store,
       logger: logger.logger,
       instanceDailyLimit: options.instanceDailyLimit ?? null,
+      trialInstanceDailyLimit: null,
       now: fixture.now,
     }),
   );

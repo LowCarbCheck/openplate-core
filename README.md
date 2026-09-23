@@ -165,6 +165,21 @@ is the default. `0` stops the boot rather than turning AI off. To disable AI
 completely, unset `UPSTREAM_BASE_URL` and `UPSTREAM_API_KEY`. The ceiling is not
 published on `/health`. `GET /v1/admin/stats` reports it to you.
 
+**New accounts can get free AI scans.** Set `TRIAL_SCANS` and
+`TRIAL_DAILY_AI_LIMIT`, both or neither, with `TRIAL_ADDRESS_PEPPER` beside
+them. An account from open sign-up, from an invite minted with
+`pnpm sync-api invites create --trial`, or (with `MEMBER_INVITE_TRIAL=true`)
+from a member's invitation gets that many scans with no end date. A scan is one
+AI action the person started: the app sends one `X-Intake-Id` per action, a
+retry of it rides on the same scan, and an action that got no answer gives its
+scan back. After the last scan the proxy answers `403 trial-scans-spent`. A
+future allowance date, which a payment writes, lifts the count. One mailbox gets
+one trial, also after the account is deleted: deleting an account then keeps
+only a keyed hash of the mailbox and scrubs the address from its invite rows.
+`AI_TRIAL_INSTANCE_DAILY_LIMIT` caps what all trial accounts together spend per
+UTC day. `pnpm sync-api trials grant-lapsed --trial-days 3` gives the scans to
+day trials that ran out unpaid, as a dry run until you add `--apply`.
+
 **Members can hand out an AI trial, if you let them.** Set
 `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`, both or
 neither. An ordinary member can then invite someone through
@@ -172,7 +187,9 @@ neither. An ordinary member can then invite someone through
 UTC day, for that many days after signup. `MEMBER_INVITE_LIFETIME_CAP`, default
 5, sets how many invitations one member may create. Once an allowance expires,
 the proxy answers `403 allowance-expired`, while sync keeps working. With
-neither variable set, the route answers the ordinary unknown-path 404.
+neither variable set, the route answers the ordinary unknown-path 404. With
+`MEMBER_INVITE_TRIAL=true` instead of the pair, a member's invitation grants the
+free scans above rather than a number of days.
 openplate's
 [configuration guide](https://github.com/LowCarbCheck/openplate/blob/main/docs/configuration.md#member-invites)
 has the full rules.
@@ -424,7 +441,9 @@ never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
 `FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`,
 `MEMBER_INVITE_DAILY_AI_LIMIT`, `MEMBER_INVITE_ALLOWANCE_DAYS`,
 `MEMBER_INVITE_LIFETIME_CAP`, `OPEN_SIGNUP`, `TURNSTILE_SECRET_KEY`,
-`TURNSTILE_SITE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+`TURNSTILE_SITE_KEY`, `TRIAL_SCANS`, `TRIAL_DAILY_AI_LIMIT`,
+`TRIAL_ADDRESS_PEPPER`, `MEMBER_INVITE_TRIAL`,
+`AI_TRIAL_INSTANCE_DAILY_LIMIT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
 `VAPID_SUBJECT`, `PLANS_UPSTREAM_URL`, `PLANS_UPSTREAM_SECRET` and
 `BILLING_TOKEN` are forwarded there too. If you run your own Compose file
 rather than the one in `docker/`, name each variable you rely on in its

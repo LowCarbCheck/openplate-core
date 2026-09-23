@@ -40,9 +40,11 @@
  * not a limit. It is here rather than in a second store because both halves
  * write counters this module is the only writer of.
  */
-import { and, eq, gt, lt, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, lt, sql } from 'drizzle-orm';
+import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import type { Database } from '../db/client.js';
-import { aiInstanceDays, aiUsageDays } from '../db/schema.js';
+import { accounts, aiInstanceDays, aiTrialIntakes, aiUsageDays } from '../db/schema.js';
+import { INTAKE_MAX_REQUESTS, INTAKE_REUSE_WINDOW_MS } from '../accounts/scan-trial.js';
 
 /**
  * The outcome of a reservation.
@@ -53,7 +55,7 @@ import { aiInstanceDays, aiUsageDays } from '../db/schema.js';
  */
 export type ReserveResult = { ok: true; used: number; limit: number } | { ok: false; used: number; limit: number };
 
-export interface AiQuotaStore extends AiInstanceCeilingStore {
+export interface AiQuotaStore extends AiInstanceCeilingStore, AiTrialScanStore {
   /**
    * Takes one unit of the account's allowance for the given UTC day, atomically.
    *
@@ -84,6 +86,9 @@ export function createDrizzleAiQuotaStore(db: Database): AiQuotaStore {
     // than re-declared, so there is exactly one implementation of each and one
     // store the proxy has to be handed.
     ...createDrizzleAiInstanceCeiling(db),
+    // The scan trial's half (M253), from the bottom of this file, for the same
+    // reason: one implementation of each, one store handed to the proxy.
+    ...createDrizzleAiTrialScans(db),
 
     async reserve(input: { accountId: number; day: string; limit: number }): Promise<ReserveResult> {
       const rows = await db
@@ -249,4 +254,220 @@ export interface AiInstanceCeilingStore {
    * `ai/proxy.ts`).
    */
   releaseInstance(input: { day: string }): Promise<void>;
+}
+
+// =============================================================================
+// The scan trial (M253)
+// =============================================================================
+
+/**
+ * A claimed or reused scan: the intake it rides on, and the scans left after
+ * this request. `ok: false` is the last scan already used.
+ */
+export type TrialClaim = { ok: true; intakeId: string; left: number } | { ok: false };
+
+/**
+ * Thrown inside the claim transaction to roll it back when no scan is left,
+ * and caught right outside it. A `return` would COMMIT the placeholder intake
+ * row, which is the half-write this signal exists to prevent. Never thrown out
+ * of this module.
+ */
+class TrialScansSpentSignal extends Error {
+  constructor() {
+    super('trial scans spent');
+    this.name = 'TrialScansSpentSignal';
+  }
+}
+
+/**
+ * The scan counter, written in the same discipline as the two counters above:
+ * every bound is the `WHERE` of one statement, so the database decides once
+ * per request, and a give-back is floored at zero.
+ *
+ * THE CLAIM IS ONE TRANSACTION OVER TWO ROWS.
+ *
+ *  1. The intake row is inserted with `requests = 0` if it is not there, and
+ *     then locked (`FOR UPDATE`). Two parallel requests with one new id
+ *     serialise here: the second one's insert waits for the first to commit,
+ *     finds the row, and reuses the scan the first one claimed.
+ *  2. A row that is younger than {@link INTAKE_REUSE_WINDOW_MS} and carries
+ *     fewer than {@link INTAKE_MAX_REQUESTS} requests is reused: `requests + 1`
+ *     and no new scan. Anything else claims one:
+ *
+ *     ```sql
+ *     UPDATE accounts SET trial_scans_used = trial_scans_used + 1
+ *     WHERE id = $1 AND trial_scans IS NOT NULL AND trial_scans_used < trial_scans
+ *     RETURNING trial_scans, trial_scans_used
+ *     ```
+ *
+ *     No row back is the last scan already used, and the whole transaction
+ *     rolls back so no intake row is left behind.
+ *
+ * THE GIVE-BACK undoes one request: `requests - 1`, and when that reaches zero
+ * on an intake that never delivered an answer, the row goes and the scan is
+ * returned, floored at zero like every release here.
+ */
+export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
+  return {
+    async claimTrialScan(input: { accountId: number; intakeId: string; now: Date }): Promise<TrialClaim> {
+      try {
+        return await db.transaction(async (tx): Promise<TrialClaim> => {
+          await tx
+            .insert(aiTrialIntakes)
+            .values({ accountId: input.accountId, intakeId: input.intakeId, createdAt: input.now, requests: 0 })
+            .onConflictDoNothing();
+          const [intake] = await tx
+            .select({ requests: aiTrialIntakes.requests, createdAt: aiTrialIntakes.createdAt })
+            .from(aiTrialIntakes)
+            .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)))
+            .for('update');
+          if (!intake) throw new Error('the intake row was not there after its insert');
+
+          const isReusable =
+            intake.requests > 0 &&
+            intake.requests < INTAKE_MAX_REQUESTS &&
+            input.now.getTime() - intake.createdAt.getTime() < INTAKE_REUSE_WINDOW_MS;
+          if (isReusable) {
+            await tx
+              .update(aiTrialIntakes)
+              .set({ requests: intake.requests + 1 })
+              .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)));
+            const [account] = await tx
+              .select({ granted: accounts.trialScans, used: accounts.trialScansUsed })
+              .from(accounts)
+              .where(eq(accounts.id, input.accountId));
+            const left = Math.max(0, (account?.granted ?? 0) - (account?.used ?? 0));
+            return { ok: true, intakeId: input.intakeId, left };
+          }
+
+          const [claimed] = await tx
+            .update(accounts)
+            .set({ trialScansUsed: sql`${accounts.trialScansUsed} + 1` })
+            .where(
+              and(
+                eq(accounts.id, input.accountId),
+                isNotNull(accounts.trialScans),
+                lt(accounts.trialScansUsed, accounts.trialScans),
+              ),
+            )
+            .returning({ granted: accounts.trialScans, used: accounts.trialScansUsed });
+          if (!claimed) throw new TrialScansSpentSignal();
+
+          await tx
+            .update(aiTrialIntakes)
+            .set({ requests: 1, delivered: false, createdAt: input.now })
+            .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)));
+          return { ok: true, intakeId: input.intakeId, left: Math.max(0, (claimed.granted ?? 0) - claimed.used) };
+        });
+      } catch (error) {
+        if (error instanceof TrialScansSpentSignal) return { ok: false };
+        throw error;
+      }
+    },
+
+    async releaseTrialScan(input: {
+      accountId: number;
+      intakeId: string;
+      undeliver: boolean;
+    }): Promise<{ givenBack: boolean }> {
+      return await db.transaction(async (tx): Promise<{ givenBack: boolean }> => {
+        const where = and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId));
+        const changes: PgUpdateSetSource<typeof aiTrialIntakes> = { requests: sql`${aiTrialIntakes.requests} - 1` };
+        // The relay failed after the headers: the person got no answer after
+        // all, so the delivery this request stamped does not count.
+        if (input.undeliver) changes.delivered = false;
+        const [intake] = await tx
+          .update(aiTrialIntakes)
+          .set(changes)
+          .where(and(where, gt(aiTrialIntakes.requests, 0)))
+          .returning({ requests: aiTrialIntakes.requests, delivered: aiTrialIntakes.delivered });
+        if (!intake || intake.requests > 0 || intake.delivered) return { givenBack: false };
+
+        await tx.delete(aiTrialIntakes).where(where);
+        const returned = await tx
+          .update(accounts)
+          .set({ trialScansUsed: sql`${accounts.trialScansUsed} - 1` })
+          // Floored at zero, like every give-back in this module.
+          .where(and(eq(accounts.id, input.accountId), gt(accounts.trialScansUsed, 0)))
+          .returning({ id: accounts.id });
+        return { givenBack: returned.length > 0 };
+      });
+    },
+
+    async markTrialScanDelivered(input: { accountId: number; intakeId: string }): Promise<void> {
+      await db
+        .update(aiTrialIntakes)
+        .set({ delivered: true })
+        .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)));
+    },
+
+    async purgeTrialIntakesBefore(input: { before: Date }): Promise<number> {
+      const deleted = await db
+        .delete(aiTrialIntakes)
+        .where(lt(aiTrialIntakes.createdAt, input.before))
+        .returning({ accountId: aiTrialIntakes.accountId });
+      return deleted.length;
+    },
+
+    async reserveTrialInstance(input: { day: string; limit: number | null }): Promise<ReserveResult> {
+      // Counted on EVERY scan-trial request, so the operator's stats have a
+      // number whether or not a sub-ceiling is set; bounded only when it is.
+      // The insert branch is unguarded for the reason `reserveInstance`'s is:
+      // `config.ts` refuses a limit of zero at boot.
+      const rows = await db
+        .insert(aiInstanceDays)
+        .values({ day: input.day, count: 0, trialCount: 1 })
+        .onConflictDoUpdate({
+          target: aiInstanceDays.day,
+          set: { trialCount: sql`${aiInstanceDays.trialCount} + 1` },
+          where: input.limit === null ? undefined : sql`${aiInstanceDays.trialCount} < ${input.limit}`,
+        })
+        .returning({ count: aiInstanceDays.trialCount });
+      const row = rows[0];
+      const limit = input.limit ?? Number.MAX_SAFE_INTEGER;
+      if (!row) return { ok: false, used: limit, limit };
+      return { ok: true, used: row.count, limit };
+    },
+
+    async releaseTrialInstance(input: { day: string }): Promise<void> {
+      await db
+        .update(aiInstanceDays)
+        .set({ trialCount: sql`${aiInstanceDays.trialCount} - 1` })
+        .where(and(eq(aiInstanceDays.day, input.day), gt(aiInstanceDays.trialCount, 0)));
+    },
+  };
+}
+
+/**
+ * The scan trial's half of the quota store (M253). Declared below its
+ * implementation for the reason `AiInstanceCeilingStore` is: read the
+ * statements first.
+ */
+export interface AiTrialScanStore {
+  /**
+   * Claims a scan for this intake, or rides on the one it already claimed.
+   * Called only for an account the scan gate applies to
+   * (`accounts/scan-trial.ts`, `isScanGated`). `intakeId` is the client's
+   * `X-Intake-Id`, or a server-made one for a request that sent none.
+   */
+  claimTrialScan(input: { accountId: number; intakeId: string; now: Date }): Promise<TrialClaim>;
+  /**
+   * Gives one request back, and the scan with it when it was the last request
+   * on an intake that delivered nothing. `undeliver` first clears the delivery
+   * this request stamped, for an upstream body that failed after its headers.
+   * Never throws out of the proxy's hands (see its give-back).
+   */
+  releaseTrialScan(input: { accountId: number; intakeId: string; undeliver: boolean }): Promise<{ givenBack: boolean }>;
+  /** Stamps the intake delivered when an upstream 2xx's headers arrive: a client disconnect after that keeps the scan. */
+  markTrialScanDelivered(input: { accountId: number; intakeId: string }): Promise<void>;
+  /** Deletes intake rows older than `before`. Driven hourly by `ai/usage-retention.ts`. */
+  purgeTrialIntakesBefore(input: { before: Date }): Promise<number>;
+  /**
+   * Counts one scan-trial request against the day, bounded by
+   * `AI_TRIAL_INSTANCE_DAILY_LIMIT` when it is set (`limit`), unbounded when it
+   * is `null`. `ok: false` is the sub-ceiling reached.
+   */
+  reserveTrialInstance(input: { day: string; limit: number | null }): Promise<ReserveResult>;
+  /** Gives one scan-trial request back to the day, floored at zero. */
+  releaseTrialInstance(input: { day: string }): Promise<void>;
 }

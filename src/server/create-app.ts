@@ -118,6 +118,7 @@ import type { AdminMetadataStore } from '../admin/admin-store.js';
 import type { InviteStore } from '../admin/invite-store.js';
 import { createNoopMailer, type Mailer } from '../mail/mailer.js';
 import type { ThrottleStore } from '../lib/throttle.js';
+import type { TrialPolicy } from '../accounts/scan-trial.js';
 import type { Logger } from '../logger.js';
 import { SERVICE_VERSION } from '../version.js';
 
@@ -197,6 +198,13 @@ export interface AiSurfaceOptions {
    * not the number being enforced.
    */
   instanceDailyLimit: number | null;
+  /**
+   * What all scan-trial accounts together may spend per UTC day
+   * (`AI_TRIAL_INSTANCE_DAILY_LIMIT`, M253), or `null`/absent for no
+   * sub-ceiling. One owner, like `instanceDailyLimit`: the admin stats read it
+   * from here.
+   */
+  trialInstanceDailyLimit?: number | null;
 }
 
 /**
@@ -345,6 +353,13 @@ export interface CreateAppOptions {
    * behind it. See `server/legal-declarations.ts`.
    */
   legal: LegalDeclarationsSurfaceOptions;
+  /**
+   * The instance's scan trial (`TRIAL_SCANS`, `TRIAL_DAILY_AI_LIMIT`, M253), or
+   * `null`/absent for none. What the admin mint's `"trial": true` and the
+   * lapsed-trial grant write. `/health` promises it through `instance.trial`,
+   * which `main.ts` builds from the same binding.
+   */
+  trial?: TrialPolicy | null;
 }
 
 /** What the two statutory buttons need to exist. */
@@ -566,6 +581,7 @@ export function createApp(options: CreateAppOptions): Express {
       perMinute: ai.perMinute,
       maxRequestBytes: ai.maxRequestBytes,
       instanceDailyLimit: ai.instanceDailyLimit,
+      trialInstanceDailyLimit: ai.trialInstanceDailyLimit ?? null,
     });
   }
 
@@ -708,6 +724,11 @@ export function createApp(options: CreateAppOptions): Express {
       // `POST /v1/chat/completions` does not exist on it, so no ceiling
       // applies whatever the environment says.
       aiInstanceDailyLimit: ai?.instanceDailyLimit ?? null,
+      // The same number the proxy enforces, read off the same surface (M253).
+      aiTrialInstanceDailyLimit: ai?.trialInstanceDailyLimit ?? null,
+      // The instance's scan trial, which `"trial": true` and the lapsed-trial
+      // grant write. `null` refuses both with a sentence that says why.
+      trial: options.trial ?? null,
       // The SAME policy `POST /v1/auth/invites` enforces, read off the auth
       // context rather than configured again here (M212), so the `invitesLeft`
       // an operator reads in the console is counted against the same

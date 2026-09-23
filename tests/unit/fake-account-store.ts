@@ -187,6 +187,7 @@ export function createFakeAccountStore(): FakeAccountStore {
       if (input.role !== undefined) account.role = input.role;
       if (input.dailyAiLimit !== undefined) account.dailyAiLimit = input.dailyAiLimit;
       if (input.allowanceExpiresAt !== undefined) account.allowanceExpiresAt = input.allowanceExpiresAt;
+      if (input.trialScans !== undefined) account.trialScans = input.trialScans;
       if (input.displayName !== undefined) account.displayName = input.displayName;
       return { ...account };
     },
@@ -265,9 +266,13 @@ export function createFakeAccountStore(): FakeAccountStore {
         // same injected instant the redemption is stamped with. The real store
         // does the same arithmetic in `db/account-store.ts`.
         allowanceExpiresAt:
-          invite.invitedByAccountId !== null && input.memberInviteAllowanceDays !== null
-            ? new Date(input.now.getTime() + input.memberInviteAllowanceDays * 24 * 60 * 60 * 1000)
+          invite.invitedByAccountId !== null && input.memberInviteGrant?.kind === 'days'
+            ? new Date(input.now.getTime() + input.memberInviteGrant.allowanceDays * 24 * 60 * 60 * 1000)
             : null,
+        // No seeded invite carries a scan trial: `tests/integration` owns the
+        // trial doors against the real store (M253).
+        trialScans: null,
+        trialScansUsed: 0,
         suspendedAt: null,
         verifier: input.account.verifier,
         recoveryVerifier: input.account.recoveryVerifier,
@@ -364,7 +369,7 @@ export function createFakeAccountStore(): FakeAccountStore {
         // The seeded invite carries no inviter, so this value is never read.
         // Named anyway, because the contract requires it and a fixture that
         // omitted a required field would only compile by accident.
-        memberInviteAllowanceDays: null,
+        memberInviteGrant: null,
         account: {
           displayName: input.displayName ?? null,
           verifier: input.verifier ?? `seeded-verifier-${input.email}`,
@@ -457,6 +462,17 @@ export function createFakeAccountStore(): FakeAccountStore {
       );
       insertTokenRows(input.issue);
       return { ok: true };
+    },
+
+    async findLapsedDayTrials(): Promise<number[]> {
+      // The lapsed-trial grant reads the invite row's redemption instant,
+      // which this fake does not keep: `tests/integration/scan-trial.test.ts`
+      // owns it against the real store.
+      return [];
+    },
+
+    async grantScanTrialToLapsedDayTrial(): Promise<boolean> {
+      return false;
     },
 
     async purgeExpiredTokens(input: { before: Date }): Promise<number> {

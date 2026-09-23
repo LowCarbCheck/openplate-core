@@ -86,6 +86,7 @@ before(async () => {
     expiresAt: new Date('2027-01-01T00:00:00.000Z'),
     invitedByAccountId: null,
     source: null,
+    trialScans: null,
     now: new Date('2026-08-31T12:00:00.000Z'),
   });
   if (!minted.ok) throw new Error('expected the fake store to mint an invite');
@@ -168,6 +169,10 @@ test('the account body carries exactly the documented metadata fields and nothin
     'lastSeenAt',
     'role',
     'suspendedAt',
+    // M253, justified against ADR-0001: the account's free scans, granted and
+    // left. An allowance fact of the same kind as `dailyAiLimit`, set by the
+    // operator and shown to the person; nothing about what was scanned.
+    'trialScans',
   ]);
   assert.deepEqual(Object.keys(asObject(account?.blob) ?? {}).toSorted(), ['sizeBytes', 'updatedAt']);
 });

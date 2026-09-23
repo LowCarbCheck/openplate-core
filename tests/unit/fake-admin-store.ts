@@ -43,6 +43,9 @@ export interface AdminSeedInput {
   dailyAiLimit?: number;
   aiUsedToday?: number;
   allowanceExpiresAt?: Date | null;
+  /** The scan trial (M253). Absent is none. */
+  trialScans?: number | null;
+  trialScansUsed?: number;
   suspendedAt?: Date | null;
   lastSeenAt?: Date | null;
   blobSizeBytes?: number;
@@ -84,6 +87,8 @@ export function createFakeAdminStore(): FakeAdminStore {
         aiUsedToday: input.aiUsedToday ?? 0,
         // `null` is the default because it is the column's: no end date at all.
         allowanceExpiresAt: input.allowanceExpiresAt ?? null,
+        trialScans: input.trialScans ?? null,
+        trialScansUsed: input.trialScansUsed ?? 0,
         suspendedAt: input.suspendedAt ?? null,
         createdAt: new Date('2026-08-01T09:00:00.000Z'),
         lastSeenAt: input.lastSeenAt ?? null,
@@ -201,7 +206,12 @@ export function createFakeAdminStore(): FakeAdminStore {
         push: { subscriptions: 0, sentToday: 0 },
         // ZEROES: this fake holds no invites. `tests/integration/
         // signup-request.test.ts` owns the non-zero case.
-        signup: { openSignupInvitesToday: 0, openSignupInvitesLast7Days: 0 },
+        signup: {
+          openSignupInvitesToday: 0,
+          openSignupInvitesLast7Days: 0,
+          trialsGrantedLast7Days: 0,
+          trialRequestsToday: 0,
+        },
       };
     },
   };

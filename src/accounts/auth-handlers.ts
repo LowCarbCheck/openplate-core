@@ -27,6 +27,7 @@ import type {
   AccountRecord,
   AccountStore,
   KeyRecordSubmission,
+  MemberInviteGrant,
   NewTokenInput,
   RedeemInviteResult,
 } from './account-store.js';
@@ -68,6 +69,7 @@ import type { AccountView } from '../protocol.js';
 import { SIGNUP_REQUEST_REFUSALS, type OpenSignupSurface } from './open-signup.js';
 import { isDisposableAddress } from './disposable-domains.js';
 import { trialKeyFor } from './trial-key.js';
+import { trialScansView } from './scan-trial.js';
 
 /** Everything the handlers need from the outside world. All of it injected — none of it imported. */
 export interface AuthContext {
@@ -254,6 +256,7 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
     dailyAiLimit: account.dailyAiLimit,
     aiUsedToday,
     allowanceExpiresAt: account.allowanceExpiresAt?.toISOString() ?? null,
+    trialScans: trialScansView({ granted: account.trialScans, used: account.trialScansUsed }),
     suspendedAt: account.suspendedAt?.toISOString() ?? null,
     invitesLeft: invitesLeft({ role: account.role, minted, policy: memberInvites?.policy ?? null }),
     createdAt: account.createdAt.toISOString(),
@@ -493,6 +496,13 @@ function parseSignup(fields: JsonObject): ParseSignupResult {
   };
 }
 
+/** What the instance's member-invite policy grants a member-caused invite at redemption (M212, M253). */
+function memberInviteGrantFor(policy: MemberInvitePolicy | null): MemberInviteGrant | null {
+  if (policy === null) return null;
+  if (policy.kind === 'trial') return { kind: 'trial', scans: policy.trialScans, dailyAiLimit: policy.dailyAiLimit };
+  return { kind: 'days', allowanceDays: policy.allowanceDays };
+}
+
 /**
  * `POST /v1/auth/signup` — redeem an addressed invite and become an account.
  *
@@ -521,7 +531,7 @@ export async function handleSignup(
     // The instance's own number, never the caller's, and it is applied only to
     // an invite a MEMBER caused, and the store decides that from the row. See
     // `AccountStore.redeemInviteAndCreateAccount`.
-    memberInviteAllowanceDays: ctx.memberInvites?.policy.allowanceDays ?? null,
+    memberInviteGrant: memberInviteGrantFor(ctx.memberInvites?.policy ?? null),
     account: {
       displayName: submission.displayName,
       verifier: computeVerifier({ authHash: submission.authHash, pepper: ctx.pepper }),
@@ -1223,6 +1233,10 @@ export async function handleMintMemberInvite(
     // is here rather than defaulted so that reading this call answers it.
     role: 'member',
     dailyAiLimit: surface.policy.dailyAiLimit,
+    // THE SCAN TRIAL, when the member door grants it (M253); the store writes
+    // `0` for a mailbox that already had one. The day door writes none, and
+    // redemption turns the row into a date.
+    trialScans: surface.policy.kind === 'trial' ? surface.policy.trialScans : null,
     expiresAt: new Date(now.getTime() + DEFAULT_INVITE_TTL_MS),
     now,
     // What makes this invitation count against the caller's five, and what
@@ -1325,14 +1339,15 @@ export async function handleSignupRequest(
   // ONE LETTER PER MAILBOX PER DAY, keyed on the trial key so `a.nna@` and
   // `anna+x@` share it. Checked on every accepting branch alike, so the
   // letter bound cannot tell a caller which kind of address it hit.
+  // On the injected clock, like every instant in this file.
+  const now = ctx.now();
   const letterKey = trialKeyFor(email.value);
-  if (surface.letters.check(letterKey).locked) {
+  if (surface.letters.check(letterKey, now.getTime()).locked) {
     ctx.logger.info('Sign-up request answered without a letter: this mailbox had one today');
     return SIGNUP_REQUEST_ACCEPTED;
   }
-  surface.letters.recordFailure(letterKey);
+  surface.letters.recordFailure(letterKey, now.getTime());
 
-  const now = ctx.now();
   if ((await ctx.store.findAccountByEmail(email.value)) !== null) {
     await trySignupLetter(ctx, () => ctx.mailer.sendAccountNotice({ email: email.value }));
     ctx.logger.info('Sign-up request answered with the account notice');
@@ -1350,6 +1365,8 @@ export async function handleSignupRequest(
     displayName: null,
     role: 'member',
     dailyAiLimit: surface.grant.dailyAiLimit,
+    // The instance's scan trial, or `null` on an open instance that runs none.
+    trialScans: surface.grant.trialScans,
     expiresAt: new Date(now.getTime() + DEFAULT_INVITE_TTL_MS),
     now,
     // NOBODY INVITED THIS PERSON, so nobody's member cap is spent and the

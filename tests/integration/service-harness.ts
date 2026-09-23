@@ -36,7 +36,8 @@ import { createThrottleStore, type ThrottleConfig } from '../../src/lib/throttle
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import type { AuthContext, SessionResponse } from '../../src/accounts/auth-handlers.js';
-import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
+import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from '../../src/accounts/member-invites.js';
+import { createTrialAddressHasher } from '../../src/accounts/trial-address.js';
 import { SIGNUP_LETTER_THROTTLE, type OpenSignupSurface } from '../../src/accounts/open-signup.js';
 import type { CaptchaVerifier } from '../../src/accounts/captcha.js';
 import type {
@@ -133,6 +134,8 @@ export interface SignupThroughInviteInput {
   displayName?: string | null;
   role?: 'admin' | 'member';
   dailyAiLimit?: number;
+  /** The scan trial the invite carries (M253). Absent is none, a standing grant. */
+  trialScans?: number | null;
   authHash?: string;
   recoveryAuthHash?: string;
   recoveryCode?: string;
@@ -238,6 +241,8 @@ export interface StartServiceOptions {
      * all. `ai-proxy.test.ts` opts in with a small number deliberately.
      */
     instanceDailyLimit?: number | null;
+    /** `AI_TRIAL_INSTANCE_DAILY_LIMIT` (M253). Absent is no sub-ceiling. */
+    trialInstanceDailyLimit?: number | null;
   } | null;
   /**
    * Absent (the default) boots the service the way every deployment boots
@@ -270,7 +275,15 @@ export interface StartServiceOptions {
    * an allowance window a test can assert as a DATE has to be a number the
    * test names.
    */
-  memberInvites?: { dailyAiLimit?: number; allowanceDays?: number; lifetimeCap?: number } | null;
+  memberInvites?: { dailyAiLimit?: number; allowanceDays?: number; lifetimeCap?: number; trial?: boolean } | null;
+  /**
+   * `TRIAL_SCANS` and `TRIAL_DAILY_AI_LIMIT` (M253). Absent is every instance
+   * that runs no scan trial: no `instance.trial` on `/health`, and `"trial":
+   * true` on an admin mint is a 400.
+   */
+  trial?: { scans: number; dailyAiLimit: number } | null;
+  /** `TRIAL_ADDRESS_PEPPER` (M253). Absent is no keyed mailbox hash, which `main.ts` refuses beside a trial. */
+  trialAddressPepper?: string | null;
   /**
    * Absent (the default) boots the service the way every deployment boots
    * today: no `VAPID_*` variables, and the whole `/v1/push` subtree answering
@@ -351,25 +364,43 @@ export interface StartServiceOptions {
 /** The application server key the harness advertises when a suite opts in. Public by definition, and not a real one. */
 export const TEST_VAPID_PUBLIC_KEY = 'BHarnessPublicKeyForIntegrationTestsOnly';
 
+/**
+ * The member-invite policy a suite asked for: the day pair by default, or the
+ * scan trial under `trial: true`, which needs `StartServiceOptions.trial`
+ * exactly as `MEMBER_INVITE_TRIAL=true` needs the trial pair.
+ */
+function memberInvitePolicyFor(options: StartServiceOptions): MemberInvitePolicy {
+  const member = options.memberInvites;
+  // The default `parseMemberInvites` applies when `MEMBER_INVITE_LIFETIME_CAP`
+  // is unset, so a suite that names nothing exercises what every instance runs on.
+  const lifetimeCap = member?.lifetimeCap ?? DEFAULT_MEMBER_INVITE_LIFETIME_CAP;
+  if (member?.trial === true) {
+    if (options.trial == null)
+      throw new Error('memberInvites.trial needs StartServiceOptions.trial, as the config does');
+    return { kind: 'trial', dailyAiLimit: options.trial.dailyAiLimit, trialScans: options.trial.scans, lifetimeCap };
+  }
+  return {
+    dailyAiLimit: member?.dailyAiLimit ?? 25,
+    allowanceDays: member?.allowanceDays ?? 14,
+    lifetimeCap,
+  };
+}
+
 export async function startService(options: StartServiceOptions): Promise<ServiceHarness> {
   let clock = Date.now();
   const secrets = deriveServerSecrets('integration-test-root-secret-long-enough');
   const mailer = createRecordingMailer();
-  const inviteStore = createInviteStore(options.db);
+  // The keyed mailbox hash (M253), on when a suite names a pepper, as
+  // `main.ts` builds it from `TRIAL_ADDRESS_PEPPER`.
+  const hashAddress = options.trialAddressPepper == null ? null : createTrialAddressHasher(options.trialAddressPepper);
+  const inviteStore = createInviteStore(options.db, { hashAddress });
 
   const memberInviteSurface =
     options.memberInvites == null
       ? null
       : {
           invites: inviteStore,
-          policy: {
-            dailyAiLimit: options.memberInvites.dailyAiLimit ?? 25,
-            allowanceDays: options.memberInvites.allowanceDays ?? 14,
-            // The default `parseMemberInvites` applies when
-            // `MEMBER_INVITE_LIFETIME_CAP` is unset, so a suite that names
-            // nothing exercises what every instance runs on.
-            lifetimeCap: options.memberInvites.lifetimeCap ?? DEFAULT_MEMBER_INVITE_LIFETIME_CAP,
-          },
+          policy: memberInvitePolicyFor(options),
         };
 
   const openSignupSurface: OpenSignupSurface | null =
@@ -377,13 +408,17 @@ export async function startService(options: StartServiceOptions): Promise<Servic
       ? null
       : {
           invites: inviteStore,
-          grant: { dailyAiLimit: options.openSignup.dailyAiLimit ?? 0 },
+          // The instance's trial when the suite sets one, as `main.ts` does.
+          grant:
+            options.trial == null
+              ? { dailyAiLimit: options.openSignup.dailyAiLimit ?? 0, trialScans: null }
+              : { dailyAiLimit: options.trial.dailyAiLimit, trialScans: options.trial.scans },
           captcha: options.openSignup.captcha ?? null,
           letters: createThrottleStore(SIGNUP_LETTER_THROTTLE),
         };
 
   const authContext: AuthContext = {
-    store: createDrizzleAccountStore(options.db),
+    store: createDrizzleAccountStore(options.db, { hashAddress }),
     pepper: secrets.verifierPepper,
     enumerationSecret: secrets.enumerationSecret,
     escrowKey: secrets.escrowKey,
@@ -422,6 +457,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           // 10_000 would write a row on every proxied request and no test
           // could tell the unconfigured path from the configured one.
           instanceDailyLimit: options.ai.instanceDailyLimit ?? null,
+          // `null` by default for the reason `instanceDailyLimit` is (M253).
+          trialInstanceDailyLimit: options.ai.trialInstanceDailyLimit ?? null,
         };
 
   const feedbackSurface =
@@ -469,6 +506,8 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     // does it, so a `create-app` that forgot to report it fails a suite.
     push: pushSurface !== null,
   };
+  // THE SCAN TRIAL, A PROMISE AND THEREFORE ABSENT WHEN OFF, as `main.ts` does it.
+  if (options.trial != null) instance.trial = { scans: options.trial.scans };
   // THE CAPTCHA, ABSENT unless the door is open with one, as `main.ts` does it.
   if (openSignupSurface?.captcha != null) {
     instance.signupCaptcha = { provider: 'turnstile', siteKey: options.openSignup?.captchaSiteKey ?? 'test-site-key' };
@@ -508,6 +547,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     plans: options.plans ?? null,
     // ALWAYS BUILT, no flag beside it, exactly as `pulse` is: the two
     // statutory buttons exist on every instance. See `create-app.ts`.
+    trial: options.trial ?? null,
     legal: {
       store: createDrizzleLegalDeclarationsStore(options.db),
       rateLimitPerMinute: options.legal?.rateLimitPerMinute ?? 10_000,
@@ -551,6 +591,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         now,
         invitedByAccountId: input.invitedByAccountId ?? null,
         source: null,
+        trialScans: input.trialScans ?? null,
       });
       if (!minted.ok) throw new Error(`could not mint an invite for ${input.email}: ${minted.reason}`);
 

@@ -69,8 +69,10 @@ export const SIGNUP_REQUEST_REFUSALS = {
 
 /** What the redeemed account is granted. The instance's, never the caller's. */
 export interface OpenSignupGrant {
-  /** Written on the invite row and copied to the account at redemption. */
+  /** Written on the invite row and copied to the account at redemption. `TRIAL_DAILY_AI_LIMIT`, or `0`. */
   dailyAiLimit: number;
+  /** `TRIAL_SCANS`, or `null` on an open instance that runs no scan trial (M253). */
+  trialScans: number | null;
 }
 
 /**

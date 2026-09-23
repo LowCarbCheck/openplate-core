@@ -26,6 +26,8 @@ export interface AccountView {
   aiUsedToday: number;
   /** When the account's AI allowance ends, or `null` for no end at all. */
   allowanceExpiresAt: string | null;
+  /** The free scans (M253), or `null` for no scan trial. */
+  trialScans: { granted: number; left: number } | null;
   suspendedAt: string | null;
   createdAt: string;
   blobBytes: number | null;
@@ -121,6 +123,7 @@ function decodeAccount(value: JsonValue | undefined): AccountView {
     dailyAiLimit: asNumber(account?.dailyAiLimit) ?? 0,
     aiUsedToday: asNumber(account?.aiUsedToday) ?? 0,
     allowanceExpiresAt: asString(account?.allowanceExpiresAt),
+    trialScans: decodeTrialScans(account?.trialScans),
     suspendedAt: asString(account?.suspendedAt),
     createdAt,
     blobBytes: asNumber(blob?.sizeBytes),
@@ -149,12 +152,23 @@ export function decodeSingleAccount(value: JsonValue): AccountView {
   return decodeAccount(body.account);
 }
 
+/** `trialScans` off an account view (M253). An older instance omits it, which reads as no trial. */
+function decodeTrialScans(value: JsonValue | undefined): { granted: number; left: number } | null {
+  const view = asObject(value);
+  const granted = asNumber(view?.granted);
+  const left = asNumber(view?.left);
+  if (granted === null || left === null) return null;
+  return { granted, left };
+}
+
 export interface InviteView {
   id: number;
   email: string;
   displayName: string | null;
   role: string;
   dailyAiLimit: number;
+  /** The free scans the invite carries (M253), or `null`. */
+  trialScans: number | null;
   createdAt: string;
   expiresAt: string;
   status: string;
@@ -198,6 +212,7 @@ function decodeInvite(value: JsonValue): InviteView {
     displayName: asString(invite?.displayName),
     role: asString(invite?.role) ?? 'member',
     dailyAiLimit: asNumber(invite?.dailyAiLimit) ?? 0,
+    trialScans: asNumber(invite?.trialScans),
     createdAt,
     expiresAt,
     status: asString(invite?.status) ?? 'pending',
@@ -248,6 +263,9 @@ export function formatMintedInvite(minted: MintedInviteView): string {
     `Invite ${minted.invite.id} for ${minted.invite.email}.`,
     `Expires ${minted.invite.expiresAt}. It creates ONE account, as ${minted.invite.role}, with ${minted.invite.dailyAiLimit} AI requests a day.`,
   ];
+  if (minted.invite.trialScans !== null) {
+    header.push(`It carries a trial of ${minted.invite.trialScans} free AI scans with no end date.`);
+  }
 
   // MAILED MEANS THE OPERATOR NEEDS NOTHING ELSE, so the capability is not
   // printed: a link in a terminal is a link in a scrollback buffer, and the
@@ -413,6 +431,7 @@ export function formatAccountDetail(account: AccountView): string {
     `role            ${account.role}`,
     `ai today        ${account.aiUsedToday} of ${account.dailyAiLimit}`,
     `ai allowance    ${account.allowanceExpiresAt === null ? 'no end date' : `ends ${account.allowanceExpiresAt}`}`,
+    `free scans      ${account.trialScans === null ? 'none' : `${account.trialScans.left} of ${account.trialScans.granted} left`}`,
     `standing        ${account.suspendedAt === null ? 'active' : `suspended ${account.suspendedAt}`}`,
     `created         ${account.createdAt}`,
     `blob            ${account.blobBytes === null ? 'none' : `${formatBytes(account.blobBytes)}, updated ${account.blobUpdatedAt ?? 'unknown'}`}`,
@@ -471,4 +490,34 @@ export function formatRollback(input: { accountId: string; rollback: RollbackVie
     'rows again. Erase the local data on each of those devices before they sync.',
     'See docs/operations/restoring-a-wiped-diary.md.',
   ].join('\n');
+}
+
+/** `POST /v1/admin/trials/grant-lapsed` (M253): which accounts, and whether they were written. */
+export interface LapsedGrantView {
+  accountIds: number[];
+  applied: boolean;
+}
+
+export function decodeLapsedGrant(value: JsonValue): LapsedGrantView {
+  const body = asObject(value);
+  const ids = asArray(body?.accountIds);
+  const applied = asBoolean(body?.applied);
+  if (ids === null || applied === null) throw undocumentedResponse('lapsed-trial grant');
+  return {
+    accountIds: ids.map((id) => asNumber(id)).filter((id): id is number => id !== null),
+    applied,
+  };
+}
+
+export function formatLapsedGrant(grant: LapsedGrantView): string {
+  if (grant.accountIds.length === 0) return 'No lapsed day trial matches: nothing to grant.';
+  const ids = grant.accountIds.join(', ');
+  if (!grant.applied) {
+    return [
+      `${grant.accountIds.length} lapsed day trials would get the scan trial: ${ids}.`,
+      'Nothing was written. Check them against the biller, then run again with --apply,',
+      'and pass the ones to spare with --exclude <id,id>.',
+    ].join('\n');
+  }
+  return `${grant.accountIds.length} accounts got the scan trial: ${ids}.`;
 }

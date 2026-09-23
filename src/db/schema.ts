@@ -133,6 +133,21 @@ export const accounts = pgTable(
      */
     allowanceExpiresAt: timestamp('allowance_expires_at'),
     /**
+     * Free AI scans granted with no end date, or `NULL` for an account with no
+     * scan trial (M253). `0` is a real value: an account whose mailbox already
+     * had its trial, which the proxy refuses with `403 trial-scans-spent`.
+     *
+     * A LIFETIME COUNT, AND THAT IS WHY IT IS HERE. `ai_usage_days` is swept
+     * after ninety days, so a count kept there would hand the scans back.
+     */
+    trialScans: integer('trial_scans'),
+    /**
+     * How many of those scans are used. Moved only by the proxy's claim and
+     * its give-back (`ai/quota-store.ts`), each one statement whose `WHERE`
+     * is the bound, so it never passes `trial_scans` and never goes below 0.
+     */
+    trialScansUsed: integer('trial_scans_used').default(0).notNull(),
+    /**
      * Set when an operator suspends the account, `NULL` while it is in good
      * standing. A suspended account cannot log in, refresh, sync or use AI:
      * every such call is `403 {"error":"account-suspended"}`.
@@ -389,20 +404,30 @@ export const signupInvites = pgTable(
      */
     source: text('source').$type<InviteSource>(),
     /**
-     * The mailbox's trial key (`accounts/trial-key.ts`): the address with a
-     * `+tag` removed, and with its dots removed for Gmail (M253).
+     * A keyed one-way hash of the mailbox (M253): HMAC-SHA256 under
+     * `TRIAL_ADDRESS_PEPPER` over the trial key (`accounts/trial-key.ts`, the
+     * address with a `+tag` removed and Gmail dots removed). Never the address
+     * itself.
      *
-     * WRITTEN ON EVERY NEW ROW, whichever door minted it, so the one address,
-     * one trial rule can ask one indexed question at mint and at redemption:
-     * did this mailbox already redeem a row that carried a trial. `NULL` only
-     * on rows minted before the column existed; redemption derives the key
-     * from `email` for those.
+     * WRITTEN ON EVERY NEW ROW when the pepper is configured, whichever door
+     * minted it, so the one address, one trial rule can ask one indexed
+     * question at mint and at redemption: did this mailbox already redeem a
+     * row that carried a trial. `NULL` on an instance with no pepper and on
+     * rows minted before the column existed; redemption hashes `email` for
+     * those.
      *
-     * IT OUTLIVES THE ACCOUNT, exactly as `email` and `redeemed_at` do: the
-     * account foreign keys on this table are `ON DELETE SET NULL`, so a
-     * self-delete does not reset the mailbox's trial.
+     * CLEARED WITH `email` WHEN THE ACCOUNT IS DELETED. What survives the
+     * account is one row in `trial_address_hashes`, and nothing here.
      */
     trialKey: text('trial_key'),
+    /**
+     * The scan trial this invite carries, or `NULL` for none (M253). Written
+     * at mint from the instance's `TRIAL_SCANS` by the doors that grant one,
+     * `0` when the mailbox already had its trial, and rewritten at redemption
+     * to what the account was actually granted, so a redeemed row is the
+     * record of a trial handed out.
+     */
+    trialScans: integer('trial_scans'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
@@ -566,7 +591,76 @@ export const aiInstanceDays = pgTable('ai_instance_days', {
   /** The UTC calendar day, `YYYY-MM-DD`, and the whole primary key: one row per day for the instance. */
   day: date('day', { mode: 'string' }).primaryKey(),
   count: integer('count').default(0).notNull(),
+  /**
+   * The requests scan-trial accounts spent on this day (M253), counted on
+   * every such request and bounded by `AI_TRIAL_INSTANCE_DAILY_LIMIT` when it
+   * is set. Its own column on the same row for the reason `count` is not a
+   * `SUM`: an erased account must not refund the day.
+   */
+  trialCount: integer('trial_count').default(0).notNull(),
 });
+
+/**
+ * ONE ROW PER AI ACTION OF A SCAN-TRIAL ACCOUNT, kept twenty-four hours
+ * (M253).
+ *
+ * WHY IT EXISTS. A scan is one AI action the person started, and one action
+ * can be more than one upstream request: the app retries once without
+ * `response_format` after a provider refusal, and once after a stale bearer.
+ * The app sends one `X-Intake-Id` per action, and this row is what lets a
+ * retry ride on the scan the first request claimed instead of costing a
+ * second. It is also how a failed action gives its scan back: `requests`
+ * counts the requests still riding on it, and `delivered` says whether any of
+ * them reached the person with an answer.
+ *
+ * AN OPAQUE ID, A TIME AND TWO NUMBERS, NOTHING ELSE. No prompt, no model, no
+ * answer. Only scan-trial accounts write here; everybody else never does. The
+ * hourly usage sweep (`ai/usage-retention.ts`) deletes rows older than a day.
+ */
+export const aiTrialIntakes = pgTable(
+  'ai_trial_intakes',
+  {
+    accountId: integer('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The client's `X-Intake-Id`, or a server-made one for a request that sent none. */
+    intakeId: text('intake_id').notNull(),
+    createdAt: timestamp('created_at').notNull(),
+    /** Requests riding on this intake's scan and not given back. */
+    requests: integer('requests').default(0).notNull(),
+    /** Whether an upstream 2xx arrived for it, after which a client disconnect keeps the scan. */
+    delivered: boolean('delivered').default(false).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.intakeId] }),
+    // Supports the hourly sweep, which deletes by age.
+    index('ai_trial_intakes_created_idx').on(table.createdAt),
+  ],
+);
+
+export type InsertAiTrialIntake = InferInsertModel<typeof aiTrialIntakes>;
+export type SelectAiTrialIntake = InferSelectModel<typeof aiTrialIntakes>;
+
+/**
+ * THE ONE THING KEPT ABOUT A PERSON AFTER THEIR ACCOUNT IS DELETED, when the
+ * account held a trial: a keyed one-way hash of their mailbox (M253).
+ *
+ * WHY. One mailbox gets one trial, also after a self-delete, and that rule
+ * needs to recognise the mailbox again. The hash is HMAC-SHA256 under
+ * `TRIAL_ADDRESS_PEPPER` over the trial key (`accounts/trial-key.ts`), so the
+ * table cannot be reversed or matched against a list of addresses without the
+ * operator's secret, and it holds nothing else: no date, no name, no id.
+ *
+ * WRITTEN ONLY BY `AccountStore.deleteAccount`, in the transaction that
+ * deletes the account and scrubs the address from its invite rows, and only
+ * on an instance with the pepper configured.
+ */
+export const trialAddressHashes = pgTable('trial_address_hashes', {
+  hash: text('hash').primaryKey(),
+});
+
+export type InsertTrialAddressHash = InferInsertModel<typeof trialAddressHashes>;
+export type SelectTrialAddressHash = InferSelectModel<typeof trialAddressHashes>;
 
 export type InsertAiInstanceDay = InferInsertModel<typeof aiInstanceDays>;
 export type SelectAiInstanceDay = InferSelectModel<typeof aiInstanceDays>;

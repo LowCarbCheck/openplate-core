@@ -606,8 +606,11 @@ test('GET /account reports the whole AccountView, including today’s AI spend',
     'invitesLeft',
     'role',
     'suspendedAt',
+    // M253: the free scans, `null` here because this account has no scan trial.
+    'trialScans',
   ]);
   assert.equal(outcome.body.account.aiUsedToday, 3);
+  assert.equal(outcome.body.account.trialScans, null);
   // `null` on this fixture because the instance has member invites off, which
   // is what every deployment runs until an operator sets both settings. The
   // counting-down case is `member-invites.test.ts`.

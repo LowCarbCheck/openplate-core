@@ -32,6 +32,7 @@ import { activityWindow, clampActivityWindowDays } from '../../src/admin/account
 import { utcDayKey, utcDayKeyDaysBefore } from '../../src/lib/utc-day.js';
 import type { AiQuotaStore, ReserveResult } from '../../src/ai/quota-store.js';
 import type { LogFields, Logger } from '../../src/logger.js';
+import { createUnusedTrialScanStore } from './fake-trial-scans.js';
 
 const NOW = new Date('2026-09-07T12:00:00.000Z');
 
@@ -61,6 +62,7 @@ function createRecordingLogger(lines: RecordedLine[]): Logger {
  */
 function createFakeQuota(days: string[]): AiQuotaStore {
   return {
+    ...createUnusedTrialScanStore(),
     async reserve(): Promise<ReserveResult> {
       return { ok: true, used: 1, limit: 1 };
     },

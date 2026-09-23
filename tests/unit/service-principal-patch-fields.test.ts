@@ -107,6 +107,23 @@ test('a body naming suspended is refused and the account is not suspended', asyn
   assert.notEqual(suspended?.suspendedAt, null);
 });
 
+test('a body naming trialScans is refused: the biller writes two fields and free scans are not one', async () => {
+  // M253: the operator's PATCH gained `trialScans`, and the billing
+  // principal's scope did not. A credential that pays for an allowance must
+  // not be able to hand out free scans.
+  const refused = await patchAs({ token: BILLING_TOKEN, body: { trialScans: 50 } });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.error, SERVICE_FIELD_REFUSAL);
+  const account = await harness.fakeAccounts.findAccountById(accountId);
+  assert.equal(account?.trialScans, null);
+
+  // THE CONTROL: the operator's own credential writes it.
+  const allowed = await patchAs({ token: ADMIN_TOKEN, body: { trialScans: 50 } });
+  assert.equal(allowed.status, 200);
+  const granted = await harness.fakeAccounts.findAccountById(accountId);
+  assert.equal(granted?.trialScans, 50);
+});
+
 test('a body naming displayName is refused and the name does not move', async () => {
   const refused = await patchAs({ token: BILLING_TOKEN, body: { displayName: 'Renamed By Biller' } });
   assert.equal(refused.status, 403);

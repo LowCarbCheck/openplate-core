@@ -119,3 +119,31 @@ test('the admin token never appears in the CLI output', async () => {
   assert.ok(!run.stdout.includes(ADMIN_TOKEN), 'stdout must not echo the credential');
   assert.ok(!run.stderr.includes(ADMIN_TOKEN), 'stderr must not echo the credential');
 });
+
+// ── the scan trial commands (M253) ─────────────────────────────────────────
+
+test('accounts set-trial and trials grant-lapsed refuse a bad number and send nothing', async () => {
+  const requestsBefore = server.requests.length;
+  const tooMany = await runCli({
+    args: ['accounts', 'set-trial', '7', '101', '--url', server.baseUrl],
+    adminToken: ADMIN_TOKEN,
+  });
+  assert.notEqual(tooMany.exitCode, 0);
+  const noDays = await runCli({ args: ['trials', 'grant-lapsed', '--url', server.baseUrl], adminToken: ADMIN_TOKEN });
+  assert.notEqual(noDays.exitCode, 0);
+  assert.ok(noDays.stderr.includes('--trial-days'), `stderr must name the flag, saw: ${noDays.stderr}`);
+  assert.equal(server.requests.length, requestsBefore, 'neither typo may reach the network');
+});
+
+test('a valid set-trial and grant-lapsed ARE sent, so the refusals above are not vacuous', async () => {
+  const requestsBefore = server.requests.length;
+  await runCli({ args: ['accounts', 'set-trial', '7', '10', '--url', server.baseUrl], adminToken: ADMIN_TOKEN });
+  await runCli({
+    args: ['trials', 'grant-lapsed', '--trial-days', '3', '--url', server.baseUrl],
+    adminToken: ADMIN_TOKEN,
+  });
+  assert.deepEqual(server.requests.slice(requestsBefore), [
+    'PATCH /v1/admin/accounts/7',
+    'POST /v1/admin/trials/grant-lapsed',
+  ]);
+});

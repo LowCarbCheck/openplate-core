@@ -114,6 +114,8 @@ test('the invite body carries exactly the documented fields and nothing else', a
     'redeemedAccountId',
     'role',
     'status',
+    // M253: the free scans the invite carries, `null` for a standing grant.
+    'trialScans',
   ]);
 });
 

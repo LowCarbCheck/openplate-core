@@ -577,3 +577,75 @@ test('the Turnstile pair beside an open door is the captcha on', () => {
   );
   assert.deepEqual(config.turnstile, { secretKey: 'secret', siteKey: 'site' });
 });
+
+// ── the scan trial (M253) ──────────────────────────────────────────────────
+
+const PEPPER_ENV = { TRIAL_ADDRESS_PEPPER: 'p'.repeat(MIN_SERVER_SECRET_LENGTH) };
+const TRIAL_ENV = { TRIAL_SCANS: '10', TRIAL_DAILY_AI_LIMIT: '50', ...PEPPER_ENV };
+
+test('no new variable boots exactly as before: no trial, no sub-ceiling, no pepper', () => {
+  const config = parseConfig(baseEnv());
+  assert.equal(config.trial, null);
+  assert.equal(config.aiTrialInstanceDailyLimit, null);
+  assert.equal(config.trialAddressPepper, null);
+  assert.equal(config.memberInvites, null);
+});
+
+test('the trial pair is both or neither, and a gap names the missing one', () => {
+  assert.throws(() => parseConfig(baseEnv({ TRIAL_SCANS: '10', ...PEPPER_ENV })), /TRIAL_DAILY_AI_LIMIT is not set/);
+  assert.throws(() => parseConfig(baseEnv({ TRIAL_DAILY_AI_LIMIT: '50', ...PEPPER_ENV })), /TRIAL_SCANS is not set/);
+});
+
+test('the trial count is 1 to 100 and its daily bound is positive', () => {
+  for (const scans of ['0', '101', 'ten', '1.5']) {
+    assert.throws(() => parseConfig(baseEnv({ ...TRIAL_ENV, TRIAL_SCANS: scans })), /TRIAL_SCANS/, scans);
+  }
+  assert.throws(() => parseConfig(baseEnv({ ...TRIAL_ENV, TRIAL_DAILY_AI_LIMIT: '0' })), /TRIAL_DAILY_AI_LIMIT/);
+});
+
+test('the trial needs its pepper, and a short one is refused without being printed', () => {
+  assert.throws(
+    () => parseConfig(baseEnv({ TRIAL_SCANS: '10', TRIAL_DAILY_AI_LIMIT: '50' })),
+    /need TRIAL_ADDRESS_PEPPER/,
+  );
+  const short = 'short-pepper-value';
+  assert.throws(
+    () => parseConfig(baseEnv({ ...TRIAL_ENV, TRIAL_ADDRESS_PEPPER: short })),
+    (error: Error) => /TRIAL_ADDRESS_PEPPER/.test(error.message) && !error.message.includes(short),
+  );
+});
+
+test('the trial pair with its pepper is the trial on', () => {
+  // THE CONTROL for the refusals above.
+  const config = parseConfig(baseEnv(TRIAL_ENV));
+  assert.deepEqual(config.trial, { scans: 10, dailyAiLimit: 50 });
+  assert.equal(config.trialAddressPepper, PEPPER_ENV.TRIAL_ADDRESS_PEPPER);
+});
+
+test('MEMBER_INVITE_TRIAL refuses to stand beside the day pair or without the trial', () => {
+  assert.throws(
+    () => parseConfig(baseEnv({ ...TRIAL_ENV, MEMBER_INVITE_TRIAL: 'true', MEMBER_INVITE_ALLOWANCE_DAYS: '3' })),
+    /never both/,
+  );
+  assert.throws(
+    () => parseConfig(baseEnv({ ...TRIAL_ENV, MEMBER_INVITE_TRIAL: 'true', MEMBER_INVITE_DAILY_AI_LIMIT: '50' })),
+    /never both/,
+  );
+  assert.throws(() => parseConfig(baseEnv({ MEMBER_INVITE_TRIAL: 'true' })), /needs the trial it grants/);
+});
+
+test('MEMBER_INVITE_TRIAL with the trial opens the member door on the scan trial, narrowed by the cap', () => {
+  // THE CONTROL for the refusals above.
+  const config = parseConfig(baseEnv({ ...TRIAL_ENV, MEMBER_INVITE_TRIAL: 'true', MEMBER_INVITE_LIFETIME_CAP: '2' }));
+  assert.deepEqual(config.memberInvites, { kind: 'trial', dailyAiLimit: 50, trialScans: 10, lifetimeCap: 2 });
+  // And the day door still boots on its own, unchanged.
+  const days = parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50', MEMBER_INVITE_ALLOWANCE_DAYS: '3' }));
+  assert.deepEqual(days.memberInvites, { dailyAiLimit: 50, allowanceDays: 3, lifetimeCap: 5 });
+});
+
+test('the trial sub-ceiling refuses zero and refuses an instance with no trial to bound', () => {
+  assert.throws(() => parseConfig(baseEnv({ ...TRIAL_ENV, AI_TRIAL_INSTANCE_DAILY_LIMIT: '0' })), /AI_TRIAL_INSTANCE/);
+  assert.throws(() => parseConfig(baseEnv({ AI_TRIAL_INSTANCE_DAILY_LIMIT: '1000' })), /nothing for it to bound/);
+  // THE CONTROL.
+  assert.equal(parseConfig(baseEnv({ ...TRIAL_ENV, AI_TRIAL_INSTANCE_DAILY_LIMIT: '1000' })).aiTrialInstanceDailyLimit, 1000);
+});

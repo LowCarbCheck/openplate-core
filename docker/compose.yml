@@ -137,6 +137,14 @@ services:
       OPEN_SIGNUP: ${OPEN_SIGNUP:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      # Free AI scans for new accounts: the pair together or neither, and the
+      # pepper with them. MEMBER_INVITE_TRIAL=true makes a member invitation
+      # grant the scans instead of the day pair above. Empty means no trial.
+      TRIAL_SCANS: ${TRIAL_SCANS:-}
+      TRIAL_DAILY_AI_LIMIT: ${TRIAL_DAILY_AI_LIMIT:-}
+      TRIAL_ADDRESS_PEPPER: ${TRIAL_ADDRESS_PEPPER:-}
+      MEMBER_INVITE_TRIAL: ${MEMBER_INVITE_TRIAL:-}
+      AI_TRIAL_INSTANCE_DAILY_LIMIT: ${AI_TRIAL_INSTANCE_DAILY_LIMIT:-}
       # Web push: all three or none. Empty means no notifications.
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}

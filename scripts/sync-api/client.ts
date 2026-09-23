@@ -51,6 +51,8 @@ export interface MintInviteRequestBody {
   role?: string;
   dailyAiLimit?: number;
   expiresInDays?: number;
+  /** The instance's scan trial instead of a standing allowance (M253). */
+  trial?: boolean;
 }
 
 /**
@@ -63,8 +65,17 @@ export interface AccountPatchBody {
   dailyAiLimit?: number;
   /** An ISO instant, or `null` to clear the date. Absent leaves it alone. */
   allowanceExpiresAt?: string | null;
+  /** The free scans granted (M253), or `null` to take the scan trial away. */
+  trialScans?: number | null;
   suspended?: boolean;
   displayName?: string | null;
+}
+
+/** The body of `POST /v1/admin/trials/grant-lapsed` (M253). */
+export interface LapsedGrantBody {
+  trialDays: number;
+  apply: boolean;
+  excludeAccountIds: number[];
 }
 
 /** The body of `POST /v1/admin/accounts/:id/blob/rollback` (M224). One field, because the route takes one decision. */
@@ -90,7 +101,7 @@ export interface AdminRequest {
   /** Absolute path on the service, e.g. `/v1/admin/accounts`. */
   readonly path: string;
   /** Sent as JSON on a `POST` or a `PATCH`. Never carries a credential — the token stays in the header. */
-  readonly body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody;
+  readonly body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody | LapsedGrantBody;
 }
 
 export interface AdminClientOptions {
@@ -169,7 +180,7 @@ export class AdminClient {
   private async send(
     url: string,
     method: HttpMethod,
-    body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody,
+    body?: MintInviteRequestBody | AccountPatchBody | BlobRollbackBody | SettingsPatchBody | LapsedGrantBody,
   ): Promise<Response> {
     // Named rather than an open dictionary, so the one header that carries the
     // credential is part of a fixed shape and cannot be joined by a key some

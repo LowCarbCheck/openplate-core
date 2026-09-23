@@ -71,8 +71,14 @@ const ADMIN_TOKEN = 'admin-9d41c7b8e0a25f36471dcb9e';
  * decides which country's nutrition advice every person on the instance is
  * shown, and a credential that pays for an allowance has no business moving
  * it.
+ *
+ * M253 took it to twenty-one with `POST /trials/grant-lapsed`, the one-off
+ * grant of the scan trial to day trials that ran out unpaid. The decision it
+ * forced: NOT on the allow list. It writes a trial onto accounts nobody pays
+ * for, which is the operator's gift to give, and a biller that could call it
+ * could hand out free scans in bulk.
  */
-const ADMIN_ROUTE_COUNT = 20;
+const ADMIN_ROUTE_COUNT = 21;
 
 let harness: AdminHarness;
 let routes: AdminRouteRef[];
@@ -118,6 +124,8 @@ function buildAdminRouters(): Router[] {
       mailConfigured: false,
       links: null,
       aiInstanceDailyLimit: null,
+      aiTrialInstanceDailyLimit: null,
+      trial: null,
       memberInvites: null,
       // `null` is what a build that wires no settings surface passes. The route
       // is registered either way, which is what this enumeration needs: the

@@ -20,14 +20,17 @@
  *    it owns, inside Postgres, with no application-level cleanup that could be
  *    skipped or half-run. That is the self-serve erasure path.
  */
-import { and, eq, gt, inArray, isNull, lt, ne } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type {
   AccountRecord,
   AccountStore,
   ConsumedPasswordReset,
   CreatePasswordResetInput,
+  GrantLapsedTrialInput,
   InviteAddressing,
   KeyRecordSubmission,
+  LapsedDayTrialQuery,
+  MemberInviteGrant,
   NewTokenInput,
   RecoverAndRotatePassphraseInput,
   RecoverAndRotatePassphraseResult,
@@ -41,7 +44,17 @@ import type { AccountTokenKind } from '../lib/tokens.js';
 import { SESSION_TOKEN_KINDS } from '../lib/tokens.js';
 import { isUniqueViolation } from '../lib/storage-conflict.js';
 import type { Database } from './client.js';
-import { accountTokens, accounts, aiUsageDays, passwordResets, signupInvites, syncKeyRecords } from './schema.js';
+import {
+  accountTokens,
+  accounts,
+  aiUsageDays,
+  passwordResets,
+  signupInvites,
+  syncKeyRecords,
+  trialAddressHashes,
+} from './schema.js';
+import type { TrialAddressHasher } from '../accounts/trial-address.js';
+import { mailboxHadTrial } from './trial-mailbox.js';
 
 /** One day in milliseconds, for the one place this module does date arithmetic. */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -94,6 +107,8 @@ function mapAccountRow(row: AccountRow): AccountRecord {
     role: row.role,
     dailyAiLimit: row.dailyAiLimit,
     allowanceExpiresAt: row.allowanceExpiresAt,
+    trialScans: row.trialScans,
+    trialScansUsed: row.trialScansUsed,
     suspendedAt: row.suspendedAt,
     verifier: row.verifier,
     recoveryVerifier: row.recoveryVerifier,
@@ -175,7 +190,129 @@ async function revokeSessionsIn(tx: Transaction, input: { accountId: number; rev
     );
 }
 
-export function createDrizzleAccountStore(db: Database): AccountStore {
+/** The invite row redemption decides the account's standing from. */
+type InviteRow = typeof signupInvites.$inferSelect;
+
+/** What redemption writes onto the new account, beside the identity. */
+interface RedeemedStanding {
+  dailyAiLimit: number;
+  allowanceExpiresAt: Date | null;
+  trialScans: number | null;
+}
+
+/**
+ * THE ROW DECIDES, NOT THE CONFIG (M212, M253). Four cases, in this order:
+ *
+ *  1. The row carries a scan trial: the account gets it, and no date. Every
+ *     trial door writes this at mint.
+ *  2. A member caused it and the member door now grants the scan trial: the
+ *     account gets the trial pair. This closes the seven days in which a
+ *     letter minted under the day pair can still be redeemed after the
+ *     switch, so it is neither a date nor an unbounded grant.
+ *  3. A member caused it under the day pair: `redeemedAt + days`, off the SAME
+ *     instant the claim was stamped with.
+ *  4. Anything else is the operator's standing grant: no date, no trial.
+ *
+ * A CLAIM ON AN INSTANCE THAT TURNED MEMBER INVITES OFF redeems a member
+ * invite as case 4, which is the honest reading of "this instance no longer
+ * runs trials". The mailbox check for cases 1 and 2 is the caller's.
+ */
+function standingFor(input: { claimed: InviteRow; grant: MemberInviteGrant | null; now: Date }): RedeemedStanding {
+  const { claimed, grant, now } = input;
+  if (claimed.trialScans !== null) {
+    return { dailyAiLimit: claimed.dailyAiLimit, allowanceExpiresAt: null, trialScans: claimed.trialScans };
+  }
+  if (claimed.invitedByAccountId !== null && grant?.kind === 'trial') {
+    return { dailyAiLimit: grant.dailyAiLimit, allowanceExpiresAt: null, trialScans: grant.scans };
+  }
+  if (claimed.invitedByAccountId !== null && grant?.kind === 'days') {
+    return {
+      dailyAiLimit: claimed.dailyAiLimit,
+      allowanceExpiresAt: new Date(now.getTime() + grant.allowanceDays * MS_PER_DAY),
+      trialScans: null,
+    };
+  }
+  return { dailyAiLimit: claimed.dailyAiLimit, allowanceExpiresAt: null, trialScans: null };
+}
+
+/** What the store needs beyond a database. */
+export interface DrizzleAccountStoreOptions {
+  /**
+   * The keyed mailbox hash (`TRIAL_ADDRESS_PEPPER`, M253), or `null`/absent.
+   * With it, redemption and the lapsed-trial grant apply the one mailbox, one
+   * trial rule, and a deletion scrubs the address and keeps only the hash.
+   */
+  hashAddress?: TrialAddressHasher | null;
+}
+
+/**
+ * The rows `findLapsedDayTrials` and its grant select: see the interface doc.
+ * `allowance_expires_at = redeemed_at + trialDays` is the whole of "nobody
+ * paid", because redemption writes exactly that and a payment only ever
+ * writes a later date.
+ */
+function lapsedDayTrialPredicate(input: LapsedDayTrialQuery) {
+  return and(
+    isNull(accounts.trialScans),
+    isNull(accounts.suspendedAt),
+    eq(accounts.role, 'member'),
+    isNotNull(accounts.allowanceExpiresAt),
+    lte(accounts.allowanceExpiresAt, input.now),
+    isNotNull(signupInvites.redeemedAt),
+    sql`${accounts.allowanceExpiresAt} = ${signupInvites.redeemedAt} + make_interval(days => ${input.trialDays})`,
+  );
+}
+
+export function createDrizzleAccountStore(db: Database, options: DrizzleAccountStoreOptions = {}): AccountStore {
+  const hashAddress = options.hashAddress ?? null;
+
+  /**
+   * Deletes an account on an instance with a pepper, keeping ONLY a keyed hash
+   * of its mailbox when it held a trial (M253, the owner's rule).
+   *
+   * ONE TRANSACTION, THREE WRITES:
+   *  1. the hash, when the account held a trial: a scan trial of any size, or
+   *     an invite a member caused (a day trial), whose row may have lost its
+   *     inviter to an earlier deletion but not its `trial_scans`;
+   *  2. every invite row about this mailbox loses its address, its name and
+   *     its hash: rows at the account's own address and rows at any other
+   *     spelling that hashes the same. The row itself stays, because a
+   *     member's lifetime cap counts rows and a deletion must not refund it;
+   *  3. the account, with everything that cascades from it.
+   */
+  async function deleteKeepingOnlyTheHash(accountId: number, hash: TrialAddressHasher): Promise<void> {
+    await db.transaction(async (tx): Promise<void> => {
+      const [account] = await tx
+        .select({ email: accounts.email, trialScans: accounts.trialScans })
+        .from(accounts)
+        .where(eq(accounts.id, accountId))
+        .limit(1);
+      if (!account) return;
+      const mailbox = hash(account.email);
+
+      const [memberCaused] = await tx
+        .select({ id: signupInvites.id })
+        .from(signupInvites)
+        .where(
+          and(
+            eq(signupInvites.redeemedAccountId, accountId),
+            or(isNotNull(signupInvites.invitedByAccountId), isNotNull(signupInvites.trialScans)),
+          ),
+        )
+        .limit(1);
+      if (account.trialScans !== null || memberCaused !== undefined) {
+        await tx.insert(trialAddressHashes).values({ hash: mailbox }).onConflictDoNothing();
+      }
+
+      await tx
+        .update(signupInvites)
+        .set({ email: '', displayName: null, trialKey: null })
+        .where(or(eq(signupInvites.email, account.email), eq(signupInvites.trialKey, mailbox)));
+
+      await tx.delete(accounts).where(eq(accounts.id, accountId));
+    });
+  }
+
   return {
     async findAccountByEmail(email: string): Promise<AccountRecord | null> {
       const [row] = await db.select().from(accounts).where(eq(accounts.email, email)).limit(1);
@@ -205,6 +342,7 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
       if (input.role !== undefined) changes.role = input.role;
       if (input.dailyAiLimit !== undefined) changes.dailyAiLimit = input.dailyAiLimit;
       if (input.allowanceExpiresAt !== undefined) changes.allowanceExpiresAt = input.allowanceExpiresAt;
+      if (input.trialScans !== undefined) changes.trialScans = input.trialScans;
       if (input.displayName !== undefined) changes.displayName = input.displayName;
 
       // An empty patch is refused by the route, so this is unreachable; reading
@@ -310,22 +448,21 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
           // indistinguishably.
           if (!claimed) return { ok: false, reason: 'invite-invalid' };
 
-          // THE ROW DECIDES, NOT THE CONFIG (M212). A member-caused invite
-          // carries an inviting account, and its redemption is what starts the
-          // allowance clock: `redeemedAt + MEMBER_INVITE_ALLOWANCE_DAYS`,
-          // computed off the SAME injected instant the claim above was stamped
-          // with, so the two can never be a millisecond apart. An operator's
-          // invite has a NULL inviter and gets no expiry at all, because a
-          // standing grant is what an operator means unless they set a date
-          // through `PATCH /v1/admin/accounts/:id`.
-          //
-          // An instance that has since turned member invites off redeems an
-          // outstanding member invite with no expiry, which is the honest
-          // reading of "this instance no longer runs trials".
-          const allowanceExpiresAt =
-            claimed.invitedByAccountId !== null && input.memberInviteAllowanceDays !== null
-              ? new Date(input.now.getTime() + input.memberInviteAllowanceDays * MS_PER_DAY)
-              : null;
+          // THE ROW DECIDES, see `standingFor`, and then the ONE MAILBOX, ONE
+          // TRIAL RULE at redemption (M253): a trial for a mailbox that
+          // already redeemed one, under any spelling or before a deletion,
+          // becomes `0`. The mint checked too, but a letter minted before the
+          // other spelling was redeemed would slip past it.
+          const standing = standingFor({ claimed, grant: input.memberInviteGrant, now: input.now });
+          const trialKey = hashAddress === null ? null : hashAddress(claimed.email);
+          if (
+            standing.trialScans !== null &&
+            standing.trialScans > 0 &&
+            trialKey !== null &&
+            (await mailboxHadTrial(tx, { hash: trialKey, exceptInviteId: claimed.id }))
+          ) {
+            standing.trialScans = 0;
+          }
 
           let account: AccountRow | undefined;
           try {
@@ -338,8 +475,9 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
                 email: claimed.email,
                 displayName: input.account.displayName,
                 role: claimed.role,
-                dailyAiLimit: claimed.dailyAiLimit,
-                allowanceExpiresAt,
+                dailyAiLimit: standing.dailyAiLimit,
+                allowanceExpiresAt: standing.allowanceExpiresAt,
+                trialScans: standing.trialScans,
                 verifier: input.account.verifier,
                 recoveryVerifier: input.account.recoveryVerifier,
                 kdfDescriptor: input.account.kdfDescriptor,
@@ -367,7 +505,17 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
             updatedAt: input.now,
           });
 
-          await tx.update(signupInvites).set({ redeemedAccountId: account.id }).where(eq(signupInvites.id, claimed.id));
+          // The row becomes the RECORD of what was granted (M253): the scans the
+          // account actually got, and the mailbox hash for a row minted before
+          // either existed, so the next mint and redemption can find it.
+          await tx
+            .update(signupInvites)
+            .set({
+              redeemedAccountId: account.id,
+              trialScans: standing.trialScans,
+              trialKey: trialKey ?? claimed.trialKey,
+            })
+            .where(eq(signupInvites.id, claimed.id));
 
           return { ok: true, account: mapAccountRow(account) };
         });
@@ -475,7 +623,58 @@ export function createDrizzleAccountStore(db: Database): AccountStore {
       // rather than of this line, which is exactly why
       // `tests/integration/ai-usage-retention.test.ts` COUNTS the usage rows
       // for the id afterwards instead of trusting a 204.
-      await db.delete(accounts).where(eq(accounts.id, accountId));
+      if (hashAddress === null) {
+        await db.delete(accounts).where(eq(accounts.id, accountId));
+        return;
+      }
+      await deleteKeepingOnlyTheHash(accountId, hashAddress);
+    },
+
+    async findLapsedDayTrials(input: LapsedDayTrialQuery): Promise<number[]> {
+      const rows = await db
+        .select({ id: accounts.id, email: accounts.email })
+        .from(accounts)
+        .innerJoin(signupInvites, eq(signupInvites.redeemedAccountId, accounts.id))
+        .where(lapsedDayTrialPredicate(input))
+        .orderBy(accounts.id);
+      const found: number[] = [];
+      for (const row of rows) {
+        // THE MAILBOX RULE, per account: a lapsed day trial whose mailbox
+        // already had a scan trial through another spelling gets no second.
+        if (hashAddress !== null && (await mailboxHadTrial(db, { hash: hashAddress(row.email) }))) continue;
+        found.push(row.id);
+      }
+      return found;
+    },
+
+    async grantScanTrialToLapsedDayTrial(input: GrantLapsedTrialInput): Promise<boolean> {
+      return await db.transaction(async (tx): Promise<boolean> => {
+        const [match] = await tx
+          .select({ id: accounts.id, email: accounts.email, inviteId: signupInvites.id })
+          .from(accounts)
+          .innerJoin(signupInvites, eq(signupInvites.redeemedAccountId, accounts.id))
+          .where(and(eq(accounts.id, input.accountId), lapsedDayTrialPredicate(input)))
+          .limit(1);
+        if (!match) return false;
+        const trialKey = hashAddress === null ? null : hashAddress(match.email);
+        if (trialKey !== null && (await mailboxHadTrial(tx, { hash: trialKey }))) return false;
+
+        await tx
+          .update(accounts)
+          .set({
+            trialScans: input.trial.scans,
+            trialScansUsed: 0,
+            allowanceExpiresAt: null,
+            dailyAiLimit: input.trial.dailyAiLimit,
+          })
+          .where(eq(accounts.id, input.accountId));
+        // The invite row records the trial, exactly as a redemption would.
+        await tx
+          .update(signupInvites)
+          .set({ trialScans: input.trial.scans, trialKey })
+          .where(eq(signupInvites.id, match.inviteId));
+        return true;
+      });
     },
 
     async insertTokens(tokens: NewTokenInput[]): Promise<void> {

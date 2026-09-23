@@ -139,6 +139,7 @@ test('PATCH changes a role, an allowance and a name, and returns the AccountView
     'lastSeenAt',
     'role',
     'suspendedAt',
+    'trialScans',
   ]);
 });
 
@@ -450,6 +451,8 @@ test('stats reports the three fields the console shows beside the counts', async
     'admins',
     'aiInstanceDailyLimit',
     'aiRequestsToday',
+    // M253: the scan-trial accounts' daily sub-ceiling, beside its count.
+    'aiTrialInstanceDailyLimit',
     'blobBytes',
     'blobVersions',
     'keyRecords',
@@ -459,7 +462,7 @@ test('stats reports the three fields the console shows beside the counts', async
     'pulse',
     // M223: two integers about web push, and never a subscription row.
     'push',
-    // M253: the open sign-up door's farming signal, two counts.
+    // M253: the open sign-up door's farming signal and the trials granted.
     'signup',
   ]);
   assert.equal(asNumber(stats?.admins), 1);

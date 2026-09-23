@@ -58,6 +58,10 @@ export interface AdminAccountSummary {
    * thing that reads it.
    */
   allowanceExpiresAt: Date | null;
+  /** Free scans granted, or `null` for no scan trial (M253). */
+  trialScans: number | null;
+  /** How many of them are used. */
+  trialScansUsed: number;
   /** Non-`null` while the account is suspended. */
   suspendedAt: Date | null;
   createdAt: Date;
@@ -167,6 +171,14 @@ export interface AdminStats {
 export interface SignupStats {
   openSignupInvitesToday: number;
   openSignupInvitesLast7Days: number;
+  /**
+   * Invites redeemed in the last seven days that granted at least one free
+   * scan, whichever door minted them (M253): new trials, the other half of
+   * the farming signal.
+   */
+  trialsGrantedLast7Days: number;
+  /** Requests scan-trial accounts spent today (UTC), the number `AI_TRIAL_INSTANCE_DAILY_LIMIT` bounds. */
+  trialRequestsToday: number;
 }
 
 export interface ListAccountsInput {

@@ -51,10 +51,20 @@ export const DEFAULT_MEMBER_INVITE_LIFETIME_CAP = 5;
 export const MEMBER_INVITE_CAP_REACHED = 'member-invite-cap-reached';
 
 /**
- * What an invitation a member causes is worth. Both values are the INSTANCE'S,
- * never the caller's: neither is readable or writable through any request body.
+ * What an invitation a member causes is worth. Every value is the INSTANCE'S,
+ * never the caller's: none is readable or writable through any request body.
+ *
+ * TWO SHAPES, ONE DOOR (M253). The member door grants EITHER a day trial
+ * (`MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`) OR the
+ * instance's scan trial (`MEMBER_INVITE_TRIAL=true`), never both, and
+ * `config.ts` refuses to boot with both. `kind` is optional on the day shape
+ * so every policy written before the scan trial existed still reads as one.
  */
-export interface MemberInvitePolicy {
+export type MemberInvitePolicy = MemberInviteDaysPolicy | MemberInviteTrialPolicy;
+
+/** The day trial: an allowance per day, for a number of days after redemption. */
+export interface MemberInviteDaysPolicy {
+  kind?: 'days';
   /** `MEMBER_INVITE_DAILY_AI_LIMIT`, the redeemed account's AI requests per UTC day. */
   dailyAiLimit: number;
   /** `MEMBER_INVITE_ALLOWANCE_DAYS`, how many days after redemption the allowance ends. */
@@ -64,6 +74,17 @@ export interface MemberInvitePolicy {
    * total, defaulting to {@link DEFAULT_MEMBER_INVITE_LIFETIME_CAP}. Zero is a
    * value: the route stays mounted and every member has nothing to spend.
    */
+  lifetimeCap: number;
+}
+
+/** The scan trial (M253): the instance's `TRIAL_SCANS` free scans with no end date, at `TRIAL_DAILY_AI_LIMIT` a day. */
+export interface MemberInviteTrialPolicy {
+  kind: 'trial';
+  /** `TRIAL_DAILY_AI_LIMIT`. */
+  dailyAiLimit: number;
+  /** `TRIAL_SCANS`. */
+  trialScans: number;
+  /** As on the day shape. */
   lifetimeCap: number;
 }
 

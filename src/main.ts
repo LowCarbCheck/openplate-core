@@ -35,6 +35,7 @@ import { deriveServerSecrets } from './lib/server-secrets.js';
 import { createThrottleStore } from './lib/throttle.js';
 import { SIGNUP_LETTER_THROTTLE, type OpenSignupSurface } from './accounts/open-signup.js';
 import { createTurnstileVerifier } from './accounts/captcha.js';
+import { createTrialAddressHasher } from './accounts/trial-address.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
 import { createMailer } from './mail/mailer.js';
 import { createDeclarationTemplateSource } from './mail/declaration-templates.js';
@@ -100,7 +101,11 @@ async function main(): Promise<void> {
   // BUILT BEFORE THE AUTH CONTEXT, because the member mint is on the auth
   // router and needs the same store the admin tree mints through, see
   // `AuthContext.memberInvites`.
-  const invites = createDrizzleInviteStore(database.db);
+  // THE KEYED MAILBOX HASH (M253), `null` without `TRIAL_ADDRESS_PEPPER`. Both
+  // stores get the same one: the invite store writes it on every new row, and
+  // the account store checks it at redemption and keeps only it at deletion.
+  const hashAddress = config.trialAddressPepper === null ? null : createTrialAddressHasher(config.trialAddressPepper);
+  const invites = createDrizzleInviteStore(database.db, { hashAddress });
 
   // THE OPEN SIGN-UP DOOR (M253), `null` unless `OPEN_SIGNUP=true`, which
   // leaves `POST /v1/auth/signup-request` answering the ordinary unknown-path
@@ -108,15 +113,20 @@ async function main(): Promise<void> {
   const openSignup: OpenSignupSurface | null = config.openSignup
     ? {
         invites,
-        // No trial exists yet, so a new account gets no AI until an operator
-        // grants some; the boot line below says so.
-        grant: { dailyAiLimit: 0 },
+        // The instance's scan trial when it runs one; otherwise no AI until an
+        // operator grants some, and the boot line below says so.
+        grant:
+          config.trial === null
+            ? { dailyAiLimit: 0, trialScans: null }
+            : { dailyAiLimit: config.trial.dailyAiLimit, trialScans: config.trial.scans },
         captcha: config.turnstile === null ? null : createTurnstileVerifier({ config: config.turnstile }),
         letters: createThrottleStore(SIGNUP_LETTER_THROTTLE),
       }
     : null;
-  if (openSignup !== null) {
+  if (openSignup !== null && config.trial === null) {
     logger.info('Open sign-up is on, and new accounts get no AI until an operator grants some');
+  }
+  if (openSignup !== null) {
     if (config.turnstile === null) {
       logger.warn(
         'Open sign-up runs without a captcha. Set TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY to require one.',
@@ -125,7 +135,7 @@ async function main(): Promise<void> {
   }
 
   const authContext: AuthContext = {
-    store: createDrizzleAccountStore(database.db),
+    store: createDrizzleAccountStore(database.db, { hashAddress }),
     pepper: secrets.verifierPepper,
     enumerationSecret: secrets.enumerationSecret,
     escrowKey: secrets.escrowKey,
@@ -193,6 +203,7 @@ async function main(): Promise<void> {
           perMinute: config.aiRateLimitPerMinute,
           maxRequestBytes: config.aiMaxRequestBytes,
           instanceDailyLimit: config.aiInstanceDailyLimit,
+          trialInstanceDailyLimit: config.aiTrialInstanceDailyLimit,
         };
 
   const instance: InstanceInfo = {
@@ -286,6 +297,11 @@ async function main(): Promise<void> {
   // feature was never written. A client that finds no window offers no report.
   if (feedback !== null) instance.feedback = feedbackRetentionAdvertisement();
 
+  // THE SCAN TRIAL, A PROMISE AND THEREFORE ABSENT WHEN OFF (M253), from the
+  // same binding every trial door writes, so the number a client shows is the
+  // number the doors grant.
+  if (config.trial !== null) instance.trial = { scans: config.trial.scans };
+
   // THE CAPTCHA A CLIENT RENDERS, ABSENT unless the door is open AND the
   // operator configured Turnstile. The site key is public by design; the
   // secret never leaves `config.turnstile`.
@@ -345,6 +361,7 @@ async function main(): Promise<void> {
     // ALWAYS BUILT, no flag beside it, exactly as `pulse` is: the two
     // statutory buttons exist on every instance. See `server/create-app.ts`.
     legal: { store: createDrizzleLegalDeclarationsStore(database.db) },
+    trial: config.trial,
   });
 
   // NO HOST MEANS EVERY INTERFACE, and that is the production default on
@@ -376,6 +393,10 @@ async function main(): Promise<void> {
       research: research !== null,
       feedback: feedback !== null,
       memberInvites: config.memberInvites !== null,
+      // Which member door, and the scan trial, never a number.
+      memberInviteTrial: config.memberInvites?.kind === 'trial',
+      trial: config.trial !== null,
+      trialAddressPepper: config.trialAddressPepper !== null,
       openSignup: openSignup !== null,
       // Whether a captcha guards that door, never a key.
       signupCaptcha: openSignup?.captcha != null,

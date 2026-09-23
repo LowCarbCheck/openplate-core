@@ -225,6 +225,12 @@ export function isAccountRole(value: JsonValue | undefined): value is AccountRol
  * `SIGNUP_MODE` is a boot failure (`config.ts`), never a silent no-op.
  */
 
+/** An account's free scans, see {@link AccountView.trialScans}. `left` is never negative. */
+export interface TrialScansView {
+  granted: number;
+  left: number;
+}
+
 /**
  * One account, as every endpoint that returns one reports it. The same shape
  * comes back from `POST /signup`, `POST /login`, `GET /account`,
@@ -255,6 +261,19 @@ export interface AccountView {
    * to the account.
    */
   allowanceExpiresAt: IsoTimestamp | null;
+  /**
+   * The account's free AI scans (M253): `{granted, left}`, or `null` for an
+   * account with no scan trial, which is every account on an instance that
+   * runs none.
+   *
+   * A CLIENT MAY RENDER IT AND MUST NOT AUTHORIZE ON IT. The proxy counts the
+   * scans and answers `403 trial-scans-spent` after the last one
+   * (PROTOCOL.md §5.19); `left` is a snapshot taken when this view was built,
+   * and every proxied response carries the fresh number in
+   * `X-Trial-Scans-Left`. A future `allowanceExpiresAt` lifts the gate, so a
+   * paid account may still carry this field.
+   */
+  trialScans: TrialScansView | null;
   /** Non-`null` while the account is suspended; every authenticated call then answers `403 account-suspended`. */
   suspendedAt: IsoTimestamp | null;
   /**
@@ -335,6 +354,15 @@ export interface InstanceInfo {
    * what a browser renders the widget with, and it grants nothing.
    */
   signupCaptcha?: InstanceSignupCaptcha;
+  /**
+   * The free scans a new account gets here (`TRIAL_SCANS`, M253), or ABSENT
+   * on an instance that runs no scan trial.
+   *
+   * A PROMISE, LIKE `feedback`, SO ABSENT RATHER THAN NULL. An instance with
+   * nothing to promise adds no key, and a client that finds none MUST NOT
+   * state a number of free scans.
+   */
+  trial?: InstanceTrial;
   /**
    * Whether this instance has a biller behind it, so `/v1/plans/*` exists
    * here (`PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, both or neither).
@@ -453,6 +481,11 @@ export const NUTRIENT_REFERENCE_BASES: readonly NutrientReferenceBasis[] = ['dge
 
 export function isNutrientReferenceBasis(value: JsonValue | undefined): value is NutrientReferenceBasis {
   return NUTRIENT_REFERENCE_BASES.some((basis) => basis === value);
+}
+
+/** What {@link InstanceInfo.trial} promises: how many free scans a new account gets. */
+export interface InstanceTrial {
+  scans: number;
 }
 
 /** The captcha the sign-up request needs (M253). One provider today, named so a second is additive. */

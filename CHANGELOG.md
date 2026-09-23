@@ -26,6 +26,27 @@ change moves the minor.
   in the last seven days. Migration `0019` adds `source` and `trial_key` to
   `signup_invites`. Every instance that does not set the variable stays
   invite-only and unchanged.
+- **Ten free scans instead of a trial of days.** With `TRIAL_SCANS` and
+  `TRIAL_DAILY_AI_LIMIT` (and `TRIAL_ADDRESS_PEPPER` beside them), a new
+  account from open sign-up, an invite minted with `"trial": true`, or a member
+  invitation under `MEMBER_INVITE_TRIAL=true` gets that many free AI scans with
+  no end date. The proxy counts one scan per `X-Intake-Id` (a retry of the same
+  action rides on it, a request without one is its own scan), gives it back when
+  the person got no answer, including an upstream 5xx, and refuses the next
+  action with `403 trial-scans-spent`. A future allowance date lifts the count.
+  `AccountView.trialScans` is `{granted, left}` or `null`, every proxied
+  response carries `X-Trial-Scans-Left`, and `/health` promises
+  `instance.trial`. One mailbox gets one trial, also after a deletion: with the
+  pepper, invite rows carry a keyed hash of the mailbox, and deleting an account
+  scrubs its address from them and keeps only that hash.
+  `AI_TRIAL_INSTANCE_DAILY_LIMIT` caps what trial accounts spend per day. The
+  operator PATCH takes `trialScans`, the stats report trials granted and trial
+  requests, and `POST /v1/admin/trials/grant-lapsed` (`pnpm sync-api trials
+  grant-lapsed`) gives the scans to day trials that ran out unpaid. CORS now
+  allows `X-Intake-Id` and exposes `X-Trial-Scans-Left`, `X-Quota-Used` and
+  `X-Quota-Limit`. Migration `0020` adds the counts, the intake table and the
+  hash table. Running three day trials keep their date, and an instance that
+  sets none of this behaves as before.
 
 ## [0.19.0] - 2026-09-23
 

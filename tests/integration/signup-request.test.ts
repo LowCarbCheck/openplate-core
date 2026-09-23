@@ -160,7 +160,8 @@ test('the mailed invitation is an ordinary one: member, no AI, no inviter, and i
     assert.equal(row?.role, 'member');
     assert.equal(row?.dailyAiLimit, 0);
     assert.equal(row?.invitedByAccountId, null);
-    assert.equal(row?.trialKey, 'anna@example.org');
+    // No pepper on this instance, so no mailbox hash, and never the address.
+    assert.equal(row?.trialKey, null);
 
     const signup = await service.request<{ account: { email: string; role: string } }>({
       method: 'POST',
@@ -195,6 +196,7 @@ test('a new address, a pending letter from another door and an existing account 
       now: new Date(service.now()),
       invitedByAccountId: null,
       source: null,
+      trialScans: null,
     });
     assert.ok(operatorMint.ok);
 

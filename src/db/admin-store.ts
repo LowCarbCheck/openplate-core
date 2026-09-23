@@ -44,7 +44,7 @@ import type { AccountActivityCount, ActivityDay } from '../admin/account-activit
 import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { Database } from './client.js';
 import { utcDayKey } from '../lib/utc-day.js';
-import { accounts, aiUsageDays, signupInvites, syncBlobs, syncKeyRecords } from './schema.js';
+import { accounts, aiInstanceDays, aiUsageDays, signupInvites, syncBlobs, syncKeyRecords } from './schema.js';
 import { createDrizzlePulseStore } from '../pulse/pulse-store.js';
 import { createDrizzlePushStore } from '../push/push-store.js';
 
@@ -56,6 +56,8 @@ interface AccountIdentityRow {
   role: AccountRole;
   dailyAiLimit: number;
   allowanceExpiresAt: Date | null;
+  trialScans: number | null;
+  trialScansUsed: number;
   suspendedAt: Date | null;
   createdAt: Date;
   lastSeenAt: Date | null;
@@ -77,6 +79,11 @@ const IDENTITY_COLUMNS = {
   // is the only thing that reads it; it is on the user-facing `AccountView`
   // too, because the person whose trial ends has to be told when.
   allowanceExpiresAt: accounts.allowanceExpiresAt,
+  // The scan trial (M253): on the user-facing `AccountView` too, as
+  // `trialScans: {granted, left}`, because the person counting down has to be
+  // told how many are left.
+  trialScans: accounts.trialScans,
+  trialScansUsed: accounts.trialScansUsed,
   suspendedAt: accounts.suspendedAt,
   createdAt: accounts.createdAt,
   // An operator fact, added in M201: when this person last did something on
@@ -196,6 +203,8 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
       dailyAiLimit: identity.dailyAiLimit,
       aiUsedToday: usage.get(identity.id) ?? 0,
       allowanceExpiresAt: identity.allowanceExpiresAt,
+      trialScans: identity.trialScans,
+      trialScansUsed: identity.trialScansUsed,
       suspendedAt: identity.suspendedAt,
       createdAt: identity.createdAt,
       lastSeenAt: identity.lastSeenAt,
@@ -375,6 +384,14 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         .select({ total: count() })
         .from(signupInvites)
         .where(and(eq(signupInvites.source, 'open-signup'), gt(signupInvites.createdAt, weekAgo)));
+      const [trialsWeek] = await db
+        .select({ total: count() })
+        .from(signupInvites)
+        .where(and(gt(signupInvites.redeemedAt, weekAgo), gt(signupInvites.trialScans, 0)));
+      const [trialDay] = await db
+        .select({ total: aiInstanceDays.trialCount })
+        .from(aiInstanceDays)
+        .where(eq(aiInstanceDays.day, utcDayKey(input.now)));
 
       return {
         accounts: accountTotals?.total ?? 0,
@@ -393,6 +410,8 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         signup: {
           openSignupInvitesToday: openToday?.total ?? 0,
           openSignupInvitesLast7Days: openWeek?.total ?? 0,
+          trialsGrantedLast7Days: trialsWeek?.total ?? 0,
+          trialRequestsToday: trialDay?.total ?? 0,
         },
       };
     },

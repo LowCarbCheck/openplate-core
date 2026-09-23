@@ -51,6 +51,12 @@ export interface InviteSummary {
   role: AccountRole;
   /** The daily AI allowance the redeemed account will get. */
   dailyAiLimit: number;
+  /**
+   * The free scans the redeemed account will get, or `null` for no scan trial
+   * (M253). `0` means the mailbox already had its trial. After redemption it
+   * is what the account was actually granted.
+   */
+  trialScans: number | null;
   createdAt: Date;
   expiresAt: Date;
   /** `null` while the invite is still spendable. */
@@ -78,6 +84,13 @@ export interface MintInviteInput {
   displayName: string | null;
   role: AccountRole;
   dailyAiLimit: number;
+  /**
+   * The instance's `TRIAL_SCANS` for a door that grants the scan trial, or
+   * `null` (M253). REQUIRED AND NULLABLE, like `invitedByAccountId`. The store
+   * writes `0` instead when the mailbox already had a trial, which is the
+   * mint-time half of the one mailbox, one trial rule.
+   */
+  trialScans: number | null;
   expiresAt: Date;
   /** Stamped on the pending invite this mint supersedes, if there is one. Injected, like every instant in this repo. */
   now: Date;
@@ -202,6 +215,10 @@ export interface InviteStore {
    * AN OPERATOR MINT IS NOT ONE. A row with a `NULL` inviter answers `false`
    * here, so somebody who joined through the admin door and left can be
    * invited by a member later, and an operator can always re-invite anybody.
+   *
+   * ON AN INSTANCE WITH `TRIAL_ADDRESS_PEPPER` (M253) the deletion scrubs the
+   * address from the rows, so a deleted mailbox is recognised by the keyed
+   * hash the deletion kept instead (`trial_address_hashes`).
    */
   hasRedeemedMemberInvite(input: { email: string }): Promise<boolean>;
   /**

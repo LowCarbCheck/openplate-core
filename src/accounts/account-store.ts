@@ -17,6 +17,7 @@ import type { AccountRole, SyncKeyRecordKind } from '../protocol.js';
 import type { JsonObject } from '../lib/json.js';
 import type { AccountTokenKind } from '../lib/tokens.js';
 import type { KdfDescriptor } from '../lib/kdf-descriptor.js';
+import type { TrialPolicy } from './scan-trial.js';
 
 export interface AccountRecord {
   id: number;
@@ -40,6 +41,10 @@ export interface AccountRecord {
    * an account MUST check this — login, refresh, the bearer middleware and the
    * recovery paths all answer `403 account-suspended` for a non-`null` value.
    */
+  /** Free scans granted with no end date, or `null` for no scan trial (M253). See `accounts/scan-trial.ts`. */
+  trialScans: number | null;
+  /** How many of them are used. Always `0` for an account with no scan trial. */
+  trialScansUsed: number;
   suspendedAt: Date | null;
   verifier: string;
   /**
@@ -107,9 +112,11 @@ export interface RedeemInviteAndCreateAccountInput {
   now: Date;
   account: CreateAccountInput;
   /**
-   * How many days after redemption a MEMBER-caused invite's allowance ends
-   * (`MEMBER_INVITE_ALLOWANCE_DAYS`), or `null` on an instance where members
-   * cannot invite anybody (M212).
+   * What a MEMBER-caused invite grants at redemption, or `null` on an
+   * instance where members cannot invite anybody (M212). Since M253 either the
+   * day allowance (`MEMBER_INVITE_ALLOWANCE_DAYS`) or the scan trial
+   * (`MEMBER_INVITE_TRIAL`); a member-caused row minted before the switch, with
+   * no `trial_scans`, gets the scan trial on an instance that now runs one.
    *
    * IT DECIDES NOTHING ON ITS OWN. The row does: an invite whose
    * `invited_by_account_id` is `NULL` was minted by the operator and gets no
@@ -122,8 +129,17 @@ export interface RedeemInviteAndCreateAccountInput {
    * `redeemedAt + days` against the SAME injected instant the redemption is
    * stamped with, so the date a test asserts is the date the row carries.
    */
-  memberInviteAllowanceDays: number | null;
+  memberInviteGrant: MemberInviteGrant | null;
 }
+
+/**
+ * What a MEMBER-caused invite grants at redemption, from the instance's
+ * member-invite policy (M212, M253). `days`: the allowance ends that many days
+ * after redemption. `trial`: the scan trial, no date.
+ */
+export type MemberInviteGrant =
+  | { kind: 'days'; allowanceDays: number }
+  | { kind: 'trial'; scans: number; dailyAiLimit: number };
 
 /**
  * What `POST /v1/auth/invite-lookup` shows a person before they choose a
@@ -225,7 +241,15 @@ export type RecoverAndRotatePassphraseResult = { ok: true } | { ok: false; reaso
 export interface AccountStore {
   findAccountByEmail(email: string): Promise<AccountRecord | null>;
   findAccountById(accountId: number): Promise<AccountRecord | null>;
-  /** Cascades to `sync_blobs` and `sync_key_records` via the schema's FKs — the self-serve DSAR path. */
+  /**
+   * Cascades to `sync_blobs` and `sync_key_records` via the schema's FKs — the self-serve DSAR path.
+   *
+   * ON AN INSTANCE WITH `TRIAL_ADDRESS_PEPPER` (M253), in the same
+   * transaction: the address and the name are scrubbed from every invite row
+   * about this mailbox, and when the account held a trial, one keyed hash of
+   * the mailbox is kept so the one trial per mailbox rule survives the
+   * deletion. Nothing else about the person is kept.
+   */
   deleteAccount(accountId: number): Promise<void>;
 
   /**
@@ -396,10 +420,38 @@ export interface AccountStore {
 
   /** Housekeeping: drops rows whose `expiresAt` is far enough in the past to be useless even for reuse detection. */
   purgeExpiredTokens(input: { before: Date }): Promise<number>;
+
+  /**
+   * The accounts whose DAY trial ran out and was never moved (M253, the
+   * owner's decision on the three day trials that never bought).
+   *
+   * "NEVER MOVED" IS HOW THIS SERVICE KNOWS NOBODY PAID. Redemption writes the
+   * date as `redeemed_at + trialDays` to the millisecond, off one injected
+   * instant. The biller only ever writes a LATER date, and an operator's hand
+   * writes a different one, so an account whose date still equals that sum
+   * exactly was never extended by a payment or a person. Any other date is
+   * left alone, which errs toward the paying side.
+   *
+   * ALSO REQUIRED: the date has passed at `now`, the account has no scan trial
+   * yet (so a second run finds nothing, which makes the grant idempotent), it
+   * is a member, it is not suspended, and its mailbox has not had a scan trial
+   * through another spelling or a deleted account.
+   */
+  findLapsedDayTrials(input: LapsedDayTrialQuery): Promise<number[]>;
+
+  /**
+   * Gives one lapsed day-trial account the instance's scan trial: `trial_scans`
+   * set, `trial_scans_used` zeroed, the date cleared, the daily limit set to
+   * `TRIAL_DAILY_AI_LIMIT` (M253). `false` when the account no longer matches
+   * (a concurrent grant, a payment in between), so a repeat is a no-op.
+   */
+  grantScanTrialToLapsedDayTrial(input: GrantLapsedTrialInput): Promise<boolean>;
 }
 
 export interface UpdateStandingInput {
   accountId: number;
+  /** The scans granted (M253), or `null` to take the scan trial away. Absent leaves it alone. */
+  trialScans?: number | null;
   role?: AccountRole;
   dailyAiLimit?: number;
   /**
@@ -417,4 +469,17 @@ export interface CreatePasswordResetInput {
   expiresAt: Date;
   /** Stamped on the rows this request supersedes. Injected, like every other instant in this contract. */
   now: Date;
+}
+
+/** See {@link AccountStore.findLapsedDayTrials}. */
+export interface LapsedDayTrialQuery {
+  /** The day trial's length the redemption wrote, `MEMBER_INVITE_ALLOWANCE_DAYS` at the time. */
+  trialDays: number;
+  now: Date;
+}
+
+/** See {@link AccountStore.grantScanTrialToLapsedDayTrial}. */
+export interface GrantLapsedTrialInput extends LapsedDayTrialQuery {
+  accountId: number;
+  trial: TrialPolicy;
 }

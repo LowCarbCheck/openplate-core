@@ -38,6 +38,7 @@ import {
 } from './feedback-harness.js';
 import type { FeedbackReportDetail } from '../../src/feedback/feedback-admin-store.js';
 import { createFakeBlobRollbackStore, type FakeBlobRollbackStore } from './fake-blob-rollback-store.js';
+import { createUnusedTrialScanStore } from './fake-trial-scans.js';
 
 /** One emitted log line, kept whole so a test can assert on the message AND the fields. */
 export interface CapturedLogLine {
@@ -126,6 +127,7 @@ export interface StartAdminHarnessOptions {
  */
 function createStubQuota(): AiQuotaStore {
   return {
+    ...createUnusedTrialScanStore(),
     async reserve(input: { accountId: number; day: string; limit: number }): Promise<ReserveResult> {
       return { ok: true, used: 1, limit: input.limit };
     },

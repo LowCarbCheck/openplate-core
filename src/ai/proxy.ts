@@ -39,6 +39,31 @@
  *                   spent-vs-released table below; it is the money question.
  *   6. relay      — piped, never buffered, so `stream: true` streams.
  *
+ * ── THE SCAN TRIAL (M253) ───────────────────────────────────────────────────
+ * An account with free scans and NO allowance date is counted per AI action
+ * as well as per request. After the two allowance refusals and the body check
+ * comes THE SCAN CLAIM (`ai/quota-store.ts`): one scan per `X-Intake-Id`, a
+ * retry on the same id riding on it, a request with no id its own action. The
+ * last scan used is `403 trial-scans-spent`, before any usage row and before
+ * any upstream call. A future date lifts the gate: it is a paid or granted
+ * window, and the count only decides where there is no date at all. Then the
+ * trial accounts' own daily sub-ceiling, and the steps below as before.
+ *
+ * THE SCAN HAS ITS OWN GIVE-BACK TABLE, and it differs from the unit's on
+ * purpose, because the scan protects a promise ("failed attempts do not
+ * count") where the unit protects the bill:
+ *
+ *   connect error / headers timeout   RELEASED, as the unit is
+ *   upstream 4xx                      RELEASED, as the unit is
+ *   upstream 5xx                      RELEASED, while the unit stays SPENT: the
+ *                                     person got no answer. A retry loop on a
+ *                                     flaky provider is still bounded by the
+ *                                     account's daily unit.
+ *   body timeout / stream aborted     RELEASED, while the unit stays SPENT
+ *   upstream 2xx, then the CLIENT     SPENT: the answer was on its way, and a
+ *     went away                       person who closed the app got it
+ *   any refusal after the claim       RELEASED, through the same give-back
+ *
  * ── WHAT COUNTS AS SPENT ────────────────────────────────────────────────────
  * "Spent" means: keep the reservation, the account has used one of its daily
  * requests. "Released" means: give it back, the money was never at risk.
@@ -122,8 +147,16 @@ import type { Logger } from '../logger.js';
 import { getRequestSession } from '../server/bearer-auth.js';
 import type { AccountStore } from '../accounts/account-store.js';
 import { ACCOUNT_SUSPENDED } from '../accounts/auth-handlers.js';
-import type { AiQuotaStore } from './quota-store.js';
+import type { AiQuotaStore, TrialClaim } from './quota-store.js';
 import { describeError, scrubPayloads } from './scrub.js';
+import { randomUUID } from 'node:crypto';
+import {
+  INTAKE_ID_INVALID,
+  INTAKE_ID_PATTERN,
+  TRIAL_SCANS_LEFT_HEADER,
+  TRIAL_SCANS_SPENT,
+  isScanGated,
+} from '../accounts/scan-trial.js';
 
 /** The upstream this proxy forwards to, already validated all-or-nothing by `config.ts`. */
 export interface AiUpstreamConfig {
@@ -149,9 +182,25 @@ export interface ChatCompletionsDeps {
    * enforcing it. `null` has to be written out by whoever builds this.
    */
   instanceDailyLimit: number | null;
+  /**
+   * What all scan-trial accounts together may spend per UTC day
+   * (`AI_TRIAL_INSTANCE_DAILY_LIMIT`, M253), or `null` for no sub-ceiling.
+   * Required and nullable for the reason `instanceDailyLimit` is.
+   */
+  trialInstanceDailyLimit: number | null;
   /** Injectable so a test can freeze the UTC day boundary the quota keys on. */
   now?: () => Date;
 }
+
+/** A scan claimed for this request, or `null` when the scan gate does not apply. */
+type ClaimedScan = Extract<TrialClaim, { ok: true }> | null;
+
+/**
+ * The codes a relay fails with when the CALLER went away, rather than the
+ * provider: the response stream closed under the pipe. After a 2xx that keeps
+ * the scan; every other relay failure gives it back.
+ */
+const CLIENT_GONE_CODES = new Set(['ERR_STREAM_PREMATURE_CLOSE', 'ECONNRESET', 'EPIPE', 'ERR_STREAM_DESTROYED']);
 
 /** undici's codes for "the socket was open and nothing arrived in time". */
 const TIMEOUT_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT']);
@@ -215,6 +264,16 @@ export function isTimeoutError(cause: unknown): boolean {
   return false;
 }
 
+/**
+ * Whether a relay failure is the caller hanging up rather than the provider
+ * failing (M253). Read off the thrown value's own code, which is how
+ * `pipeline` reports the response stream closing under it.
+ */
+function isClientGone(cause: unknown): boolean {
+  const code = errorCodeOf(cause);
+  return code !== undefined && CLIENT_GONE_CODES.has(code);
+}
+
 /** Only ever used as a LOG FIELD. The relay path never branches on it — it always pipes. */
 function requestsStreaming(body: JsonValue | undefined): boolean {
   return asBoolean(asObject(body)?.stream) ?? false;
@@ -251,7 +310,7 @@ function createByteCounter(): ByteCounter {
 }
 
 export function createChatCompletionsHandler(deps: ChatCompletionsDeps): RequestHandler {
-  const { accounts, instanceDailyLimit, logger, quota, upstream: upstreamConfig } = deps;
+  const { accounts, instanceDailyLimit, logger, quota, trialInstanceDailyLimit, upstream: upstreamConfig } = deps;
   const now = deps.now ?? ((): Date => new Date());
   const upstreamUrl = `${upstreamConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
@@ -307,9 +366,9 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
    * disciplines would eventually disagree, and the disagreement would look like
    * an instance that had spent more than the sum of its accounts.
    */
-  async function releaseQuietly(input: { accountId: number; day: string }): Promise<void> {
+  async function releaseQuietly(input: { accountId: number; day: string; isTrialDay: boolean }): Promise<void> {
     try {
-      await quota.release(input);
+      await quota.release({ accountId: input.accountId, day: input.day });
     } catch (cause) {
       logger.warn('Could not release a quota reservation', {
         accountId: input.accountId,
@@ -317,7 +376,47 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
         error: describeError(cause),
       });
     }
-    await releaseInstanceQuietly({ day: input.day });
+    await releaseInstanceQuietly({ day: input.day, isTrialDay: input.isTrialDay });
+  }
+
+  /**
+   * Gives a claimed scan back (M253), quietly for the reason `releaseQuietly`
+   * is, and moves `X-Trial-Scans-Left` up by one when it did, so the answer the
+   * person gets says the failed attempt cost nothing.
+   *
+   * NO INTAKE ID IN THE LOG LINE. It is opaque, but it is also a handle a
+   * client chose, and the account id is all an operator needs.
+   */
+  async function giveScanBackQuietly(input: {
+    res: Response;
+    accountId: number;
+    scan: ClaimedScan;
+    undeliver: boolean;
+  }): Promise<void> {
+    if (input.scan === null) return;
+    try {
+      const released = await quota.releaseTrialScan({
+        accountId: input.accountId,
+        intakeId: input.scan.intakeId,
+        undeliver: input.undeliver,
+      });
+      if (released.givenBack && !input.res.headersSent) {
+        input.res.setHeader(TRIAL_SCANS_LEFT_HEADER, String(input.scan.left + 1));
+      }
+    } catch (cause) {
+      logger.warn('Could not give a trial scan back', { accountId: input.accountId, error: describeError(cause) });
+    }
+  }
+
+  /**
+   * The refusal for a full ceiling, the whole instance's or the scan-trial
+   * accounts' share of it. 503 with `Retry-After` at the next UTC midnight,
+   * see step 3a for why it is neither a 429 nor a 403.
+   */
+  function sendCeilingRefusal(res: Response, requestedAt: Date): void {
+    const resetAt = nextUtcMidnight(requestedAt);
+    res.setHeader('Retry-After', String(secondsUntil({ target: resetAt, now: requestedAt })));
+    res.status(503).json({ error: 'ai-instance-ceiling' });
   }
 
   /**
@@ -326,10 +425,19 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
    * taken. Quiet for the same reason `releaseQuietly` is, because a failed refund
    * must not replace a correct 429 with a 500.
    */
-  async function releaseInstanceQuietly(input: { day: string }): Promise<void> {
+  async function releaseInstanceQuietly(input: { day: string; isTrialDay: boolean }): Promise<void> {
+    // The scan-trial accounts' count follows the instance's unit row for row
+    // (M253): it is taken for every scan-trial request, set or not.
+    if (input.isTrialDay) {
+      try {
+        await quota.releaseTrialInstance({ day: input.day });
+      } catch (cause) {
+        logger.warn('Could not release a trial day reservation', { day: input.day, error: describeError(cause) });
+      }
+    }
     if (instanceDailyLimit === null) return;
     try {
-      await quota.releaseInstance(input);
+      await quota.releaseInstance({ day: input.day });
     } catch (cause) {
       logger.warn('Could not release an instance quota reservation', {
         day: input.day,
@@ -424,9 +532,49 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     }
     const forwardedBody = Buffer.from(JSON.stringify(body), 'utf8');
 
+    // THE INTAKE ID (M253), checked for every account and before any row is
+    // written, so a client that sends a malformed one learns it on its first
+    // request rather than only on a trial account's.
+    const intakeHeader = req.header('x-intake-id');
+    if (intakeHeader !== undefined && !INTAKE_ID_PATTERN.test(intakeHeader)) {
+      res.status(400).json({ error: INTAKE_ID_INVALID });
+      return;
+    }
+
     // The day is derived from the instant read above the allowance tests, and
-    // both reservations below key on this one value.
+    // every reservation below keys on this one value.
     const day = utcDayKey(requestedAt);
+
+    // 2c. THE SCAN CLAIM (M253), only where the gate applies: free scans and
+    // no allowance date. See the module header for the claim and its
+    // give-back. A request with no id is its own action, under an id this
+    // process makes up and nobody can reuse.
+    const isTrialDay = isScanGated(account);
+    let scan: ClaimedScan = null;
+    if (isTrialDay) {
+      const claim = await quota.claimTrialScan({
+        accountId: account.id,
+        intakeId: intakeHeader ?? `server-${randomUUID()}`,
+        now: requestedAt,
+      });
+      if (!claim.ok) {
+        res.setHeader(TRIAL_SCANS_LEFT_HEADER, '0');
+        res.status(403).json({ error: TRIAL_SCANS_SPENT });
+        return;
+      }
+      scan = claim;
+      res.setHeader(TRIAL_SCANS_LEFT_HEADER, String(claim.left));
+
+      // 2d. THE SCAN-TRIAL ACCOUNTS' SHARE OF THE DAY, counted always and
+      // bounded when `AI_TRIAL_INSTANCE_DAILY_LIMIT` is set, so farming runs
+      // out of its own budget before it reaches the paying accounts'.
+      const trialDay = await quota.reserveTrialInstance({ day, limit: trialInstanceDailyLimit });
+      if (!trialDay.ok) {
+        await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: false });
+        sendCeilingRefusal(res, requestedAt);
+        return;
+      }
+    }
 
     // 3a. THE WHOLE INSTANCE HAS A CEILING, and it is taken BEFORE the
     // account's unit. M212 spec 02.
@@ -457,14 +605,22 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     if (instanceDailyLimit !== null) {
       const instanceReservation = await quota.reserveInstance({ day, limit: instanceDailyLimit });
       if (!instanceReservation.ok) {
-        const resetAt = nextUtcMidnight(requestedAt);
-        res.setHeader('Retry-After', String(secondsUntil({ target: resetAt, now: requestedAt })));
         logCeilingRefusalOnce({ day, limit: instanceDailyLimit });
+        // The trial day's unit and the scan go back: this request reaches
+        // nobody. The instance's unit was never taken.
+        if (isTrialDay) {
+          try {
+            await quota.releaseTrialInstance({ day });
+          } catch (cause) {
+            logger.warn('Could not release a trial day reservation', { day, error: describeError(cause) });
+          }
+        }
+        await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: false });
         // A CODE, not a sentence, because a client has to BRANCH on this one:
         // "the operator is out of capacity today" is a different screen from
         // "you are out of requests today", and only the second one is about
         // the person reading it. The client's wording is M212 spec 04's.
-        res.status(503).json({ error: 'ai-instance-ceiling' });
+        sendCeilingRefusal(res, requestedAt);
         return;
       }
     }
@@ -477,7 +633,8 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
       // request that is about to be refused and will never reach the provider,
       // so keeping it would let one account at its own limit eat the whole
       // instance's ceiling by retrying.
-      await releaseInstanceQuietly({ day });
+      await releaseInstanceQuietly({ day, isTrialDay });
+      await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: false });
       const resetAt = nextUtcMidnight(requestedAt);
       res.setHeader('Retry-After', String(secondsUntil({ target: resetAt, now: requestedAt })));
       res.setHeader('X-Quota-Used', String(reservation.used));
@@ -508,8 +665,9 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     } catch (cause) {
       // TIMEOUT SITE 1 of 2 — `headersTimeout` lands HERE, together with every
       // connect-level failure. Nothing was served to us in either case, so the
-      // reservation goes back.
-      await releaseQuietly({ accountId: account.id, day });
+      // reservation goes back, and so does the scan.
+      await releaseQuietly({ accountId: account.id, day, isTrialDay });
+      await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: false });
       const timedOut = isTimeoutError(cause);
       logger.warn('Upstream call failed before any response', {
         accountId: account.id,
@@ -534,10 +692,14 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     // the request and then failed — the money may already be gone, so it stays
     // spent. See the table in the module header.
     if (upstream.status >= 400 && upstream.status < 500) {
-      await releaseQuietly({ accountId: account.id, day });
+      await releaseQuietly({ accountId: account.id, day, isTrialDay });
     }
 
     if (!upstream.ok) {
+      // THE SCAN GOES BACK ON EVERY non-2xx, the 5xx included: the unit
+      // protects the bill and stays spent on a 5xx, the scan protects the
+      // promise and the person got no answer.
+      await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: false });
       await relayUpstreamError({
         upstream,
         res,
@@ -547,6 +709,16 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
         reservation: { used: reservation.used, limit: reservation.limit },
       });
       return;
+    }
+
+    // A 2xx's headers are here: from now on the answer is on its way, and a
+    // caller who goes away keeps it, and so keeps the scan (M253).
+    if (scan !== null) {
+      try {
+        await quota.markTrialScanDelivered({ accountId: account.id, intakeId: scan.intakeId });
+      } catch (cause) {
+        logger.warn('Could not mark a trial scan delivered', { accountId: account.id, error: describeError(cause) });
+      }
     }
 
     // 6. Relay, piped. `stream: true` works because nothing here buffers: the
@@ -595,6 +767,12 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
         durationMs,
         error: describeError(relayFailure.cause),
       });
+      // THE SCAN, BY WHO FAILED (M253). The provider stopping mid-body is no
+      // answer, so the scan goes back and the delivery stamped above is
+      // cleared; the caller going away after a 2xx keeps it.
+      if (!isClientGone(relayFailure.cause)) {
+        await giveScanBackQuietly({ res, accountId: account.id, scan, undeliver: true });
+      }
       // The status line and some bytes are already on the wire, so there is no
       // error document to send. Destroying the socket is the only signal left,
       // and it is the correct one: a truncated stream must not look complete.

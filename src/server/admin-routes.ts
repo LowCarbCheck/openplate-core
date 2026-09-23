@@ -98,7 +98,8 @@ import {
   type ActivityDay,
 } from '../admin/account-activity.js';
 import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
-import { asBoolean, asNumber, asObject, asString, type JsonValue } from '../lib/json.js';
+import { asArray, asBoolean, asNumber, asObject, asString, type JsonObject, type JsonValue } from '../lib/json.js';
+import { MAX_TRIAL_SCANS, trialScansView, type TrialPolicy } from '../accounts/scan-trial.js';
 import { getAdminPrincipal } from './admin-auth.js';
 import { SERVICE_FIELD_REFUSAL, SERVICE_PRINCIPAL_PATCH_FIELDS } from './service-principal-scope.js';
 
@@ -229,7 +230,18 @@ interface AdminStatsView {
   signup: {
     openSignupInvitesToday: number;
     openSignupInvitesLast7Days: number;
+    /** Invites redeemed in the last seven days that granted free scans (M253). */
+    trialsGrantedLast7Days: number;
+    /** Requests scan-trial accounts spent today, read beside `aiTrialInstanceDailyLimit`. */
+    trialRequestsToday: number;
   };
+  /**
+   * What all scan-trial accounts together may spend per UTC day
+   * (`AI_TRIAL_INSTANCE_DAILY_LIMIT`, M253), or `null` for no sub-ceiling. The
+   * operator's budget, published here and never on `/health`, like
+   * `aiInstanceDailyLimit`.
+   */
+  aiTrialInstanceDailyLimit: number | null;
 }
 
 /**
@@ -252,6 +264,7 @@ function toAccountView(summary: AdminAccountSummary, memberInvites: MemberInvite
     dailyAiLimit: summary.dailyAiLimit,
     aiUsedToday: summary.aiUsedToday,
     allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
+    trialScans: trialScansView({ granted: summary.trialScans, used: summary.trialScansUsed }),
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
     invitesLeft: invitesLeft({ role: summary.role, minted: summary.invitesMinted, policy: memberInvites }),
     createdAt: summary.createdAt.toISOString(),
@@ -303,7 +316,11 @@ function toExpiringAllowanceView(row: ExpiringAllowance): ExpiringAllowanceView 
   return { id: row.id, allowanceExpiresAt: row.allowanceExpiresAt.toISOString() };
 }
 
-function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | null }): AdminStatsView {
+function toStatsView(input: {
+  stats: AdminStats;
+  aiInstanceDailyLimit: number | null;
+  aiTrialInstanceDailyLimit: number | null;
+}): AdminStatsView {
   const { stats } = input;
   return {
     accounts: stats.accounts,
@@ -338,7 +355,11 @@ function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | 
     signup: {
       openSignupInvitesToday: stats.signup.openSignupInvitesToday,
       openSignupInvitesLast7Days: stats.signup.openSignupInvitesLast7Days,
+      trialsGrantedLast7Days: stats.signup.trialsGrantedLast7Days,
+      trialRequestsToday: stats.signup.trialRequestsToday,
     },
+    // Configured, not counted, for the reason `aiInstanceDailyLimit` is.
+    aiTrialInstanceDailyLimit: input.aiTrialInstanceDailyLimit,
   };
 }
 
@@ -421,6 +442,36 @@ export const MAX_INVITE_TTL_DAYS = 30;
 /** Default daily AI allowance for an invite that does not name one: none. */
 export const DEFAULT_INVITE_DAILY_AI_LIMIT = 0;
 
+/** What an admin mint grants: a standing allowance, or the instance's scan trial (M253). */
+type MintGrant = { ok: true; dailyAiLimit: number; trialScans: number | null } | { ok: false; reason: string };
+
+/**
+ * The AI half of an admin mint body.
+ *
+ * `"trial": true` IS THE INSTANCE'S PAIR OR A 400. On an instance with no
+ * `TRIAL_SCANS` it says so rather than minting a standing grant the operator
+ * did not ask for, and beside a `dailyAiLimit` it refuses the ambiguity: the
+ * trial's daily bound is the instance's, not a number typed next to it.
+ */
+function parseMintGrant(input: { body: JsonObject; trial: TrialPolicy | null }): MintGrant {
+  const { body } = input;
+  if (body.trial !== undefined && body.trial !== false) {
+    if (body.trial !== true) return { ok: false, reason: 'trial must be true or false' };
+    if (input.trial === null) {
+      return { ok: false, reason: 'this instance runs no scan trial: TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT are unset' };
+    }
+    if (body.dailyAiLimit !== undefined) {
+      return { ok: false, reason: 'trial and dailyAiLimit cannot both be named: the trial carries its own daily limit' };
+    }
+    return { ok: true, dailyAiLimit: input.trial.dailyAiLimit, trialScans: input.trial.scans };
+  }
+  const limit = asNumber(body.dailyAiLimit ?? DEFAULT_INVITE_DAILY_AI_LIMIT);
+  if (limit === null || !Number.isInteger(limit) || limit < 0 || limit > MAX_DAILY_AI_LIMIT) {
+    return { ok: false, reason: `dailyAiLimit must be an integer between 0 and ${MAX_DAILY_AI_LIMIT}` };
+  }
+  return { ok: true, dailyAiLimit: limit, trialScans: null };
+}
+
 /**
  * The wire shape of one invite. Every field is named here, and `tokenHash` is
  * not among them, nor is it fetched (`db/invite-store.ts`).
@@ -431,6 +482,8 @@ interface AdminInviteView {
   displayName: string | null;
   role: AccountRole;
   dailyAiLimit: number;
+  /** The free scans the invite carries, or `null` for none (M253). */
+  trialScans: number | null;
   expiresAt: string;
   /** Derived from the three lifecycle columns in ONE place (`admin/invite-store.ts`). */
   status: InviteStatus;
@@ -445,6 +498,7 @@ function toInviteView(invite: InviteSummary, now: Date): AdminInviteView {
     displayName: invite.displayName,
     role: invite.role,
     dailyAiLimit: invite.dailyAiLimit,
+    trialScans: invite.trialScans,
     expiresAt: invite.expiresAt.toISOString(),
     status: inviteStatus(invite, now),
     createdAt: invite.createdAt.toISOString(),
@@ -517,6 +571,8 @@ interface AccountPatch {
    * both are keyed on the property's PRESENCE rather than on its nullness.
    */
   allowanceExpiresAt?: Date | null;
+  /** The scans granted (M253), `0` to {@link MAX_TRIAL_SCANS}, or `null` to take the scan trial away. */
+  trialScans?: number | null;
   suspended?: boolean;
   displayName?: string | null;
 }
@@ -548,6 +604,54 @@ function parseAllowanceExpiresAt(value: JsonValue): ParseAllowanceExpiresAtResul
   return { ok: true, value: new Date(parsed) };
 }
 
+/**
+ * The `trialScans` field of a PATCH body (M253): the scans GRANTED, an integer
+ * from 0 to {@link MAX_TRIAL_SCANS}, or `null` to take the scan trial away. It
+ * never touches how many are used, so raising it hands out exactly the
+ * difference.
+ */
+function parseTrialScans(value: JsonValue): { ok: true; value: number | null } | { ok: false; reason: string } {
+  if (value === null) return { ok: true, value: null };
+  const scans = asNumber(value);
+  if (scans === null || !Number.isInteger(scans) || scans < 0 || scans > MAX_TRIAL_SCANS) {
+    return { ok: false, reason: `trialScans must be an integer between 0 and ${MAX_TRIAL_SCANS}, or null` };
+  }
+  return { ok: true, value: scans };
+}
+
+/** The body of `POST /trials/grant-lapsed`, decoded. */
+type LapsedGrantRequest =
+  | { ok: true; trialDays: number; apply: boolean; exclude: Set<number> }
+  | { ok: false; reason: string };
+
+/** The longest day trial the grant looks for, the member-invite lifetime ceiling. */
+const MAX_LAPSED_TRIAL_DAYS = 30;
+
+function parseLapsedGrant(body: JsonObject): LapsedGrantRequest {
+  const trialDays = asNumber(body.trialDays ?? null);
+  if (trialDays === null || !Number.isInteger(trialDays) || trialDays < 1 || trialDays > MAX_LAPSED_TRIAL_DAYS) {
+    return {
+      ok: false,
+      reason: `trialDays must be the day trial's length, an integer from 1 to ${MAX_LAPSED_TRIAL_DAYS}`,
+    };
+  }
+  const apply = body.apply === undefined ? false : asBoolean(body.apply);
+  if (apply === null) return { ok: false, reason: 'apply must be true or false' };
+  const exclude = new Set<number>();
+  if (body.excludeAccountIds !== undefined) {
+    const ids = asArray(body.excludeAccountIds);
+    if (ids === null) return { ok: false, reason: 'excludeAccountIds must be an array of account ids' };
+    for (const raw of ids) {
+      const id = asNumber(raw);
+      if (id === null || !Number.isInteger(id) || id < 1) {
+        return { ok: false, reason: 'excludeAccountIds must be an array of account ids' };
+      }
+      exclude.add(id);
+    }
+  }
+  return { ok: true, trialDays, apply, exclude };
+}
+
 /** Decodes a PATCH body. Absent means untouched; present and malformed is a `400` that names the field. */
 function parseAccountPatch(body: JsonValue): ParseAccountPatchResult {
   const fields = asObject(body) ?? {};
@@ -568,6 +672,11 @@ function parseAccountPatch(body: JsonValue): ParseAccountPatchResult {
     const expiry = parseAllowanceExpiresAt(fields.allowanceExpiresAt);
     if (!expiry.ok) return { ok: false, reason: expiry.reason };
     patch.allowanceExpiresAt = expiry.value;
+  }
+  if (fields.trialScans !== undefined) {
+    const trialScans = parseTrialScans(fields.trialScans);
+    if (!trialScans.ok) return { ok: false, reason: trialScans.reason };
+    patch.trialScans = trialScans.value;
   }
   if (fields.suspended !== undefined) {
     const suspended = asBoolean(fields.suspended);
@@ -635,6 +744,13 @@ export interface AdminRoutesOptions {
    * predicate cannot be two different numbers.
    */
   aiInstanceDailyLimit: number | null;
+  /** The scan-trial sub-ceiling (M253), reported beside today's trial requests. Read off the AI surface. */
+  aiTrialInstanceDailyLimit: number | null;
+  /**
+   * The instance's scan trial (M253), or `null`. `"trial": true` on a mint and
+   * the lapsed-trial grant write exactly this pair.
+   */
+  trial: TrialPolicy | null;
   /**
    * This instance's member-invite policy (M212), or `null` where members
    * cannot invite anybody. Its `lifetimeCap` is what turns each account's
@@ -974,12 +1090,13 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         // rule the auth-side `PATCH /v1/auth/account` applies to an absent key:
         // silence must never read as consent.
         res.status(400).json({
-          error: 'a patch must name at least one of role, dailyAiLimit, allowanceExpiresAt, suspended, displayName',
+          error:
+            'a patch must name at least one of role, dailyAiLimit, allowanceExpiresAt, trialScans, suspended, displayName',
         });
         return;
       }
 
-      const { allowanceExpiresAt, displayName, role, dailyAiLimit, suspended } = patch.value;
+      const { allowanceExpiresAt, displayName, role, dailyAiLimit, suspended, trialScans } = patch.value;
       // Demoting or suspending oneself is the lockout; a rename is not.
       if (isSelfLockout({ req, targetAccountId: accountId, lockingOut: suspended === true || role === 'member' })) {
         res.status(400).json({ error: 'self-change' });
@@ -1007,6 +1124,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         role !== undefined ||
         dailyAiLimit !== undefined ||
         allowanceExpiresAt !== undefined ||
+        trialScans !== undefined ||
         displayName !== undefined
       ) {
         const changed = await accounts.updateStanding({
@@ -1014,6 +1132,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
           role,
           dailyAiLimit,
           allowanceExpiresAt,
+          trialScans,
           displayName,
         });
         if (changed === null) {
@@ -1198,6 +1317,71 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
     }),
   );
 
+  // ---------------------------------------------------------------------------
+  // The lapsed day trials (M253)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `POST /trials/grant-lapsed`: gives the instance's scan trial to every
+   * account whose DAY trial ran out and was never paid for, once, at the
+   * switch from the three day trial to the ten free scans. The owner decided
+   * this on 2026-09-23.
+   *
+   * A DRY RUN UNLESS `apply` IS `true`. The dry run lists the account ids, so
+   * the operator can hold them against the biller's subscription table before
+   * anything is written, and pass the ones to spare in `excludeAccountIds`.
+   *
+   * IDEMPOTENT. A granted account has a scan trial, and the selection skips
+   * every account that has one, so a second run lists nothing. What "never
+   * paid" means, and why it errs toward the paying side, is on
+   * `AccountStore.findLapsedDayTrials`.
+   *
+   * A ROUTE AND NOT A MIGRATION, on purpose: a migration runs when the image
+   * boots, which is the dark release, days before the terms that promise the
+   * scans are live. This runs when the operator runs it.
+   */
+  router.post(
+    '/trials/grant-lapsed',
+    express.json({ limit: 16 * 1024 }),
+    asyncHandler(async (req, res) => {
+      if (options.trial === null) {
+        res.status(409).json({ error: 'this instance runs no scan trial: set TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT first' });
+        return;
+      }
+      // SAFETY: `express.json()` above has already parsed this body, so it is
+      // JSON-shaped by construction; `asObject` re-establishes that at the type
+      // level and yields `null` for anything that is not an object.
+      const body = asObject(req.body as JsonValue) ?? {};
+      const parsed = parseLapsedGrant(body);
+      if (!parsed.ok) {
+        res.status(400).json({ error: parsed.reason });
+        return;
+      }
+
+      const now = options.now();
+      const found = await accounts.findLapsedDayTrials({ trialDays: parsed.trialDays, now });
+      const candidates = found.filter((id) => !parsed.exclude.has(id));
+      if (!parsed.apply) {
+        res.status(200).json({ accountIds: candidates, applied: false });
+        return;
+      }
+
+      const granted: number[] = [];
+      for (const accountId of candidates) {
+        const changed = await accounts.grantScanTrialToLapsedDayTrial({
+          accountId,
+          trialDays: parsed.trialDays,
+          now,
+          trial: options.trial,
+        });
+        if (changed) granted.push(accountId);
+      }
+      // A count, never the ids and never an address.
+      logger.info('Lapsed day trials given the scan trial', { granted: granted.length });
+      res.status(200).json({ accountIds: granted, applied: true });
+    }),
+  );
+
   router.get(
     '/stats',
     asyncHandler(async (_req, res) => {
@@ -1205,6 +1389,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         stats: toStatsView({
           stats: await metadata.stats({ now: options.now() }),
           aiInstanceDailyLimit: options.aiInstanceDailyLimit,
+          aiTrialInstanceDailyLimit: options.aiTrialInstanceDailyLimit,
         }),
       });
     }),
@@ -1243,10 +1428,12 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         return;
       }
 
-      const dailyAiLimit = body.dailyAiLimit ?? DEFAULT_INVITE_DAILY_AI_LIMIT;
-      const limit = asNumber(dailyAiLimit);
-      if (limit === null || !Number.isInteger(limit) || limit < 0 || limit > MAX_DAILY_AI_LIMIT) {
-        res.status(400).json({ error: `dailyAiLimit must be an integer between 0 and ${MAX_DAILY_AI_LIMIT}` });
+      // THE SCAN TRIAL (M253): `"trial": true` writes the instance's pair,
+      // and nothing else about AI may be named beside it. Without the field
+      // this mint is exactly what it was: a standing grant.
+      const grant = parseMintGrant({ body, trial: options.trial });
+      if (!grant.ok) {
+        res.status(400).json({ error: grant.reason });
         return;
       }
 
@@ -1261,7 +1448,9 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         email: email.value,
         displayName: displayName.value,
         role,
-        dailyAiLimit: limit,
+        dailyAiLimit: grant.dailyAiLimit,
+        // The store writes `0` for a mailbox that already had its trial.
+        trialScans: grant.trialScans,
         expiresAt: new Date(now.getTime() + ttl.value),
         now,
         // `null` IS THE OPERATOR, and it is what makes this door exempt from
