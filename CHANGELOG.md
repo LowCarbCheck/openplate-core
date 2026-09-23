@@ -48,6 +48,19 @@ change moves the minor.
   hash table. Running three day trials keep their date, and an instance that
   sets none of this behaves as before.
 
+### Changed
+
+- **PROTOCOL.md describes open sign-up and the scan trial.** §5.6 gains
+  `openSignup`, `signupCaptcha` and `trial`, §5.8 no longer says an invite is
+  the only door (it is still the only thing that creates an account), the new
+  §5.8.3 specifies `POST /v1/auth/signup-request`, §5.15 gains `trialScans`
+  and what a deletion keeps, §5.19 specifies `X-Intake-Id`,
+  `X-Trial-Scans-Left`, `403 trial-scans-spent`, the order of the refusals and
+  a give-back table for the scan beside the daily unit's, §5.20 the new admin
+  fields and route, §5.21 the member door's scan trial, and §9.2 what the trial
+  stores. Every change is additive, so `PROTOCOL_VERSION` stays 2. The §5.6 and
+  §5.15 examples are now held against the running service by a test.
+
 ## [0.19.0] - 2026-09-23
 
 ### Changed

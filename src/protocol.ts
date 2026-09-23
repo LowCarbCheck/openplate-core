@@ -322,7 +322,7 @@ export interface InstanceInfo {
   /**
    * Whether an ordinary member may invite people on this instance
    * (`MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`, both
-   * or neither).
+   * or neither, or since M253 `MEMBER_INVITE_TRIAL` beside the scan trial).
    *
    * DESCRIPTIVE, NEVER A GRANT, like every other field here. A client reads it
    * to decide whether to draw an invite card at all, and never to decide

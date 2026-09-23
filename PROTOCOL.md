@@ -282,6 +282,7 @@ A bearer token in an `Authorization: Bearer <token>` header. **No cookies, in ei
 - `Access-Control-Allow-Origin: *`, and `Access-Control-Allow-Credentials` is never sent. Any openplate client (ours, a self-hoster's on their own domain, or a third-party implementation) can therefore talk to any instance of this service regardless of origin.
 - That combination is safe precisely _because_ there is no ambient credential. A hostile page can issue a cross-origin request and will get a `401`, because the browser has nothing to attach automatically. This is the CSRF property cookies lack, and it is the reason the wide-open origin is a considered choice rather than a shortcut.
 - Unauthenticated callers get `401`. Authenticated-but-not-permitted callers get `403`. A conforming server must not conflate them.
+- Every custom request header a route reads is named in `Access-Control-Allow-Headers`: `Authorization`, `Content-Type`, `Idempotency-Key` (§5.23) and `X-Intake-Id` (§5.19). Every custom response header a client reads is named in `Access-Control-Expose-Headers`: `Retry-After`, `X-Trial-Scans-Left`, `X-Quota-Used` and `X-Quota-Limit`. A browser refuses to send a header the first list omits, and hides one the second list omits, with nothing in any log.
 
 This replaced a same-origin session cookie that existed while the handler cores were mounted inside the openplate app. That change, and the move of the sync routes from `/api/sync` to `/v1/sync`, are **pre-1.0 and do not bump `PROTOCOL_VERSION`**: zero production blobs exist, there are no third-party implementations, and no deployed client can be broken by them. Once this document is published alongside a public release, that latitude ends; see §7.
 
@@ -445,22 +446,34 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 {
   "protocolVersion": 2,
   "envelopeVersion": 1,
-  "serviceVersion": "0.6.0",
+  "serviceVersion": "0.20.0",
   "instance": {
     "name": "openplate",
     "language": "de",
     "mail": true,
+    "memberInvites": true,
+    "openSignup": true,
+    "signupCaptcha": { "provider": "turnstile", "siteKey": "0x4AAAAAAAexample" },
+    "trial": { "scans": 10 },
+    "plans": true,
+    "push": false,
     "nutrientReferenceBasis": "dge",
     "ai": { "model": "google/gemini-3.7-flash" }
   }
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), `nutrientReferenceBasis` says whose micronutrient reference values it shows, and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `openSignup` says whether a person may ask for an account here (§5.8.3), `signupCaptcha` says what that request needs, `trial` promises the free scans a new account gets (§5.19), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), `nutrientReferenceBasis` says whose micronutrient reference values it shows, and `ai` is `null` when no upstream key is configured.
 
 `push` follows `plans` exactly: a boolean that says only whether a door exists. `false` means the whole `/v1/push` subtree answers the ordinary unknown-path `404`, so a client draws no notification settings. It says nothing about what a push contains, because a push contains a kind and nothing else (§5.24).
 
 `plans` is a **boolean and not an optional promise**, which is the opposite of the choice `instance.feedback` makes below, on purpose. That field is a promise about what happens to a photograph, and an instance with nothing to promise omits it. This one promises nothing: it says only whether a door exists, which is the same kind of statement `mail` and `memberInvites` make, so `false` is the honest answer both for an instance with no biller and for a service built before the field existed.
+
+`openSignup` is a **boolean**, like `memberInvites` and `plans`: it says only whether a door exists. `true` means `POST /v1/auth/signup-request` takes an address (§5.8.3); `false`, and a service built before the field, means the path answers the ordinary unknown-path `404`, and a client shows its invite wording instead of a sign-up form. It is descriptive, never a grant: the throttles, the captcha, the refused domains and the one letter per mailbox per day stay on the service.
+
+`signupCaptcha` is present only while `openSignup` is `true` and the operator runs a captcha. `provider` is `turnstile` today; `siteKey` is Cloudflare Turnstile's public site key, which a client renders the widget with and which grants nothing. The token the widget produces travels as `captchaToken` in the sign-up request. Absent means the request needs no token.
+
+`trial` is a **promise, like `feedback` below, so it is absent rather than `null`** on an instance that runs no scan trial. `scans` is the number of free AI scans a new account gets there, with no end date (§5.19, "The scan trial"). A client that finds no `trial` **MUST NOT state a number of free scans**. The number is the one every trial door writes, published from the same setting, so the sentence a person reads before signing up and the count the proxy keeps cannot drift apart.
 
 `memberInvites` is **descriptive, never a grant**, like everything else in this block. A client reads it to decide whether to draw an invite card at all; it never reads it to decide whether it may mint. `false` means `POST /v1/auth/invites` answers the ordinary unknown-path `404`, and `true` still leaves the lifetime cap, the re-invite rule and the throttle to the service.
 
@@ -487,7 +500,7 @@ The field is **absent, never `null`**, on an instance that accepts no reports. `
 
 A client that finds no window advertised **MUST NOT state one**. It offers no report, or wording that names no period; printing a number from a local default publishes a promise the service never made, to a person deciding whether to send a photograph.
 
-`signupMode` is **gone** in protocol 2, along with the setting it described: signup is invite-only on every instance, always (§5.8). A service that still publishes it is speaking version 1.
+`signupMode` is **gone** in protocol 2, along with the setting it described: an account is created only by redeeming an invite, and `openSignup` says whether a person may ask for one (§5.8). A service that still publishes `signupMode` is speaking version 1.
 
 `notice` is the operator's message to every client, and it is **optional** in exactly the same sense as `instance`: an instance with nothing to say omits the field, and a client that has never heard of it ignores it.
 
@@ -537,7 +550,7 @@ A conforming server MUST NOT return `404`, an empty body, or a different shape f
 
 ### 5.8 `POST /v1/auth/signup`
 
-Unauthenticated, IP-throttled. **An invite is the only way to create an account**, on every instance. There is no open mode and no closed mode; `SIGNUP_MODE` is a boot failure.
+Unauthenticated, IP-throttled. **An invite is still the only thing that creates an account**, on every instance. On an instance with `instance.openSignup: true`, a person may ASK for an invite addressed to themselves (§5.8.3); what they receive is an ordinary invite, redeemed here exactly like one an operator minted. `SIGNUP_MODE` is a boot failure, because there is no mode to set: the only switch is whether the request door of §5.8.3 exists.
 
 ```json
 {
@@ -584,7 +597,9 @@ An invite is a single-use, expiring capability **addressed to one person**. It c
 
 **An invite token begins with `si_`, and the service refuses anything that does not.** The prefix binds the token to this service and to this endpoint. A person is handed an invite in a mail, beside a password-reset token that begins with `sr_`; without the prefixes the two are interchangeable strings and one can be posted to the wrong endpoint. The check is a **shape gate before the lookup**, refused with the same status and the same body as every other bad invite, so the gate adds no oracle. Session tokens carry no prefix and are unchanged.
 
-Minting is `POST /v1/admin/invites`. An older PENDING invite for the same address is revoked by a new one, so there is never more than one live capability per address; an address that already has an account cannot be invited at all (`409`).
+Minting is `POST /v1/admin/invites`. An older PENDING invite for the same address is revoked by a new one, so there is never more than one live capability per address; an address that already has an account cannot be invited at all (`409`). The one exception is the request door of §5.8.3, which leaves a pending invite from the operator or a member alone rather than withdraw it on a stranger's say.
+
+An invite may carry a **scan trial** (`trialScans`, §5.19): open sign-up, an admin mint with `"trial": true` and, where the instance runs it, a member invite write the instance's number on the row, and redemption copies it to the account with no end date.
 
 An instance may also let an ordinary member mint one, on the instance's terms and with none of the disclosure this paragraph's `409` makes. That is `POST /v1/auth/invites`, §5.21.
 
@@ -601,6 +616,36 @@ The client calls it when a person opens the link in their mail, so the sign-up f
 It shows nothing else. The role and the allowance the invite grants are deliberately absent: a person who has not signed up has no business learning that the operator made them an admin, and a caller holding a stranger's link has less business still.
 
 Unknown, malformed, wrong-service, expired, revoked and spent tokens are ONE `404 {"error":"invite-invalid"}`, after identical work: the token is hashed and the table is queried on every branch. A valid lookup consumes nothing, so a person who opens the link twice still has an invitation.
+
+#### 5.8.3 `POST /v1/auth/signup-request`: a person asks for an account
+
+Unauthenticated. **Present only where `instance.openSignup` is `true`**; everywhere else the path answers the ordinary unknown-path `404`. An instance needs mail configured to open it, because the letter is the address check.
+
+Request: `{"email": "anna@example.org", "captchaToken": "…"}`. `captchaToken` is required when `instance.signupCaptcha` is present and ignored otherwise; nothing else in the body is read.
+
+```json
+{}
+```
+
+→ `202` with that body, empty and fixed.
+
+**For a new address the service mints an ordinary addressed invite and mails it**: role `member`, the default invite lifetime, no inviter, and the instance's terms, which are its scan trial when it runs one (§5.19) and no AI otherwise. The mailed link leads to §5.8.2 and §5.8, unchanged. **The response MUST NOT vary with what is true about the address**, as in §5.21: a new address, an address that holds an account, an address that already holds a pending letter from the operator or a member, and a mailbox that already got a letter today are one `202` with one body. The account holder gets the short note of §5.21 with no link. A pending letter from another door is left alone, so a stranger cannot withdraw an operator's invitation by posting the address. Only the letters differ.
+
+| Status | Meaning |
+| ------ | ------- |
+| `202`  | `{}`. Accepted, whatever is true about the address |
+| `400`  | `{"error":"email-invalid"}`: not an address. `{"error":"email-domain-refused"}`: an address at a known throwaway mail service, matched on the domain and every parent of it. `{"error":"captcha-failed"}`: the captcha token is missing or was refused; solve it again |
+| `404`  | The instance runs no open sign-up |
+| `429`  | More than five requests from one source address in an hour. `Retry-After` in seconds |
+| `503`  | `{"error":"captcha-unavailable"}`: the captcha provider could not be asked. Retry later |
+
+The `400`s describe the request, never the instance's accounts: a domain says nothing about who holds an account, so refusing one is not an oracle.
+
+**Two throttles.** Per source address, five requests an hour with every attempt counted, which bounds one script. Per mailbox, one letter a day: further requests still answer `202` and send nothing, so the bound cannot say which addresses somebody else asked about. The mailbox key is the **trial key**: the canonical address (§5.8) with a `+tag` removed from the local part, and for `gmail.com` and `googlemail.com` with every dot removed and the domain written `gmail.com`. `anna+x@gmail.com`, `a.n.n.a@gmail.com` and `anna@gmail.com` share one key; `a.nna@example.org` and `anna@example.org` do not.
+
+**One mailbox, one trial, ever.** A mailbox whose key already redeemed an invite that carried free scans, under any spelling, or whose account held a trial and was deleted, gets an invite whose trial is `0`: the person still gets an account, and the first scan answers `403 trial-scans-spent`. The service recognises the mailbox by a keyed hash of its trial key, never by a stored address (§9.2).
+
+**No address is logged, on any branch.** A server MUST NOT log the submitted address or the captcha token.
 
 ### 5.9 `POST /v1/auth/login`
 
@@ -718,6 +763,7 @@ All three bearer.
   "dailyAiLimit": 200,
   "aiUsedToday": 3,
   "allowanceExpiresAt": null,
+  "trialScans": { "granted": 10, "left": 7 },
   "suspendedAt": null,
   "invitesLeft": 5,
   "createdAt": "2026-09-04T10:11:12.000Z"
@@ -730,6 +776,8 @@ Nothing secret is in it and nothing can be: no verifier, no KDF descriptor, no w
 
 `allowanceExpiresAt` is an ISO instant or `null`, and `null` means the AI allowance has no end date, which is what a self-hosted instance keeps. From that instant on, the proxy of §5.19 answers `403 allowance-expired`. **It gates AI and nothing else**: sync keeps working past the date, because the diary belongs to the account and a new device must be able to pull it. A client may render the date and must not authorize on it; the proxy is where the rule lives.
 
+`trialScans` is `{"granted": n, "left": n}` for an account with a scan trial, and `null` for one without, which is every account on an instance that runs none. `left` is `granted` minus the scans used, never below `0`. A client may render it and **MUST NOT authorize on it**: the proxy counts (§5.19), `left` is a snapshot taken when this view was built, and every proxied response carries the fresh number in `X-Trial-Scans-Left`. A future `allowanceExpiresAt` lifts the scan gate, so a paying account may still carry this field.
+
 The admin account endpoints return the same shape plus two operator fields, `blob` and `keyRecordKinds` (ADR-0001). A client decoding an `AccountView` from an admin response therefore works unchanged and reads two fields it did not ask for.
 
 **`GET /v1/auth/account`** → `200` `{"account": AccountView}`.
@@ -741,6 +789,8 @@ That is the only field an account may change about itself. `email` is the identi
 **`POST /v1/auth/delete`** takes `{"authHash": "..."}` and returns `204`. **Re-authentication is required even though the caller already holds a valid token**: a session left behind on a shared device must not be enough to destroy someone's data irreversibly.
 
 Deletion removes the account and, by cascade, every blob, key record, reset token and usage row it owns. There is no soft delete and no grace period. This is the self-serve erasure path, and it is complete by construction rather than by a cleanup job someone has to remember to run.
+
+On an instance that runs a scan trial, the same transaction also **removes the address and the name from every invitation row about that mailbox**, and, when the account held a trial, **keeps one keyed one-way hash of the mailbox** so the one trial per mailbox rule of §5.8.3 survives the deletion. Nothing else about the person is kept (§9.2).
 
 ### 5.16 Shares: `/v1/sync/shares` and `/v1/sync/shared` (ADR-0002)
 
@@ -942,6 +992,7 @@ is the provider's, relayed with its status.
 POST /v1/chat/completions
 Authorization: Bearer <accessToken>
 Content-Type: application/json
+X-Intake-Id: 2f9d0b416c3a4e579f10a1b2c3d4e5f6
 
 { "model": "…", "messages": [ … ], "stream": true }
 ```
@@ -1006,17 +1057,20 @@ Each account carries `dailyAiLimit`: requests per **UTC day**, defaulting to
 | --------------- | ---------------------------------------------- |
 | `X-Quota-Used`  | Requests spent today, after this one           |
 | `X-Quota-Limit` | The account's `dailyAiLimit`                   |
+| `X-Trial-Scans-Left` | Free scans left after this request, on an account the scan gate applies to (below). Absent otherwise |
 
 | Status | `error`                          | When                                                                    |
 | ------ | -------------------------------- | ----------------------------------------------------------------------- |
 | `401`  | `authentication required`        | No access token, or one that is expired or revoked                       |
 | `403`  | `ai-not-allowed`                 | `dailyAiLimit` is `0`. Refused before anything leaves the host           |
 | `403`  | `allowance-expired`              | `allowanceExpiresAt` is set and not after the instant the request arrived. Refused before anything leaves the host, and before a usage row is written |
+| `403`  | `trial-scans-spent`              | The account's free scans are used up and it has no allowance date. Refused before anything leaves the host, and before a usage row is written. `X-Trial-Scans-Left: 0` |
 | `403`  | `account-suspended`              | The account is suspended (§5.9 uses the same code)                       |
 | `400`  | `request body must be a JSON object` | The body is not an object. The input is never quoted back            |
+| `400`  | `intake-id-invalid`              | `X-Intake-Id` is present and not 16 to 64 characters of `A-Z a-z 0-9 _ -`. Refused before any row is written |
 | `429`  | a sentence naming the reset instant | The allowance is spent. `Retry-After` is seconds to the next UTC midnight |
 | `429`  | a sentence naming the per-minute bound | More than `AI_RATE_LIMIT_PER_MINUTE` requests in any trailing 60 s   |
-| `503`  | `ai-instance-ceiling`            | The whole instance has spent its daily ceiling. `Retry-After` is seconds to the next UTC midnight |
+| `503`  | `ai-instance-ceiling`            | The whole instance has spent its daily ceiling, or the scan-trial accounts have spent theirs. `Retry-After` is seconds to the next UTC midnight |
 
 `403 ai-not-allowed` is a machine code because a client MUST branch on it; it
 means "this account will never succeed here until an operator changes
@@ -1033,6 +1087,63 @@ to ask an administrator for an allowance they already had. Both refusals happen
 counted against it. The date is compared as "not after": the boundary instant
 refuses rather than allows. Sync is unaffected on an expired account
 (§5.15).
+
+`403 trial-scans-spent` is a **third** machine code, for a third sentence: "you
+used your free scans". A client shows the plan offer for it, not "ask your
+administrator" (`ai-not-allowed`) and not "your time ran out"
+(`allowance-expired`). A client older than the code reads an unknown `403`,
+which is why it is separate rather than folded into either.
+
+**The order of the refusals**, which a conforming server MUST keep: identity
+and suspension; `dailyAiLimit` of `0` (`ai-not-allowed`); an allowance date
+that has passed (`allowance-expired`); the body; `X-Intake-Id`'s shape; then,
+only for an account with free scans and **no** allowance date, the scan claim
+(`trial-scans-spent`). A date in the future lifts the scan gate: it is a paid or
+granted window, and the count decides only where there is no date at all. Then
+the scan-trial accounts' ceiling, the instance ceiling and the daily
+allowance, as below.
+
+#### The scan trial
+
+An account may carry free AI scans with no end date (`AccountView.trialScans`,
+§5.15), granted by the instance's trial (`instance.trial`, §5.6). **A scan is
+one AI action the person started**, and one action may be more than one
+upstream request: a client may retry once without `response_format` after a
+provider refusal, and once after a stale bearer.
+
+`X-Intake-Id` is how a client says which requests are one action. It is
+**optional**, 16 to 64 characters of `A-Z a-z 0-9 _ -` (a UUID with or without
+its dashes fits), **one fresh id per person action, reused by every retry of
+that action**, and sent only to this proxy, never to a provider the person
+configured themselves. The service:
+
+- claims one scan for an id it has not seen, before the upstream call, in one
+  statement whose `WHERE` is the bound, so ten parallel requests on three scans
+  claim three;
+- lets a later request with the same id ride on that scan while the id is
+  younger than 30 minutes and has carried fewer than 3 requests, and makes a
+  fourth request, or one after 30 minutes, a new action with a new scan;
+- serialises parallel requests with one new id, so they claim exactly one
+  scan between them;
+- treats a request with **no** id as its own action, so a client that never
+  sends one is counted correctly for every single-request action.
+
+The ids are kept for 24 hours and then deleted (§9.2). They are never logged.
+
+A request that got **no answer gives its scan back**: the give-back runs on
+every row of the table below except a delivered `2xx`, and on every refusal
+after the claim (the ceilings and the daily allowance). This differs from the
+daily unit on purpose, row by row:
+
+| Outcome                              | Daily unit | Scan     | Why the scan differs, where it does |
+| ------------------------------------ | ---------- | -------- | ----------------------------------- |
+| Connection refused / header timeout  | released   | released |                                     |
+| Upstream `4xx`                       | released   | released |                                     |
+| Upstream `5xx`                       | spent      | released | The unit protects the bill: generation may have run. The scan protects the promise that a failed attempt costs nothing, and the person got no answer. A retry loop on a flaky provider is still bounded by the daily unit |
+| Body timeout / stream aborted by the provider | spent | released | Headers arrived, so the provider may bill; the person still got no answer |
+| Upstream `2xx`, then the caller hangs up | spent  | spent    | The answer was on its way |
+| Upstream `2xx`                       | spent      | spent    |                                     |
+| A ceiling or the daily allowance refuses after the claim | not taken, or released | released | The request reached nobody |
 
 #### The instance ceiling
 
@@ -1061,6 +1172,14 @@ table below applies to both, row for row).
 The ceiling is **not** published on `/health`: it is the operator's budget, and
 that handshake is unauthenticated. `GET /v1/admin/stats` reports it as
 `aiInstanceDailyLimit`, beside the `aiRequestsToday` it bounds.
+
+**The scan-trial accounts may have a ceiling of their own**, below the
+instance's (`AI_TRIAL_INSTANCE_DAILY_LIMIT`): requests per UTC day across every
+account the scan gate applies to, taken before the instance's unit. It refuses
+those accounts, and only those, with the same `503 ai-instance-ceiling`, so a
+burst of new trials runs out of its own budget before it reaches the capacity
+paying accounts need. It is not published either; `GET /v1/admin/stats`
+reports it as `aiTrialInstanceDailyLimit`, beside `signup.trialRequestsToday`.
 
 #### What is spent and what is given back
 
@@ -1110,19 +1229,20 @@ either token turns that `404` into the `401` a wrong value gets.
 
 | Endpoint                                | Does                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------ |
-| `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling) |
+| `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling); `aiTrialInstanceDailyLimit`; and `signup`: invites the request door of §5.8.3 minted today and in the last seven days, trials granted in the last seven days, and today's scan-trial requests |
 | `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
 | `GET /v1/admin/accounts/expiring`        | A page of `{ id, allowanceExpiresAt }` for accounts whose allowance ends in the future, plus `total` |
 | `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
 | `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
 | `GET /v1/admin/activity`                 | The same day-by-day strip for a whole PAGE of accounts, in the list's order |
-| `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `suspended`, `displayName`. At least one required |
+| `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `trialScans` (the free scans granted, an integer from 0 to 100, or `null` to take the scan trial away; it never touches how many are used), `suspended`, `displayName`. At least one required |
 | `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
 | `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
 | `GET /v1/admin/accounts/:id/blob/versions` | Every retained blob version: number, envelope version, byte count, time, and the pin if it has one. Never ciphertext |
 | `POST /v1/admin/accounts/:id/blob/rollback` | `{"targetVersion": n}`. Makes that version current again by DELETING every version above it (§5.1's shrink guard, ADR-0009). Refuses an unknown version, the current version, an envelope version this build does not accept, and a zero-byte row. A rollback rather than a re-upload, because §3.2's AAD binds `blobVersion`: re-inserting old bytes as a new version yields something no client can decrypt |
 | `GET /v1/admin/invites`                  | A page of pending invitations, plus `total`                               |
-| `POST /v1/admin/invites`                 | Mints one (§5.8). The token is returned **once**                          |
+| `POST /v1/admin/invites`                 | Mints one (§5.8). The token is returned **once**. `"trial": true` writes the instance's scan trial instead of an allowance: `400` on an instance that runs none, and `400` beside a `dailyAiLimit`. Without the field the mint is a standing grant, as before |
+| `POST /v1/admin/trials/grant-lapsed`     | `{"trialDays": n, "apply": false, "excludeAccountIds": []}`. Lists, or with `apply: true` grants the instance's scan trial to, every member whose day trial of `trialDays` ended and was never moved: its allowance date still equals its redemption plus `trialDays` to the millisecond, which only a payment or an operator changes. Clears the date and sets the trial's daily limit. Idempotent: a granted account is never listed again. Answers `{"accountIds": [...], "applied": bool}` |
 | `POST /v1/admin/invites/:id/resend`      | A NEW token on the SAME row, and a new expiry                             |
 | `DELETE /v1/admin/invites/:id`           | Withdraws a pending invitation                                            |
 | `PATCH /v1/admin/settings`               | `{"nutrientReferenceBasis": "dge" \| "efsa" \| "us"}`. The instance-wide reference basis (§5.6). Required; anything else is `400` and NOTHING is written. Answers `{"settings": {...}}` with what the instance now holds |
@@ -1226,7 +1346,7 @@ carries the same 24-character minimum the operator token does.
 | -------------------------------- | --------------------------------------------------------------------- |
 | `GET /v1/admin/accounts/expiring` | Read `{ id, allowanceExpiresAt }` for accounts whose end date is in the future, paged with the same `limit`, `offset` and `400` sentence as every other paged endpoint here |
 | `GET /v1/admin/accounts/:id`      | Read `{ id, allowanceExpiresAt, dailyAiLimit }` for that one account   |
-| `PATCH /v1/admin/accounts/:id`    | Write `allowanceExpiresAt` and `dailyAiLimit`, and nothing else        |
+| `PATCH /v1/admin/accounts/:id`    | Write `allowanceExpiresAt` and `dailyAiLimit`, and nothing else. `trialScans` is refused like every other field: a credential that pays for an allowance does not hand out free scans |
 
 - **Every other route in this section answers `403` with
   `{"error": "service-scope"}`**, including the four feedback routes and
@@ -1263,7 +1383,7 @@ secrets in a response it does not.
 
 ### 5.21 `POST /v1/auth/invites`: a member invites somebody
 
-Bearer, throttled per source address with **every attempt counted**. Present only when the deployment sets both `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`; without them this path answers the ordinary unknown-path `404` to every caller, signed in or not, and `instance.memberInvites` is `false` (§5.6).
+Bearer, throttled per source address with **every attempt counted**. Present only when the deployment sets both `MEMBER_INVITE_DAILY_AI_LIMIT` and `MEMBER_INVITE_ALLOWANCE_DAYS`, or instead `MEMBER_INVITE_TRIAL` beside the instance's scan trial; without either this path answers the ordinary unknown-path `404` to every caller, signed in or not, and `instance.memberInvites` is `false` (§5.6).
 
 Request: `{"email": "boris@example.org"}`, and nothing else.
 
@@ -1273,13 +1393,13 @@ Request: `{"email": "boris@example.org"}`, and nothing else.
 
 → `202` with that body, empty and fixed.
 
-**The terms are the instance's, never the caller's.** The invited account gets `role: "member"`, `dailyAiLimit` from `MEMBER_INVITE_DAILY_AI_LIMIT`, the same invite lifetime the admin mint defaults to, and an `allowanceExpiresAt` of redemption plus `MEMBER_INVITE_ALLOWANCE_DAYS` written at signup. A `dailyAiLimit`, a `role` or an `expiresInDays` in the body is not refused, it is simply not read. Those three ARE body fields on `POST /v1/admin/invites` (§5.20), which is the difference between a member and an operator.
+**The terms are the instance's, never the caller's.** The invited account gets `role: "member"`, the same invite lifetime the admin mint defaults to, and ONE of two grants, never both: under the day pair, `dailyAiLimit` from `MEMBER_INVITE_DAILY_AI_LIMIT` and an `allowanceExpiresAt` of redemption plus `MEMBER_INVITE_ALLOWANCE_DAYS` written at signup; under `MEMBER_INVITE_TRIAL`, the instance's scan trial (§5.19) with no date. A member invitation minted under the day pair and redeemed after the instance switched gets the scan trial, not a date. A `dailyAiLimit`, a `role` or an `expiresInDays` in the body is not refused, it is simply not read. Those three ARE body fields on `POST /v1/admin/invites` (§5.20), which is the difference between a member and an operator.
 
 **The response MUST NOT vary with what is true about the address.** A new address, an address that already holds a pending invitation and an address that already holds an account are one `202` with one body. This is the anti-enumeration property of §5.7 and §5.12 applied to the one endpoint a member points at somebody else's mailbox: a person who types their colleague's address must not learn from a status code, a body or a header that the colleague is already here. The admin mint's `409 {"error":"an account already exists for this email"}` is exempt, and only because it is behind the operator's own credential.
 
 When the address already holds an account, the service mails **that person** a short note instead of an invitation. It carries no link: a join link would mint a second account for somebody who has one, and a reset link would be a password reset nobody asked for. Without the letter the invitation would silently vanish and both people would wait for it.
 
-**An address that has already redeemed a member-caused invitation gets no second one**, and the caller is still told `202`. The evidence outlives the account: the invite row keeps its address and its redemption instant when either account is deleted, so a self-delete followed by a friend's re-invite is not a fresh allowance. An operator's mint is not a member-caused invitation and is never withheld by this rule.
+**An address that has already redeemed a member-caused invitation gets no second one**, and the caller is still told `202`. The evidence outlives the account: the invite row keeps its address and its redemption instant when either account is deleted, so a self-delete followed by a friend's re-invite is not a fresh allowance. On an instance that runs a scan trial the deletion removes the address from the row instead and keeps the keyed hash of §5.15, and the rule reads that hash. An operator's mint is not a member-caused invitation and is never withheld by this rule.
 
 **The lifetime cap is five per account, ever, counted as rows.** Withdrawn and expired invitations count: the cap is on how many letters an account caused, not on how many worked. Exceeding it is `403 {"error":"member-invite-cap-reached"}`, and it is the one thing this endpoint says about the caller's own account, which is a fact about them and about nobody else. An administrator is exempt, on this route and on the admin one, which is what `invitesLeft: null` means (§5.15).
 
@@ -1556,7 +1676,9 @@ Being honest about the metadata, because "end-to-end encrypted" is often heard a
 - **Whether an account has completed setup** (has key records) and whether it has ever synced (has a blob).
 - **The account itself**: an **email address**, an optional display name, a role, a daily AI allowance, a suspension instant, an authentication verifier (a keyed hash of a keyed hash of the passphrase, see §5.8), a second verifier of the same construction over the recovery proof, and the account's KDF parameters. **The address names a person in the world**, which is a class of personal data 0.5.0 removed and 0.6.0 deliberately put back (ADR-0005): an organization's people are identified by the address their invitation arrived at, because that is the identifier they will still know in a month.
 - **The account's RECOVERY CODE, sealed** (`accounts.recovery_code_escrow`, §3.1). This is the entry on this list that a reader should stop at. It is AES-256-GCM under a subkey of `SERVER_SECRET`, so a dumped database alone does not open it, and the operator of a managed instance has both. **The operator of a managed instance can open any account on it.** Not through an endpoint, and not through any code path in this service, but by reading that column with the secret in hand and running the client's own HKDF. A self-hosted instance is its own operator, so the older promise holds there. Deciding whether to trust a hosted instance is therefore a decision about its operator.
-- **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row.
+- **Pending invitations**: for each, an address, an optional name, a role and an allowance, belonging to somebody who has NO account yet and gave no consent. Minting one is an operator action, and `DELETE /v1/admin/invites/:id` withdraws the row. A row the request door of §5.8.3 minted is marked as such, so an operator can count them.
+- **The scan trial**, on an instance that runs one: the free scans granted and used, two integers on the account row. For a scan-trial account only, **one row per AI action**: an opaque id the client chose, a time, a request count and whether an answer was delivered, **kept 24 hours** and then deleted, and never logged. Each invitation row carries a **keyed one-way hash of its mailbox** (HMAC-SHA256 under `TRIAL_ADDRESS_PEPPER`, a secret only the operator holds, over the trial key of §5.8.3), never a second copy of the address.
+- **After an account is deleted**, on an instance that runs a scan trial: the address and the name are removed from every invitation row about that mailbox, and, only when the account held a trial, **one keyed hash of the mailbox is kept, and nothing else**: no date, no name, no id. It is what stops the same mailbox from getting a second trial. Without the operator's secret the hash cannot be reversed or matched against a list of addresses. On an instance that runs no scan trial, invitation rows keep their address after a deletion, for the member re-invite rule of §5.21.
 - **AI usage**: one integer per account per UTC day, **kept for 90 days and then deleted** (§5.20). A count, never a log: no prompt, no response, no model, no timestamp beyond the day. An operator can read one account's counters as a day-by-day strip (`GET /v1/admin/accounts/:id/activity`), which is metadata about when a person used a health app and is bounded for exactly that reason.
 - **The community pulse**, for accounts that turned it on (§5.23, ADR-0007): instance-wide day sums of meals, photographs, calories and grams of protein, one row per contributing account per day, and a short lived presence row saying that an account is fasting right now. The sums are not attributable to anybody; the contributor row and the presence row are, and they say only "this account contributed today" and "this account is fasting". Day sums and contributor rows are **kept 30 days**, presence expires 30 minutes after the last heartbeat, and the routes log no account id. A person who never turned it on sends nothing and appears in none of it.
 - **A push subscription**, for a device whose owner turned notifications on (§5.24, ADR-0008): the push service endpoint, the two keys it encrypts to, a capped user agent string, an IANA time zone, a locale, the minute of the local day a catch-up is due, the local day one last went out, the local day the device was last seen, the instant it asked to be woken, and a count of what has been sent today. Together those say roughly when this person is awake, roughly where in the world they are, and, through `wake_at`, when a fast of theirs ends. **That last one lines up with the pulse's presence row**, which says the same fast is running; ADR-0008 names the correlation rather than leaving it to be discovered. What is NOT stored is a word of any notification's text: every push carries a kind. The row goes when the device unsubscribes, when the push service disowns it, or with the account.

@@ -20,6 +20,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { keyPaths, protocolExample } from './protocol-examples.js';
 import {
   BLOB_DAILY_RETENTION_DAYS,
   BLOB_PRE_SHRINK_PIN_DAYS,
@@ -143,4 +144,47 @@ test('isSyncKeyRecordKind accepts exactly the two documented kinds', () => {
   assert.equal(isSyncKeyRecordKind('recovery'), true);
   assert.equal(isSyncKeyRecordKind('Passphrase'), false);
   assert.equal(isSyncKeyRecordKind(undefined), false);
+});
+
+// ── M253: the new optional fields ──────────────────────────────────────────
+
+test('a handshake decodes with the M253 fields and without them: every one of them is optional to a client', () => {
+  const base = { protocolVersion: 2, envelopeVersion: 1, serviceVersion: '0.20.0' };
+  assert.equal(
+    isProtocolHandshake({
+      ...base,
+      instance: {
+        name: 'openplate',
+        language: 'en',
+        mail: true,
+        memberInvites: false,
+        openSignup: true,
+        signupCaptcha: { provider: 'turnstile', siteKey: 'site' },
+        trial: { scans: 10 },
+        plans: true,
+        push: false,
+        ai: null,
+      },
+    }),
+    true,
+  );
+  // An older service sends none of them, and is still a handshake.
+  assert.equal(
+    isProtocolHandshake({ ...base, instance: { name: 'openplate', language: 'en', mail: false, ai: null } }),
+    true,
+  );
+});
+
+test('the PROTOCOL.md examples name the M253 fields where a client reads them', () => {
+  const health = keyPaths(protocolExample('### 5.6'));
+  for (const path of [
+    'instance.openSignup',
+    'instance.signupCaptcha.provider',
+    'instance.signupCaptcha.siteKey',
+    'instance.trial.scans',
+  ]) {
+    assert.ok(health.includes(path), `the §5.6 example is missing ${path}`);
+  }
+  const account = keyPaths(protocolExample('### 5.15'));
+  assert.ok(account.includes('trialScans.granted') && account.includes('trialScans.left'));
 });
