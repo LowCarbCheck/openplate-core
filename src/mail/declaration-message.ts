@@ -1,35 +1,43 @@
 /**
  * The two letters `server/legal-declarations.ts` sends, as PURE FUNCTIONS of
- * their inputs, beside `reset-message.ts`.
+ * their inputs and the template the mailer found for them.
  *
- * TWO LANGUAGES, NOT SIX, AND DELIBERATELY SEPARATE FROM `strings.ts`.
- * `MAIL_STRINGS` is keyed by `InstanceLanguage`, and a key added there has to
- * exist in all six of that type's languages or the file does not compile. The
+ * THE PROSE IS NOT HERE (M246/04). The receipt and the operator alert take
+ * their subject and body from the instance's mounted content folder,
+ * `<CONTENT_DIR>/<lang>/mail/<template>.md`, found by
+ * `declaration-templates.ts` and filled by `mail-template.ts`. The operator
+ * writes and reviews that text; this public repo carries none of it.
+ *
+ * WHAT STAYS IN CODE: the field labels of the detail lines (`Name: ...`), the
+ * two value labels each enum carries, and a NEUTRAL FALLBACK. The fallback is
+ * what goes out when no content folder is configured, or the template file is
+ * missing or refused. It states the statutory facts and nothing else: the
+ * kind, the receipt number, the time of receipt in Europe/Berlin, and every
+ * field the person gave. No greeting, no outcome, no promise, because those
+ * are the operator's to make. Its labels are the ones the app's confirmation
+ * page already shows (`legal:declarations.confirmed.*`), so a reader sees the
+ * same words on the page and in the mail.
+ *
+ * TWO LANGUAGES, NOT SIX, AND DELIBERATELY SEPARATE FROM `strings.ts`. The
  * request body this route accepts carries `language: "de" | "en"` and no
- * other value, per PROTOCOL — the PWA's two statutory buttons are German
- * legal instruments and the reader chose one of exactly two languages on the
- * form. Folding a two-language feature into the six-language dictionary would
- * mean inventing `fr`/`it`/`es`/`tr` copy for a request shape that can never
- * carry them; a dictionary of its own says so directly.
+ * other value, per PROTOCOL: the PWA's two statutory buttons are German legal
+ * instruments and the reader chose one of exactly two languages on the form.
  *
- * THE RECEIPT IS THE ONLY ONE THAT IS TRANSLATED. `buildDeclarationReceiptMessage`
- * goes to the person who filed the declaration, in the language they chose.
- * `buildDeclarationOperatorAlertMessage` goes to the operator, in English only:
- * it is an operational notice about a compliance deadline, not a letter to a
- * consumer, and it is the one message in this module with no reviewed German
- * text to fall back on.
+ * THE RECEIPT IS THE ONLY ONE THAT IS TRANSLATED. The operator alert is
+ * English only, template and fallback alike.
  *
- * NEITHER LETTER NAMES A SERVICE, A GATEWAY OR AN ACCOUNT LINK, the same rule
- * `strings.ts` states for every other letter this service sends, and neither
+ * NEITHER LETTER NAMES A SERVICE, A GATEWAY OR AN ACCOUNT LINK, and neither
  * carries an em dash or an en dash. `tests/unit/declaration-message.test.ts`
- * holds both to it.
- *
- * THE GERMAN RECEIPT TEXT WAS PRODUCED BY THE WORKSPACE'S WORDSMITH PASS
- * (`google/gemini-3.8-flash`, 2026-09-21) FROM THE ENGLISH BELOW, exactly as
- * `strings.ts`'s `en`/`de` were. Changing a sentence means running that pass
- * again and pasting the result, not rewriting it here by hand.
+ * holds the fallback to it; the template text is the private repo's to hold.
  */
 import { renderHtml } from './invite-message.js';
+import {
+  MailTemplateError,
+  renderMailTemplate,
+  type InlinePlaceholder,
+  type MailPlaceholder,
+  type MailTemplate,
+} from './mail-template.js';
 
 export type DeclarationLanguage = 'de' | 'en';
 
@@ -49,87 +57,126 @@ export interface DeclarationFields {
   receivedAt: Date;
 }
 
+export interface DeclarationReceiptInput extends DeclarationFields {
+  /** The id the `202` answered with and the confirmation page shows. */
+  receiptId: string;
+  /** The language the person chose on the form. */
+  language: DeclarationLanguage;
+}
+
+export interface DeclarationOperatorAlertInput extends DeclarationFields {
+  /** The same id the person's own receipt carries, so an operator can find the row this letter is about. */
+  receiptId: string;
+  /** Whether the email matched an account on this instance. Never the account id: this letter is a notice, not a lookup tool. */
+  matched: boolean;
+}
+
+/** Which of the four template files a letter reads, CONTRACT.md section 6. */
+export type DeclarationTemplateName = `declaration-receipt-${DeclarationKind}` | `declaration-alert-${DeclarationKind}`;
+
+/** A template the mailer found, and the language of the file it came from, which may be the fallback language rather than the reader's. */
+export interface FoundMailTemplate {
+  template: MailTemplate;
+  language: DeclarationLanguage;
+}
+
 export interface BuiltDeclarationMessage {
   subject: string;
   text: string;
   html: string;
+  /** Where the words came from, for the send's log line. Never the words themselves. */
+  origin: 'template' | 'fallback';
 }
 
-interface DeclarationReceiptStrings {
-  subjectKuendigung: string;
-  subjectWiderruf: string;
-  greeting: string;
-  /** Carries `{date}`. */
-  introKuendigung: string;
-  /** Carries `{date}`. */
-  introWiderruf: string;
-  fieldsHeading: string;
-  labelName: string;
-  labelEmail: string;
-  labelContractReference: string;
-  labelTerminationType: string;
-  labelReason: string;
-  labelRequestedDate: string;
-  labelTiming: string;
+/** The placeholders each template may use, CONTRACT.md section 6. Any other refuses the file. */
+export const DECLARATION_TEMPLATE_PLACEHOLDERS = {
+  'declaration-receipt-kuendigung': ['date', 'details'],
+  'declaration-receipt-widerruf': ['date', 'details'],
+  'declaration-alert-kuendigung': ['date', 'receiptId', 'details', 'matched'],
+  'declaration-alert-widerruf': ['date', 'receiptId', 'details', 'matched'],
+} as const satisfies Record<DeclarationTemplateName, readonly MailPlaceholder[]>;
+
+export function receiptTemplateName(kind: DeclarationKind): DeclarationTemplateName {
+  return kind === 'kuendigung' ? 'declaration-receipt-kuendigung' : 'declaration-receipt-widerruf';
+}
+
+export function alertTemplateName(kind: DeclarationKind): DeclarationTemplateName {
+  return kind === 'kuendigung' ? 'declaration-alert-kuendigung' : 'declaration-alert-widerruf';
+}
+
+/** The field labels of the detail lines. Form chrome, not prose, so they stay in code (CONTRACT.md section 6). */
+interface DetailLabels {
+  name: string;
+  email: string;
+  contractReference: string;
+  terminationType: string;
+  reason: string;
+  requestedDate: string;
+  timing: string;
   terminationTypeOrdentlich: string;
   terminationTypeAusserordentlich: string;
   timingEarliest: string;
   timingOnDate: string;
-  outcomeKuendigung: string;
-  outcomeWiderruf: string;
 }
 
-/**
- * The receipt, in both languages the wire contract accepts. `en` is the
- * hand-written source of truth; `de` is that text through the workspace
- * wordsmith pass, formal `Sie`, reviewed and pasted, not composed here.
- */
-const DECLARATION_RECEIPT_STRINGS = {
+const DETAIL_LABELS = {
   en: {
-    subjectKuendigung: 'Your cancellation request',
-    subjectWiderruf: 'Your withdrawal',
-    greeting: 'Hello,',
-    introKuendigung: 'We received your cancellation request on {date}.',
-    introWiderruf: 'We received your withdrawal on {date}.',
-    fieldsHeading: 'You gave us these details:',
-    labelName: 'Name',
-    labelEmail: 'Email',
-    labelContractReference: 'Contract or customer number',
-    labelTerminationType: 'Type of cancellation',
-    labelReason: 'Reason',
-    labelRequestedDate: 'Requested date',
-    labelTiming: 'Timing',
+    name: 'Name',
+    email: 'Email',
+    contractReference: 'Contract or customer number',
+    terminationType: 'Type of cancellation',
+    reason: 'Reason',
+    requestedDate: 'Requested date',
+    timing: 'Timing',
     terminationTypeOrdentlich: 'regular notice',
     terminationTypeAusserordentlich: 'extraordinary notice',
     timingEarliest: 'as soon as legally possible',
     timingOnDate: 'on the date you gave',
-    outcomeKuendigung:
-      'Your cancellation takes effect at the end of your current paid period. You keep full access until then.',
-    outcomeWiderruf: 'A person on our team will look at this and get back to you within 14 days.',
   },
   de: {
-    subjectKuendigung: 'Ihre Kündigung',
-    subjectWiderruf: 'Ihr Widerruf',
-    greeting: 'Guten Tag,',
-    introKuendigung: 'Wir haben Ihre Kündigung am {date} erhalten.',
-    introWiderruf: 'Wir haben Ihren Widerruf am {date} erhalten.',
-    fieldsHeading: 'Sie haben folgende Angaben gemacht:',
-    labelName: 'Name',
-    labelEmail: 'E-Mail',
-    labelContractReference: 'Vertrags- oder Kundennummer',
-    labelTerminationType: 'Art der Kündigung',
-    labelReason: 'Grund',
-    labelRequestedDate: 'Gewünschtes Datum',
-    labelTiming: 'Zeitpunkt',
+    name: 'Name',
+    email: 'E-Mail',
+    contractReference: 'Vertrags- oder Kundennummer',
+    terminationType: 'Art der Kündigung',
+    reason: 'Grund',
+    requestedDate: 'Gewünschtes Datum',
+    timing: 'Zeitpunkt',
     terminationTypeOrdentlich: 'ordentliche Kündigung',
     terminationTypeAusserordentlich: 'außerordentliche Kündigung',
     timingEarliest: 'zum nächstmöglichen Zeitpunkt',
     timingOnDate: 'zum angegebenen Datum',
-    outcomeKuendigung:
-      'Ihre Kündigung wird zum Ende Ihres aktuellen Abrechnungszeitraums wirksam. Bis dahin behalten Sie den vollen Zugriff.',
-    outcomeWiderruf: 'Wir prüfen Ihre Angaben und melden uns innerhalb von 14 Tagen bei Ihnen.',
   },
-} satisfies Record<DeclarationLanguage, DeclarationReceiptStrings>;
+} satisfies Record<DeclarationLanguage, DetailLabels>;
+
+/** The neutral fallback's own lines. `{receiptId}` and `{date}` are filled in code. */
+interface FallbackLabels {
+  subjectKuendigung: string;
+  subjectWiderruf: string;
+  kindKuendigung: string;
+  kindWiderruf: string;
+  receiptId: string;
+  receivedAt: string;
+}
+
+/** The app's confirmation page labels, `legal:declarations.confirmed.*`, word for word. */
+const FALLBACK_LABELS = {
+  en: {
+    subjectKuendigung: 'Cancellation confirmed',
+    subjectWiderruf: 'Withdrawal confirmed',
+    kindKuendigung: 'Type: Cancellation',
+    kindWiderruf: 'Type: Withdrawal',
+    receiptId: 'Receipt no.: {receiptId}',
+    receivedAt: 'Received at: {date}',
+  },
+  de: {
+    subjectKuendigung: 'Kündigung bestätigt',
+    subjectWiderruf: 'Widerruf bestätigt',
+    kindKuendigung: 'Art: Kündigung',
+    kindWiderruf: 'Art: Widerruf',
+    receiptId: 'Beleg-Nr.: {receiptId}',
+    receivedAt: 'Eingegangen am: {date}',
+  },
+} satisfies Record<DeclarationLanguage, FallbackLabels>;
 
 /** The `Intl` locale each language's date is rendered in, mirroring `strings.ts`'s `DATE_LOCALES` for the two languages this module carries. */
 const RECEIPT_DATE_LOCALES = {
@@ -138,18 +185,15 @@ const RECEIPT_DATE_LOCALES = {
 } satisfies Record<DeclarationLanguage, string>;
 
 /**
- * The received instant, in Europe/Berlin with its offset name attached.
+ * The received instant, in Europe/Berlin with its zone name attached.
  *
- * EUROPE/BERLIN, NEVER UTC, unlike `strings.ts`'s expiry dates: those are a
- * day-granular deadline where the zone rarely matters, this is "the date and
- * time of receipt" that both statutes require the acknowledgement to state,
- * and the business, the statute and the reader are all in the same zone.
+ * EUROPE/BERLIN, NEVER UTC: this is "the date and time of receipt" that both
+ * statutes require the acknowledgement to state, and the business, the
+ * statute and the reader are all in the same zone. Explicit components rather
+ * than `dateStyle`/`timeStyle`, because `Intl.DateTimeFormat` refuses to
+ * combine either shorthand with `timeZoneName`.
  */
-function formatReceivedAt(input: { receivedAt: Date; language: DeclarationLanguage }): string {
-  // Explicit components rather than `dateStyle`/`timeStyle`: `Intl.DateTimeFormat`
-  // refuses to combine either style shorthand with `timeZoneName`, and the
-  // offset name is the one thing both statutes require the acknowledgement
-  // to carry.
+export function formatReceivedAt(input: { receivedAt: Date; language: DeclarationLanguage }): string {
   return new Intl.DateTimeFormat(RECEIPT_DATE_LOCALES[input.language], {
     day: 'numeric',
     month: 'long',
@@ -161,115 +205,152 @@ function formatReceivedAt(input: { receivedAt: Date; language: DeclarationLangua
   }).format(input.receivedAt);
 }
 
-/** Substitutes the one `{date}` placeholder either intro carries. */
-function fillDate(template: string, date: string): string {
-  return template.replace('{date}', date);
-}
-
 /** One "Label: value" line, or nothing when the field was not given. */
 function detailLine(label: string, value: string | null): string[] {
   return value === null ? [] : [`${label}: ${value}`];
 }
 
-function terminationTypeLabel(strings: DeclarationReceiptStrings, value: 'ordentlich' | 'ausserordentlich'): string {
-  return value === 'ordentlich' ? strings.terminationTypeOrdentlich : strings.terminationTypeAusserordentlich;
+function terminationTypeLabel(input: {
+  labels: DetailLabels;
+  value: DeclarationFields['terminationType'];
+}): string | null {
+  if (input.value === null) return null;
+  return input.value === 'ordentlich'
+    ? input.labels.terminationTypeOrdentlich
+    : input.labels.terminationTypeAusserordentlich;
 }
 
-function timingLabel(strings: DeclarationReceiptStrings, value: 'earliest' | 'onDate'): string {
-  return value === 'earliest' ? strings.timingEarliest : strings.timingOnDate;
+function timingLabel(input: { labels: DetailLabels; value: DeclarationFields['timing'] }): string | null {
+  if (input.value === null) return null;
+  return input.value === 'earliest' ? input.labels.timingEarliest : input.labels.timingOnDate;
 }
 
 /** Every field line the person's own submission earns, in the fixed order the form asked for them. */
-function detailLines(strings: DeclarationReceiptStrings, fields: DeclarationFields): string[] {
+export function detailLines(input: { fields: DeclarationFields; language: DeclarationLanguage }): string[] {
+  const labels = DETAIL_LABELS[input.language];
+  const { fields } = input;
+  const terminationType = terminationTypeLabel({ labels, value: fields.terminationType });
+  const timing = timingLabel({ labels, value: fields.timing });
   return [
-    ...detailLine(strings.labelName, fields.name),
-    ...detailLine(strings.labelEmail, fields.email),
-    ...detailLine(strings.labelContractReference, fields.contractReference),
-    ...detailLine(
-      strings.labelTerminationType,
-      fields.terminationType === null ? null : terminationTypeLabel(strings, fields.terminationType),
-    ),
-    ...detailLine(strings.labelReason, fields.reason),
-    ...detailLine(strings.labelRequestedDate, fields.requestedDate),
-    ...detailLine(strings.labelTiming, fields.timing === null ? null : timingLabel(strings, fields.timing)),
+    ...detailLine(labels.name, fields.name),
+    ...detailLine(labels.email, fields.email),
+    ...detailLine(labels.contractReference, fields.contractReference),
+    ...detailLine(labels.terminationType, terminationType),
+    ...detailLine(labels.reason, fields.reason),
+    ...detailLine(labels.requestedDate, fields.requestedDate),
+    ...detailLine(labels.timing, timing),
   ];
 }
 
 /**
- * PARAGRAPH ORDER: greeting, what was received and when, every field the
- * person typed, and last the one fact that matters most to them, when this
- * takes effect or when they hear back. Nothing after it: no offer, no pause,
- * no survey, no support link, the same bound the confirmation page holds to.
+ * The neutral letter: kind, receipt number, time of receipt, every field.
+ * `trailing` is the alert's one extra fact, whether the address matched.
  */
-export function buildDeclarationReceiptMessage(
-  input: DeclarationFields & { language: DeclarationLanguage },
-): BuiltDeclarationMessage {
-  const strings = DECLARATION_RECEIPT_STRINGS[input.language];
-  const date = formatReceivedAt({ receivedAt: input.receivedAt, language: input.language });
-  const intro = fillDate(
-    input.kind === 'kuendigung' ? strings.introKuendigung : strings.introWiderruf,
-    date,
-  );
-  const outcome = input.kind === 'kuendigung' ? strings.outcomeKuendigung : strings.outcomeWiderruf;
-  const subject = input.kind === 'kuendigung' ? strings.subjectKuendigung : strings.subjectWiderruf;
-
-  const before = [strings.greeting, intro, strings.fieldsHeading, ...detailLines(strings, input)];
-  const after = [outcome];
-
+function buildFallback(input: {
+  fields: DeclarationFields;
+  receiptId: string;
+  language: DeclarationLanguage;
+  subject: string;
+  trailing: string[];
+}): BuiltDeclarationMessage {
+  const labels = FALLBACK_LABELS[input.language];
+  const date = formatReceivedAt({ receivedAt: input.fields.receivedAt, language: input.language });
+  const paragraphs = [
+    input.fields.kind === 'kuendigung' ? labels.kindKuendigung : labels.kindWiderruf,
+    labels.receiptId.replace('{receiptId}', input.receiptId),
+    labels.receivedAt.replace('{date}', date),
+    ...detailLines({ fields: input.fields, language: input.language }),
+    ...input.trailing,
+  ];
   return {
-    subject,
-    text: [...before, ...after].join('\n\n'),
-    html: renderHtml({ language: input.language, before, after, link: null }),
+    subject: input.subject,
+    text: paragraphs.join('\n\n'),
+    html: renderHtml({ language: input.language, before: paragraphs, after: [], link: null }),
+    origin: 'fallback',
   };
 }
-
-// ── The operator alert ───────────────────────────────────────────────────
-// English only. See the module header for why.
-
-const OPERATOR_KIND_LABEL = {
-  kuendigung: 'Cancellation (section 312k BGB)',
-  widerruf: 'Withdrawal (section 356a BGB)',
-} satisfies Record<DeclarationKind, string>;
-
-export interface DeclarationOperatorAlertInput extends DeclarationFields {
-  /** The same id the person's own receipt carries, so an operator can find the row this letter is about. */
-  receiptId: string;
-  /** Whether the email matched an account on this instance. Never the account id: this letter is a notice, not a lookup tool. */
-  matched: boolean;
-}
-
-/** Europe/Berlin, English formatting, for the operator's own reading rather than the reader's. */
-function formatOperatorReceivedAt(receivedAt: Date): string {
-  return new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Berlin',
-    timeZoneName: 'short',
-  }).format(receivedAt);
-}
-
-const OPERATOR_EN: DeclarationReceiptStrings = DECLARATION_RECEIPT_STRINGS.en;
 
 /**
- * PARAGRAPH ORDER: what arrived and when, the receipt id, every field, and
- * last whether it matched an account, because that is the one fact that
- * changes what the operator does next: look up a subscription, or take the
- * request at its word.
+ * Fills the template, or answers `null` when the fill refuses, so the caller
+ * sends the fallback instead of a letter with a hole in it.
  */
-export function buildDeclarationOperatorAlertMessage(input: DeclarationOperatorAlertInput): BuiltDeclarationMessage {
-  const date = formatOperatorReceivedAt(input.receivedAt);
-  const subject = `New declaration: ${input.kind === 'kuendigung' ? 'cancellation' : 'withdrawal'} (${input.receiptId})`;
-  const intro = `${OPERATOR_KIND_LABEL[input.kind]} received on ${date}. Receipt ID: ${input.receiptId}.`;
-  const matchLine = `Matched to an existing account: ${input.matched ? 'yes' : 'no'}.`;
+function fillTemplate(input: {
+  found: FoundMailTemplate;
+  fields: DeclarationFields;
+  receiptId: string;
+  matched: boolean | null;
+}): BuiltDeclarationMessage | null {
+  const { found } = input;
+  const inline = new Map<InlinePlaceholder, string>();
+  inline.set('date', formatReceivedAt({ receivedAt: input.fields.receivedAt, language: found.language }));
+  inline.set('receiptId', input.receiptId);
+  if (input.matched !== null) inline.set('matched', input.matched ? 'yes' : 'no');
+  const values = { inline, details: detailLines({ fields: input.fields, language: found.language }) };
+  try {
+    return {
+      ...renderMailTemplate({ template: found.template, values, language: found.language }),
+      origin: 'template',
+    };
+  } catch (cause) {
+    if (cause instanceof MailTemplateError) return null;
+    throw cause;
+  }
+}
 
-  const before = [intro, 'The person gave these details:', ...detailLines(OPERATOR_EN, input), matchLine];
+/**
+ * The receipt to the person who filed the declaration. From the template when
+ * one was found, in the template's language; otherwise the neutral fallback
+ * in the language the person chose.
+ */
+export function buildDeclarationReceiptMessage(input: {
+  declaration: DeclarationReceiptInput;
+  template: FoundMailTemplate | null;
+}): BuiltDeclarationMessage {
+  const { declaration } = input;
+  if (input.template !== null) {
+    const filled = fillTemplate({
+      found: input.template,
+      fields: declaration,
+      receiptId: declaration.receiptId,
+      matched: null,
+    });
+    if (filled !== null) return filled;
+  }
+  const labels = FALLBACK_LABELS[declaration.language];
+  return buildFallback({
+    fields: declaration,
+    receiptId: declaration.receiptId,
+    language: declaration.language,
+    subject: declaration.kind === 'kuendigung' ? labels.subjectKuendigung : labels.subjectWiderruf,
+    trailing: [],
+  });
+}
 
-  return {
-    subject,
-    text: before.join('\n\n'),
-    html: renderHtml({ language: 'en', before, after: [], link: null }),
-  };
+/**
+ * The operator's copy, English only. The fallback ends with whether the
+ * address matched an account, because that is the one fact that changes what
+ * the operator does next.
+ */
+export function buildDeclarationOperatorAlertMessage(input: {
+  declaration: DeclarationOperatorAlertInput;
+  template: FoundMailTemplate | null;
+}): BuiltDeclarationMessage {
+  const { declaration } = input;
+  if (input.template !== null) {
+    const filled = fillTemplate({
+      found: input.template,
+      fields: declaration,
+      receiptId: declaration.receiptId,
+      matched: declaration.matched,
+    });
+    if (filled !== null) return filled;
+  }
+  const kindWord = declaration.kind === 'kuendigung' ? 'cancellation' : 'withdrawal';
+  return buildFallback({
+    fields: declaration,
+    receiptId: declaration.receiptId,
+    language: 'en',
+    subject: `New declaration: ${kindWord} (${declaration.receiptId})`,
+    trailing: [`Matched to an existing account: ${declaration.matched ? 'yes' : 'no'}.`],
+  });
 }

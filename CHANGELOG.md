@@ -7,6 +7,18 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **The declaration letters take their words from a mounted folder.** The
+  receipt for a cancellation or a withdrawal, and the operator alert, now read
+  their subject and body from `<CONTENT_DIR>/<lang>/mail/`, in a small markdown
+  subset with `{{date}}`, `{{receiptId}}`, `{{details}}` and `{{matched}}`
+  placeholders. The German and English letter text is gone from this repo.
+  With `CONTENT_DIR` unset, or a file missing or refused, a neutral letter goes
+  out that states the kind, the receipt number, the time of receipt and every
+  field the person gave. The receipt now carries the receipt number in that
+  case. See `docs/operations/declaration-mail-text.md`.
+
 ## [0.18.0] - 2026-09-21
 
 ### Added

@@ -27,7 +27,9 @@
  * go out from `server/legal-declarations.ts` on every declaration, matched or
  * not: the receipt to the person who filed it (and again to a matched
  * account's own address, when it differs), the alert to the operator. Neither
- * carries a link either — there is no account and no token to put one behind.
+ * carries a token, because there is no account to put one behind. Their words
+ * come from the instance's content folder (M246/04), found at send time
+ * through the `templates` option; with none, a neutral fallback goes out.
  *
  * WHY AN INTERFACE AND NOT AN HTTP CLIENT. Everything upstream of the
  * transport has to be testable without one: the admin invite route has real
@@ -49,12 +51,14 @@ import { buildAccountNoticeMessage } from './account-notice-message.js';
 import { buildInviteMessage } from './invite-message.js';
 import { buildResetMessage } from './reset-message.js';
 import {
+  alertTemplateName,
   buildDeclarationOperatorAlertMessage,
   buildDeclarationReceiptMessage,
-  type DeclarationFields,
-  type DeclarationLanguage,
+  receiptTemplateName,
   type DeclarationOperatorAlertInput,
+  type DeclarationReceiptInput,
 } from './declaration-message.js';
+import type { DeclarationTemplateSource } from './declaration-templates.js';
 
 export interface SendInviteInput {
   /** The address the invitation goes to — the invite's own `email`, never one from a request body. */
@@ -91,11 +95,9 @@ export interface SendResetInput {
  * address when it differs — this input carries one recipient, so two sends
  * are two calls, the same pattern `sendInvite` and `sendReset` already use.
  */
-export interface SendDeclarationReceiptInput extends DeclarationFields {
+export interface SendDeclarationReceiptInput extends DeclarationReceiptInput {
   /** Where THIS send goes. Either the typed address or the matched account's, chosen by the caller. */
   to: string;
-  /** Which of the two reviewed languages to write in. From the request body; an instance's `INSTANCE_LANGUAGE` plays no part here. */
-  language: DeclarationLanguage;
 }
 
 /** The operator's copy, sent once per declaration regardless of how many receipts went out. English only, see `declaration-message.ts`. */
@@ -181,6 +183,8 @@ export interface CreateHttpMailerOptions {
   links: { clientBaseUrl: string; serverPublicUrl: string };
   /** Which language both letters are written in (`INSTANCE_LANGUAGE`). */
   language: InstanceLanguage;
+  /** Where the two declaration letters find their text (M246/04). See `declaration-templates.ts`. */
+  templates: DeclarationTemplateSource;
   logger: Logger;
   timeoutMs?: number;
 }
@@ -263,7 +267,7 @@ async function postMail(input: { mail: HttpMailConfig; timeoutMs: number; outgoi
  */
 export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
   const timeoutMs = options.timeoutMs ?? DEFAULT_MAIL_API_TIMEOUT_MS;
-  const { language, links, logger, mail } = options;
+  const { language, links, logger, mail, templates } = options;
 
   return {
     async sendInvite(input: SendInviteInput): Promise<void> {
@@ -309,7 +313,12 @@ export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
     },
 
     async sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void> {
-      const message = buildDeclarationReceiptMessage(input);
+      // The reader's language first, then English, CONTRACT.md section 6.
+      const template = await templates.find({
+        name: receiptTemplateName(input.kind),
+        languages: input.language === 'en' ? ['en'] : [input.language, 'en'],
+      });
+      const message = buildDeclarationReceiptMessage({ declaration: input, template });
       await postMail({
         mail,
         timeoutMs,
@@ -319,17 +328,22 @@ export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
       // doc gives: this letter carries no link, but it carries their name,
       // their reason and their contract reference, and none of that belongs
       // in a log line either.
-      logger.info('Declaration receipt mailed', { kind: input.kind });
+      logger.info('Declaration receipt mailed', { kind: input.kind, text: message.origin });
     },
 
     async sendDeclarationOperatorAlert(input: SendDeclarationOperatorAlertInput): Promise<void> {
-      const message = buildDeclarationOperatorAlertMessage(input);
+      const template = await templates.find({ name: alertTemplateName(input.kind), languages: ['en'] });
+      const message = buildDeclarationOperatorAlertMessage({ declaration: input, template });
       await postMail({
         mail,
         timeoutMs,
         outgoing: { to: mail.operatorEmail, subject: message.subject, text: message.text, html: message.html },
       });
-      logger.info('Declaration operator alert mailed', { kind: input.kind, matched: input.matched });
+      logger.info('Declaration operator alert mailed', {
+        kind: input.kind,
+        matched: input.matched,
+        text: message.origin,
+      });
     },
   };
 }
@@ -342,6 +356,7 @@ export function createMailer(options: {
   mail: HttpMailConfig | null;
   links: { clientBaseUrl: string; serverPublicUrl: string } | null;
   language: InstanceLanguage;
+  templates: DeclarationTemplateSource;
   logger: Logger;
 }): Mailer {
   // Both or neither: `config.ts` refuses to boot with mail configured and no
@@ -351,6 +366,7 @@ export function createMailer(options: {
     mail: options.mail,
     links: options.links,
     language: options.language,
+    templates: options.templates,
     logger: options.logger,
   });
 }

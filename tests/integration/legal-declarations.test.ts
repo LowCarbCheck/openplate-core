@@ -280,6 +280,10 @@ test('an unmatched declaration sends exactly one receipt and one operator alert,
   assert.equal(harness.mailer.declarationReceipts.length, 1);
   assert.equal(harness.mailer.declarationOperatorAlerts.length, 1);
   assert.equal(harness.mailer.declarationOperatorAlerts[0]?.matched, false);
+  // M246/04: the receipt states the same number the 202 and the confirmation
+  // page do, whichever text it is built from.
+  assert.equal(harness.mailer.declarationReceipts[0]?.receiptId, response.body.receiptId);
+  assert.equal(harness.mailer.declarationOperatorAlerts[0]?.receiptId, response.body.receiptId);
 });
 
 test('the 202 body is the same shape whether the email matched an account or not', async () => {

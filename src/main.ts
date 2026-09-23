@@ -35,6 +35,7 @@ import { deriveServerSecrets } from './lib/server-secrets.js';
 import { createThrottleStore } from './lib/throttle.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
 import { createMailer } from './mail/mailer.js';
+import { createDeclarationTemplateSource } from './mail/declaration-templates.js';
 import { createDrizzleAiQuotaStore } from './ai/quota-store.js';
 import { AI_USAGE_RETENTION_DAYS, startAiUsageRetention } from './ai/usage-retention.js';
 import { createDrizzleFeedbackStore } from './feedback/feedback-store.js';
@@ -87,8 +88,12 @@ async function main(): Promise<void> {
     mail: config.mail,
     links,
     language: config.instanceLanguage,
+    templates: createDeclarationTemplateSource({ contentDir: config.contentDir, logger }),
     logger,
   });
+  if (config.mail !== null && config.contentDir === null) {
+    logger.info('CONTENT_DIR is not set, so declaration letters use the neutral text');
+  }
 
   // BUILT BEFORE THE AUTH CONTEXT, because the member mint is on the auth
   // router and needs the same store the admin tree mints through, see

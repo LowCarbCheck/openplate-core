@@ -124,6 +124,19 @@ export interface ServiceConfig {
    */
   mail: HttpMailConfig | null;
   /**
+   * `CONTENT_DIR`, the instance's mounted content folder, or `null` when
+   * unset (M246/04). The same env name, and the same folder, the app renders
+   * its legal pages from: one instance's tree of the legal file contract.
+   * This service reads only `<lang>/mail/<template>.md` from it, the text of
+   * the two declaration letters, see `mail/declaration-templates.ts`.
+   *
+   * OPTIONAL, AND NEVER CHECKED AT BOOT. A folder that is missing or half
+   * mounted must not stop the service that records a statutory declaration:
+   * each letter falls back to a neutral text that states the facts, and the
+   * send logs why. `null` sends that neutral text on every declaration.
+   */
+  contentDir: string | null;
+  /**
    * The AI proxy's upstream, or `null` for an instance that offers no AI ,
    * the default, and what every deployment gets until an operator sets a key.
    *
@@ -1012,6 +1025,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     serverPublicUrl,
     clientBaseUrl,
     mail: parseMail(env, { serverPublicUrl, clientBaseUrl }),
+    contentDir: env.CONTENT_DIR?.trim() || null,
     ai: parseAi(env),
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),

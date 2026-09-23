@@ -10,3 +10,9 @@ drizzle/
 
 # Vendored third-party oxlint plugin — kept byte-identical to upstream.
 tools/oxlint/anti-slop
+
+# Mail template fixtures in the legal file contract's markdown subset
+# (M246/04). Prettier would rewrite `*emphasis*` as `_emphasis_`, which the
+# contract refuses, and the refused fixture must stay refused.
+tests/fixtures/content
+tests/fixtures/content-refused

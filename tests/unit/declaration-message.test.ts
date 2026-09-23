@@ -1,15 +1,22 @@
 /**
- * The two declaration letters, asserted as pure strings: no dashes, no named
- * service, and the German statutory subject lines this repo's `strings.ts`
- * suite holds every other letter to.
+ * The two declaration letters (M246/04): the neutral fallback this public
+ * repo keeps, and the fill of a template from the mounted content folder.
+ *
+ * The templates here are neutral markers built inline; the real text lives in
+ * a private repo. The fallback's exact lines ARE pinned: they are code-owned
+ * labels copied from the app's confirmation page, not wordsmith-owned prose.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildDeclarationOperatorAlertMessage,
   buildDeclarationReceiptMessage,
+  DECLARATION_TEMPLATE_PLACEHOLDERS,
   type DeclarationFields,
+  type DeclarationTemplateName,
+  type FoundMailTemplate,
 } from '../../src/mail/declaration-message.js';
+import { parseMailTemplate } from '../../src/mail/mail-template.js';
 
 const RECEIVED_AT = new Date('2026-09-21T10:15:00.000Z');
 
@@ -28,57 +35,95 @@ function baseFields(overrides: Partial<DeclarationFields> = {}): DeclarationFiel
   };
 }
 
+function foundTemplate(input: {
+  name: DeclarationTemplateName;
+  language: 'de' | 'en';
+  subject: string;
+  body: string;
+}): FoundMailTemplate {
+  const source = [
+    '---',
+    'title: Fixture',
+    'updated: 2026-09-23',
+    `subject: ${input.subject}`,
+    '---',
+    '',
+    input.body,
+    '',
+  ].join('\n');
+  return {
+    template: parseMailTemplate({ source, placeholders: DECLARATION_TEMPLATE_PLACEHOLDERS[input.name] }),
+    language: input.language,
+  };
+}
+
 const BANNED_WORDS = ['Sync', 'sync', 'Gateway', 'gateway', 'AI connection', 'account link'];
-const BANNED_DASHES = ['—', '–'];
+const BANNED_DASHES = ['\u2014', '\u2013'];
 
-test('a kuendigung receipt names the kind, every given field, and the outcome, in the requested language', () => {
-  const de = buildDeclarationReceiptMessage({ ...baseFields(), language: 'de' });
-  assert.equal(de.subject, 'Ihre Kündigung');
-  for (const value of ['Anna Beispiel', 'K-1234', 'ordentliche Kündigung']) {
-    assert.ok(de.text.includes(value), `missing "${value}" in the German receipt`);
-  }
-  assert.ok(de.text.includes('Ende Ihres aktuellen Abrechnungszeitraums'), 'must state the cancellation effect');
-
-  const en = buildDeclarationReceiptMessage({ ...baseFields(), language: 'en' });
-  assert.equal(en.subject, 'Your cancellation request');
-  assert.ok(en.text.includes('end of your current paid period'));
-});
-
-test('a widerruf receipt states the 14-day answer, and carries no reason or timing field the form never asked for', () => {
-  const message = buildDeclarationReceiptMessage({
-    ...baseFields({ kind: 'widerruf', terminationType: null, reason: null, timing: null }),
-    language: 'en',
+test('with no template, the receipt is the neutral fallback: kind, receipt number, time, every field, nothing else', () => {
+  const en = buildDeclarationReceiptMessage({
+    declaration: { ...baseFields(), receiptId: 'r-1', language: 'en' },
+    template: null,
   });
-  assert.equal(message.subject, 'Your withdrawal');
-  assert.ok(message.text.includes('within 14 days'));
-  assert.ok(!message.text.includes('Type of cancellation'), 'widerruf never asked for a termination type');
-  assert.ok(!message.text.includes('Timing'), 'widerruf never asked for a timing');
+  assert.equal(en.origin, 'fallback');
+  assert.equal(en.subject, 'Cancellation confirmed');
+  assert.deepEqual(en.text.split('\n\n'), [
+    'Type: Cancellation',
+    'Receipt no.: r-1',
+    'Received at: 21 September 2026 at 12:15 CEST',
+    'Name: Anna Beispiel',
+    'Email: anna@example.org',
+    'Contract or customer number: K-1234',
+    'Type of cancellation: regular notice',
+    'Timing: as soon as legally possible',
+  ]);
+
+  const de = buildDeclarationReceiptMessage({
+    declaration: {
+      ...baseFields({ kind: 'widerruf', terminationType: null, timing: null }),
+      receiptId: 'r-2',
+      language: 'de',
+    },
+    template: null,
+  });
+  assert.equal(de.subject, 'Widerruf bestätigt');
+  assert.deepEqual(de.text.split('\n\n'), [
+    'Art: Widerruf',
+    'Beleg-Nr.: r-2',
+    'Eingegangen am: 21. September 2026 um 12:15 MESZ',
+    'Name: Anna Beispiel',
+    'E-Mail: anna@example.org',
+    'Vertrags- oder Kundennummer: K-1234',
+  ]);
 });
 
 test('an optional field the person left out produces no line at all', () => {
-  const withReason = buildDeclarationReceiptMessage({ ...baseFields({ reason: 'a stated reason' }), language: 'en' });
-  const withoutReason = buildDeclarationReceiptMessage({ ...baseFields({ reason: null }), language: 'en' });
+  const withReason = buildDeclarationReceiptMessage({
+    declaration: { ...baseFields({ reason: 'a stated reason' }), receiptId: 'r', language: 'en' },
+    template: null,
+  });
+  const withoutReason = buildDeclarationReceiptMessage({
+    declaration: { ...baseFields({ reason: null }), receiptId: 'r', language: 'en' },
+    template: null,
+  });
   assert.ok(withReason.text.includes('Reason: a stated reason'));
   assert.ok(!withoutReason.text.includes('Reason:'));
 });
 
-test('a declaration receipt carries no link, in either language', () => {
-  for (const language of ['de', 'en'] as const) {
-    const message = buildDeclarationReceiptMessage({ ...baseFields(), language });
-    assert.ok(!message.html.includes('href'), `${language} receipt must carry no link`);
-    assert.ok(!message.text.includes('http'), `${language} receipt text must carry no url`);
-  }
-});
-
-test('neither letter names a service, a gateway or an account link, and neither carries a dash', () => {
-  const receiptDe = buildDeclarationReceiptMessage({ ...baseFields(), language: 'de' });
-  const receiptEn = buildDeclarationReceiptMessage({ ...baseFields(), language: 'en' });
-  const alert = buildDeclarationOperatorAlertMessage({ ...baseFields(), receiptId: 'r-1', matched: true });
-
-  for (const message of [receiptDe, receiptEn, alert]) {
+test('neither fallback carries a link, names a service, or carries a dash', () => {
+  const receipts = (['de', 'en'] as const).map((language) =>
+    buildDeclarationReceiptMessage({ declaration: { ...baseFields(), receiptId: 'r', language }, template: null }),
+  );
+  const alert = buildDeclarationOperatorAlertMessage({
+    declaration: { ...baseFields(), receiptId: 'r', matched: true },
+    template: null,
+  });
+  for (const message of [...receipts, alert]) {
+    assert.ok(!message.html.includes('href'), 'a fallback carries a link');
+    assert.ok(!message.text.includes('http'), 'a fallback carries a url');
     for (const word of BANNED_WORDS) {
       assert.ok(!message.text.includes(word), `text carries banned word "${word}"`);
-      assert.ok(!message.html.includes(word), `html carries banned word "${word}"`);
+      assert.ok(!message.subject.includes(word), `subject carries banned word "${word}"`);
     }
     for (const dash of BANNED_DASHES) {
       assert.ok(!message.text.includes(dash), 'text carries a dash');
@@ -87,13 +132,90 @@ test('neither letter names a service, a gateway or an account link, and neither 
   }
 });
 
-test('the operator alert names the receipt id, every field, and whether it matched, in English regardless of the declaration language', () => {
-  const matched = buildDeclarationOperatorAlertMessage({ ...baseFields(), receiptId: 'a-receipt-id', matched: true });
-  assert.ok(matched.subject.includes('a-receipt-id'));
-  assert.ok(matched.text.includes('a-receipt-id'));
-  assert.ok(matched.text.includes('yes'));
-  assert.ok(matched.text.includes('K-1234'));
+test('the operator alert fallback names the receipt id, every field, and whether it matched, in English', () => {
+  const matched = buildDeclarationOperatorAlertMessage({
+    declaration: { ...baseFields({ kind: 'widerruf' }), receiptId: 'a-receipt-id', matched: true },
+    template: null,
+  });
+  assert.equal(matched.origin, 'fallback');
+  assert.equal(matched.subject, 'New declaration: withdrawal (a-receipt-id)');
+  assert.ok(matched.text.includes('Receipt no.: a-receipt-id'));
+  assert.ok(matched.text.includes('Contract or customer number: K-1234'));
+  assert.ok(matched.text.endsWith('Matched to an existing account: yes.'));
 
-  const unmatched = buildDeclarationOperatorAlertMessage({ ...baseFields(), receiptId: 'a-receipt-id', matched: false });
-  assert.ok(unmatched.text.includes('no'));
+  const unmatched = buildDeclarationOperatorAlertMessage({
+    declaration: { ...baseFields(), receiptId: 'a-receipt-id', matched: false },
+    template: null,
+  });
+  assert.ok(unmatched.text.endsWith('Matched to an existing account: no.'));
+});
+
+test('a found template is filled, in the TEMPLATE language, with the details as one paragraph each', () => {
+  const template = foundTemplate({
+    name: 'declaration-receipt-kuendigung',
+    language: 'en',
+    subject: 'Fixture subject',
+    body: 'Fixture received on {{date}}.\n\n{{details}}\n\nFixture closing.',
+  });
+  // A German reader, and an English file: the fallback language of the
+  // lookup. The labels and the date follow the file, so the letter is in one
+  // language throughout.
+  const message = buildDeclarationReceiptMessage({
+    declaration: { ...baseFields(), receiptId: 'r', language: 'de' },
+    template,
+  });
+  assert.equal(message.origin, 'template');
+  assert.equal(message.subject, 'Fixture subject');
+  assert.deepEqual(message.text.split('\n\n'), [
+    'Fixture received on 21 September 2026 at 12:15 CEST.',
+    'Name: Anna Beispiel',
+    'Email: anna@example.org',
+    'Contract or customer number: K-1234',
+    'Type of cancellation: regular notice',
+    'Timing: as soon as legally possible',
+    'Fixture closing.',
+  ]);
+  assert.ok(message.html.includes('<html lang="en">'));
+});
+
+test('an alert template fills the receipt id and the match in subject and body', () => {
+  const template = foundTemplate({
+    name: 'declaration-alert-kuendigung',
+    language: 'en',
+    subject: 'Fixture alert ({{receiptId}})',
+    body: 'Fixture {{receiptId}} on {{date}}.\n\n{{details}}\n\nFixture matched: {{matched}}.',
+  });
+  const message = buildDeclarationOperatorAlertMessage({
+    declaration: { ...baseFields(), receiptId: 'a-9', matched: false },
+    template,
+  });
+  assert.equal(message.origin, 'template');
+  assert.equal(message.subject, 'Fixture alert (a-9)');
+  assert.ok(message.text.startsWith('Fixture a-9 on 21 September 2026'));
+  assert.ok(message.text.endsWith('Fixture matched: no.'));
+});
+
+test('a template that needs a value this letter lacks sends the fallback, never a half-filled letter', () => {
+  // An ALERT template handed to the RECEIPT builder: it needs {{matched}},
+  // which a receipt has no value for.
+  const alertTemplate = foundTemplate({
+    name: 'declaration-alert-kuendigung',
+    language: 'en',
+    subject: 'Fixture subject',
+    body: 'Fixture matched: {{matched}}.\n\n{{details}}',
+  });
+  const message = buildDeclarationReceiptMessage({
+    declaration: { ...baseFields(), receiptId: 'r', language: 'en' },
+    template: alertTemplate,
+  });
+  assert.equal(message.origin, 'fallback');
+  assert.equal(message.subject, 'Cancellation confirmed');
+  assert.ok(!message.text.includes('Fixture'), 'a line of the unusable template reached the letter');
+
+  // CONTROL: the alert builder, which HAS the value, uses the same template.
+  const alert = buildDeclarationOperatorAlertMessage({
+    declaration: { ...baseFields(), receiptId: 'r', matched: true },
+    template: alertTemplate,
+  });
+  assert.equal(alert.origin, 'template');
 });

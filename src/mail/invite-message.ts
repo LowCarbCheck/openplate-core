@@ -125,12 +125,23 @@ export function renderHtml(input: {
     input.link === null
       ? []
       : [`<p style="word-break:break-all"><a href="${escapeHtml(input.link)}">${escapeHtml(input.link)}</a></p>`];
+  return renderHtmlDocument({
+    language: input.language,
+    body: [...input.before.map(paragraph), ...anchor, ...input.after.map(paragraph)],
+  });
+}
+
+/**
+ * The document shell every letter shares. `body` is ALREADY-ESCAPED markup,
+ * one element per entry; this function adds nothing a caller could inject
+ * into, only the language attribute, which is one of `InstanceLanguage`'s
+ * literals.
+ */
+export function renderHtmlDocument(input: { language: InstanceLanguage; body: readonly string[] }): string {
   return [
     '<!doctype html>',
     `<html lang="${input.language}"><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">`,
-    ...input.before.map(paragraph),
-    ...anchor,
-    ...input.after.map(paragraph),
+    ...input.body,
     '</body></html>',
   ].join('\n');
 }

@@ -32,6 +32,7 @@ import { createThrottleStore } from '../../src/lib/throttle.js';
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from '../../src/lib/tokens.js';
 import { createHttpMailer } from '../../src/mail/mailer.js';
+import { createDeclarationTemplateSource } from '../../src/mail/declaration-templates.js';
 import type { AuthContext } from '../../src/accounts/auth-handlers.js';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
 import {
@@ -110,6 +111,7 @@ before(async () => {
     },
     links,
     language: 'en',
+    templates: createDeclarationTemplateSource({ contentDir: null, logger }),
     logger,
   });
 

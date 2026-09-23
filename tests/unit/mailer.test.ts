@@ -19,9 +19,14 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { createHttpMailer, createMailer, createNoopMailer } from '../../src/mail/mailer.js';
 import type { CreateHttpMailerOptions, Mailer } from '../../src/mail/mailer.js';
+import { createDeclarationTemplateSource } from '../../src/mail/declaration-templates.js';
 import type { LogFields, Logger } from '../../src/logger.js';
+
+/** The neutral stand-in for a mounted `CONTENT_DIR`, see its README. */
+const FIXTURE_CONTENT = fileURLToPath(new URL('../fixtures/content', import.meta.url));
 
 const servers: Server[] = [];
 
@@ -119,6 +124,7 @@ function mailerFor(url: string, logger: Logger, timeoutMs?: number): Mailer {
     },
     links: LINKS,
     language: 'en',
+    templates: createDeclarationTemplateSource({ contentDir: FIXTURE_CONTENT, logger }),
     logger,
   };
   // Set in a statement rather than spread conditionally, so the omission is a
@@ -166,6 +172,7 @@ test('a reset send posts the reset letter, in the configured language', async ()
     mail: { url: api.url, apiKey: 'k', from: 'f', operatorEmail: 'operator@example.org' },
     links: LINKS,
     language: 'de',
+    templates: createDeclarationTemplateSource({ contentDir: null, logger: captured.logger }),
     logger: captured.logger,
   });
   await german.sendReset({ email: 'anna@example.org', resetToken: 'sr_a-token', expiresAt: 'x' });
@@ -297,13 +304,15 @@ test('createMailer answers the no-op when mail or the link bases are absent', as
   const send = { email: 'anna@example.org', resetToken: 'sr_x', expiresAt: 'x' };
 
   // No mail block: the copy-link deployment most self-hosters run.
-  await createMailer({ mail: null, links: LINKS, language: 'en', logger: captured.logger }).sendReset(send);
+  const templates = createDeclarationTemplateSource({ contentDir: null, logger: captured.logger });
+  await createMailer({ mail: null, links: LINKS, language: 'en', templates, logger: captured.logger }).sendReset(send);
   // Mail but no links, which `config.ts` refuses at boot — the narrowing here
   // is belt and braces rather than a second policy.
   await createMailer({
     mail: { url: 'http://unreachable.invalid', apiKey: 'k', from: 'f', operatorEmail: 'operator@example.org' },
     links: null,
     language: 'en',
+    templates,
     logger: captured.logger,
   }).sendReset(send);
 
@@ -316,7 +325,12 @@ test('the no-op mailer accepts all five letters and sends none', async () => {
   await mailer.sendInvite({ email: 'a@b.test', displayName: null, inviteToken: 'si_x', expiresAt: 'x' });
   await mailer.sendReset({ email: 'a@b.test', resetToken: 'sr_x', expiresAt: 'x' });
   await mailer.sendAccountNotice({ email: 'a@b.test' });
-  await mailer.sendDeclarationReceipt({ ...sampleDeclarationFields(), to: 'a@b.test', language: 'en' });
+  await mailer.sendDeclarationReceipt({
+    ...sampleDeclarationFields(),
+    receiptId: 'a-receipt-id',
+    to: 'a@b.test',
+    language: 'en',
+  });
   await mailer.sendDeclarationOperatorAlert({
     ...sampleDeclarationFields(),
     receiptId: 'a-receipt-id',
@@ -355,24 +369,52 @@ function sampleDeclarationFields(): SampleDeclarationFields {
   };
 }
 
-test('a declaration receipt posts the reviewed letter, in the requested language, to the given address', async () => {
+test('a declaration receipt posts the content folder letter, in the requested language, to the given address', async () => {
   const api = await startFakeMailApi();
   const captured = createCapturingLogger();
 
   await mailerFor(api.url, captured.logger).sendDeclarationReceipt({
     ...sampleDeclarationFields(),
+    receiptId: 'a-receipt-id',
     to: 'anna@example.org',
     language: 'de',
   });
 
   assert.equal(api.received.length, 1);
-  // SAFETY: as above — our own adapter posted this body.
+  // SAFETY: as above, our own adapter posted this body.
   const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
   assert.deepEqual(payload.to, ['anna@example.org']);
-  assert.equal(payload.subject, 'Ihre Kündigung');
-  assert.ok(payload.text.includes('K-1234'), 'the receipt must name every field the person typed');
-  // No link at all: there is no account and no token to put one behind.
-  assert.ok(!payload.html.includes('href'), 'a declaration receipt must carry no link');
+  assert.equal(payload.subject, 'Fixture subject receipt kuendigung de');
+  assert.ok(payload.text.includes('Fixture closing line kuendigung de.'), 'the body must come from the file');
+  assert.ok(payload.text.includes('Vertrags- oder Kundennummer: K-1234'), 'the receipt must name every field');
+  assert.ok(JSON.stringify(captured.lines).includes('"text":"template"'), 'the send must log where its text came from');
+});
+
+test('with no content folder, a declaration receipt posts the neutral fallback, and logs that it did', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+  const mailer = createHttpMailer({
+    mail: { url: api.url, apiKey: 'k', from: 'f', operatorEmail: 'operator@example.org' },
+    links: LINKS,
+    language: 'en',
+    templates: createDeclarationTemplateSource({ contentDir: null, logger: captured.logger }),
+    logger: captured.logger,
+  });
+
+  await mailer.sendDeclarationReceipt({
+    ...sampleDeclarationFields(),
+    receiptId: 'a-receipt-id',
+    to: 'anna@example.org',
+    language: 'en',
+  });
+
+  // SAFETY: as above, our own adapter posted this body.
+  const payload = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  assert.equal(payload.subject, 'Cancellation confirmed');
+  assert.ok(payload.text.includes('Receipt no.: a-receipt-id'));
+  assert.ok(payload.text.includes('Contract or customer number: K-1234'));
+  assert.ok(!payload.text.includes('Fixture'), 'a fallback must carry no folder text');
+  assert.ok(JSON.stringify(captured.lines).includes('"text":"fallback"'));
 });
 
 test('a declaration operator alert posts to the configured operator address, in English, naming the receipt id', async () => {
@@ -385,6 +427,7 @@ test('a declaration operator alert posts to the configured operator address, in 
     receiptId: 'a-receipt-id-9',
     matched: true,
   });
+  // The fixture folder holds no withdrawal alert, so this is the neutral text.
 
   assert.equal(api.received.length, 1);
   // SAFETY: as above — our own adapter posted this body.
@@ -403,6 +446,7 @@ test('nothing a declaration send logs carries a name, a reason or a contract ref
   await mailerFor(api.url, captured.logger).sendDeclarationReceipt({
     ...sampleDeclarationFields(),
     reason: 'a very personal reason nobody else should read',
+    receiptId: 'a-receipt-id',
     to: 'anna@example.org',
     language: 'en',
   });

@@ -92,6 +92,8 @@ That prints a link (or, if you configured no `CLIENT_BASE_URL`, the raw token) *
 
 **Mail is optional.** Set `MAIL_API_*` and this service sends the invitation and the password reset itself; leave it unset and both come back to you as links to paste. Nothing is silently dropped either way. `SMTP_*` and `PIGEON_*` are boot failures rather than no-ops: this service speaks pigeon's HTTP API and nothing else.
 
+**The declaration letters take their words from your files.** The receipt for a cancellation or a withdrawal, and the operator's copy, are read from `CONTENT_DIR` (a folder you mount read-only, the same one the app's legal pages can come from). This repo ships no letter text: unset, the letters state only the kind, the receipt number, the time of receipt and the fields the person gave. [`docs/operations/declaration-mail-text.md`](./docs/operations/declaration-mail-text.md) has the file format and the exact fallback.
+
 ### The password reset, and what it costs
 
 "Forgot password" works, and unlike the mailed reset this service used to have, it **restores the diary rather than only the login**.

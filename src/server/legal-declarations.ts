@@ -305,7 +305,12 @@ export function registerLegalDeclarationsRoute(app: Express, options: LegalDecla
         receivedAt: row.receivedAt,
       };
       const mailSends: Promise<void>[] = [
-        options.mailer.sendDeclarationReceipt({ ...declarationFields, to: row.email, language: input.language }),
+        options.mailer.sendDeclarationReceipt({
+          ...declarationFields,
+          receiptId: id,
+          to: row.email,
+          language: input.language,
+        }),
         options.mailer.sendDeclarationOperatorAlert({ ...declarationFields, receiptId: id, matched: account !== null }),
       ];
       // TWICE ONLY WHEN THE STRINGS DIFFER. See `db/schema.ts` on why a
@@ -314,7 +319,12 @@ export function registerLegalDeclarationsRoute(app: Express, options: LegalDecla
       // not as folded.
       if (account !== null && account.email !== row.email) {
         mailSends.push(
-          options.mailer.sendDeclarationReceipt({ ...declarationFields, to: account.email, language: input.language }),
+          options.mailer.sendDeclarationReceipt({
+            ...declarationFields,
+            receiptId: id,
+            to: account.email,
+            language: input.language,
+          }),
         );
       }
       const outcomes = await Promise.allSettled(mailSends);
