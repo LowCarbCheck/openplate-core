@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-23
+
 ### Changed
 
 - **A scan trial nobody has paid for cannot invite anybody** (M253/11, owner
