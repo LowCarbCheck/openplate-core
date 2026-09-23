@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-23
+
 ### Changed
 
 - **The declaration letters take their words from a mounted folder.** The
