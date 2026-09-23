@@ -29,6 +29,8 @@ import type { AiQuotaStore } from './quota-store.js';
 import type { Logger } from '../logger.js';
 import { utcDayKeyDaysBefore } from '../lib/utc-day.js';
 import { INTAKE_RETENTION_MS } from '../accounts/scan-trial.js';
+import type { LegalDeclarationsStore } from '../legal/legal-declarations-store.js';
+import { LEGAL_DECLARATION_RETENTION_YEARS, legalDeclarationsCutoff } from '../legal/legal-declarations-retention.js';
 
 /**
  * How many UTC days of AI usage counters are kept, counting today.
@@ -76,6 +78,13 @@ export async function purgeExpiredAiUsage(input: {
 
 export interface AiUsageRetentionOptions {
   quota: AiQuotaStore;
+  /**
+   * The statutory declarations (owner's decision, 2026-09-23), swept on this
+   * same hourly tick past `legal/legal-declarations-retention.ts`'s cutoff.
+   * Absent sweeps none, for a harness that is not about them; `main.ts`
+   * always passes it.
+   */
+  legalDeclarations?: LegalDeclarationsStore | null;
   logger: Logger;
   /** Injected, like every clock in this repo, so a test names the day instead of waiting for it. */
   now(): Date;
@@ -120,6 +129,19 @@ export function startAiUsageRetention(options: AiUsageRetentionOptions): AiUsage
       before: new Date(now.getTime() - INTAKE_RETENTION_MS),
     });
     if (intakes > 0) logger.info('Deleted trial intake rows older than a day', { deleted: intakes });
+    // THE DECLARATIONS, past the end of the third calendar year after the year
+    // they arrived. The COUNT only: a row carries a name, an address and a
+    // reason, and none of that belongs in a log line.
+    const legal = options.legalDeclarations ?? null;
+    if (legal !== null) {
+      const declarations = await legal.purgeReceivedBefore({ before: legalDeclarationsCutoff(now) });
+      if (declarations > 0) {
+        logger.info('Deleted statutory declarations past their retention period', {
+          deleted: declarations,
+          retentionYears: LEGAL_DECLARATION_RETENTION_YEARS,
+        });
+      }
+    }
     // The COUNT and the window, never an account id and never a day. This line
     // says the limit was kept; naming whose counter expired would put a person
     // back into a log that outlives the row it describes.

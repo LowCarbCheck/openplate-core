@@ -335,6 +335,10 @@ async function main(): Promise<void> {
     logger,
   });
 
+  // ONE store for the route that writes declarations and the sweep that
+  // deletes them past their period.
+  const legalDeclarations = createDrizzleLegalDeclarationsStore(database.db);
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(database.db),
@@ -360,7 +364,7 @@ async function main(): Promise<void> {
     settings,
     // ALWAYS BUILT, no flag beside it, exactly as `pulse` is: the two
     // statutory buttons exist on every instance. See `server/create-app.ts`.
-    legal: { store: createDrizzleLegalDeclarationsStore(database.db) },
+    legal: { store: legalDeclarations },
     trial: config.trial,
   });
 
@@ -437,6 +441,8 @@ async function main(): Promise<void> {
   // a pruned row as an absence of activity.
   const aiUsageRetention = startAiUsageRetention({
     quota: aiQuota,
+    // The declarations ride on the same hourly tick, on every instance.
+    legalDeclarations,
     logger,
     now: () => new Date(),
   });

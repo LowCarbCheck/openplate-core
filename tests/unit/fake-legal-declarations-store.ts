@@ -50,5 +50,14 @@ export function createFakeLegalDeclarationsStore(): FakeLegalDeclarationsStore {
           : { ...existing, forwardedAt: null, forwardError: input.outcome.forwardError },
       );
     },
+    async purgeReceivedBefore(input: { before: Date }): Promise<number> {
+      let deleted = 0;
+      for (const [id, row] of rows) {
+        if (row.receivedAt.getTime() >= input.before.getTime()) continue;
+        rows.delete(id);
+        deleted += 1;
+      }
+      return deleted;
+    },
   };
 }

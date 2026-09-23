@@ -52,6 +52,13 @@ change moves the minor.
   hash table. Running three day trials keep their date, and an instance that
   sets none of this behaves as before.
 
+- **Statutory declarations are deleted after their retention period.** A row
+  in `legal_declarations` is kept until the end of the third calendar year
+  after the year it arrived, in Europe/Berlin time (received 2026-09-21,
+  deleted from 2030-01-01 00:00 in Berlin), and the hourly usage sweep deletes
+  it then and logs only the count. Deleting an account still does not delete
+  its declarations earlier.
+
 ### Changed
 
 - **PROTOCOL.md describes open sign-up and the scan trial.** §5.6 gains

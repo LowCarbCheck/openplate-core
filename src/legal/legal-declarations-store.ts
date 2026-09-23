@@ -9,7 +9,7 @@
  * best-effort work that must never be allowed to make the persisted row
  * disappear if it throws.
  */
-import { eq } from 'drizzle-orm';
+import { eq, lt } from 'drizzle-orm';
 import type { Database } from '../db/client.js';
 import { legalDeclarations, type SelectLegalDeclaration } from '../db/schema.js';
 
@@ -29,13 +29,17 @@ export interface CreateLegalDeclarationInput {
 }
 
 /** Either the forward succeeded (`forwardedAt` is when) or it did not (`forwardError` says why). Never both, never neither. */
-export type ForwardOutcome =
-  | { ok: true; forwardedAt: Date }
-  | { ok: false; forwardError: string };
+export type ForwardOutcome = { ok: true; forwardedAt: Date } | { ok: false; forwardError: string };
 
 export interface LegalDeclarationsStore {
   create(input: CreateLegalDeclarationInput): Promise<SelectLegalDeclaration>;
   recordForwardOutcome(input: { id: string; outcome: ForwardOutcome }): Promise<void>;
+  /**
+   * Deletes every declaration received before `before`, and answers how many
+   * went. The retention half of this table (`legal/legal-declarations-retention.ts`),
+   * driven by the hourly usage sweep. Idempotent: the predicate is an instant.
+   */
+  purgeReceivedBefore(input: { before: Date }): Promise<number>;
 }
 
 export function createDrizzleLegalDeclarationsStore(db: Database): LegalDeclarationsStore {
@@ -57,6 +61,14 @@ export function createDrizzleLegalDeclarationsStore(db: Database): LegalDeclarat
             : { forwardedAt: null, forwardError: input.outcome.forwardError },
         )
         .where(eq(legalDeclarations.id, input.id));
+    },
+
+    async purgeReceivedBefore(input: { before: Date }): Promise<number> {
+      const deleted = await db
+        .delete(legalDeclarations)
+        .where(lt(legalDeclarations.receivedAt, input.before))
+        .returning({ id: legalDeclarations.id });
+      return deleted.length;
     },
   };
 }
