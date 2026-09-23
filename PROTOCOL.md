@@ -1296,12 +1296,17 @@ When the address already holds an account, the service mails **that person** a s
 Authenticated with the account's ordinary **access token** (§4.1). An anonymous caller gets the ordinary `401`.
 
 ```
-POST /v1/plans/checkout
+POST /v1/plans/order
 Authorization: Bearer <accessToken>
 Content-Type: application/json
 
-{ "plan": "…" }
+{ "plan": "…", "locale": "…", "consentVersion": "…", "consents": { … } }
 ```
+
+The example is illustrative: the biller's routes are its own. openplate's
+biller serves `GET /v1/plans/offer`, `POST /v1/plans/order`, `GET
+/v1/plans/me` and the portal route; its older `POST /v1/plans/checkout` now
+answers `410`.
 
 Five properties a conforming implementation MUST hold:
 
