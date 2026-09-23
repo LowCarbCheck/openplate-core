@@ -50,6 +50,7 @@ interface AccountBody {
     allowanceExpiresAt: string | null;
     /** `null` on this instance: it boots with member invites off, so the cap is not about anybody. */
     invitesLeft: number | null;
+    invitesNeedAPlan: boolean;
     suspendedAt: string | null;
     createdAt: string;
     lastSeenAt: string | null;

@@ -14,7 +14,7 @@
  * cap itself is one of those arguments since M228: it arrives on
  * {@link MemberInvitePolicy}, read from `MEMBER_INVITE_LIFETIME_CAP` at boot.
  */
-import type { AccountRole } from '../protocol.js';
+import type { AccountRole, AccountView } from '../protocol.js';
 
 /**
  * The default for `MEMBER_INVITE_LIFETIME_CAP`: how many invitations one
@@ -49,6 +49,21 @@ export const DEFAULT_MEMBER_INVITE_LIFETIME_CAP = 5;
  * able to recognise it.
  */
 export const MEMBER_INVITE_CAP_REACHED = 'member-invite-cap-reached';
+
+/**
+ * The second refusal about the caller's own standing (M253/11): a scan trial
+ * nobody has paid for yet may not invite anybody.
+ *
+ * WHY. Every member invitation on an instance with `MEMBER_INVITE_TRIAL` is a
+ * new ten-scan trial, so a free account that may invite is a free account
+ * that mints more free accounts. The owner decided on 2026-09-23 that
+ * invitations open once the account holds a paid plan. See
+ * `scan-trial.ts` `isUnpaidTrial` for what "paid" means here.
+ *
+ * ASKED AFTER THE CAP. An account that has spent its whole allowance hears
+ * {@link MEMBER_INVITE_CAP_REACHED}, because paying would not help it.
+ */
+export const MEMBER_INVITES_NEED_A_PLAN = 'invites-need-a-plan';
 
 /**
  * What an invitation a member causes is worth. Every value is the INSTANCE'S,
@@ -101,6 +116,12 @@ export interface InvitesLeftInput {
    * this module exists to make impossible.
    */
   policy: MemberInvitePolicy | null;
+  /**
+   * Whether this account is a scan trial nobody has paid for, from
+   * `scan-trial.ts` `isUnpaidTrial`. A boolean and not the three inputs, so
+   * the date rule lives in one module and this one only reads its answer.
+   */
+  isUnpaidTrial: boolean;
 }
 
 /**
@@ -126,5 +147,40 @@ export interface InvitesLeftInput {
 export function invitesLeft(input: InvitesLeftInput): number | null {
   if (input.policy === null) return null;
   if (input.role === 'admin') return null;
-  return Math.max(0, input.policy.lifetimeCap - input.minted);
+  // `0` FOR AN UNPAID TRIAL (M253/11), because it may send none right now.
+  // {@link invitesNeedAPlan} is what tells a client why.
+  if (input.isUnpaidTrial) return 0;
+  return spareInvites(input.policy, input.minted);
+}
+
+/**
+ * Whether `invitesLeft` reads `0` only because this account has not paid, the
+ * account view's `invitesNeedAPlan` (M253/11).
+ *
+ * `true` EXACTLY WHEN THE ROUTE WOULD ANSWER {@link MEMBER_INVITES_NEED_A_PLAN}:
+ * the feature is on, the caller is a member, the cap still has room, and the
+ * account is an unpaid scan trial. `false` everywhere else, including for an
+ * administrator and on an instance with the feature off, where the cap is not
+ * about anybody.
+ */
+export function invitesNeedAPlan(input: InvitesLeftInput): boolean {
+  if (input.policy === null) return false;
+  if (input.role === 'admin') return false;
+  if (!input.isUnpaidTrial) return false;
+  return spareInvites(input.policy, input.minted) > 0;
+}
+
+/** The slice of {@link AccountView} this module computes. */
+export type MemberInviteFields = Pick<AccountView, 'invitesLeft' | 'invitesNeedAPlan'>;
+
+/**
+ * The two account-view fields this module owns, from one input, so the
+ * caller's own view and the operator's view cannot compute them apart.
+ */
+export function memberInviteFields(input: InvitesLeftInput): MemberInviteFields {
+  return { invitesLeft: invitesLeft(input), invitesNeedAPlan: invitesNeedAPlan(input) };
+}
+
+function spareInvites(policy: MemberInvitePolicy, minted: number): number {
+  return Math.max(0, policy.lifetimeCap - minted);
 }

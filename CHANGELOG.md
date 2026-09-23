@@ -7,6 +7,23 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **A scan trial nobody has paid for cannot invite anybody** (M253/11, owner
+  decision 2026-09-23). Each member invitation on an instance with
+  `MEMBER_INVITE_TRIAL` is a new ten-scan trial, so a free account that could
+  invite would mint more free accounts. `POST /v1/auth/invites` now answers
+  `403 invites-need-a-plan` for an account that carries `trialScans` and has
+  no `allowanceExpiresAt` in the future. The date the biller writes on payment
+  opens it, the same rule that lifts the scan gate. The lifetime cap is asked
+  first and is unchanged; administrators and the admin mint are unaffected.
+
+### Added
+
+- **`AccountView.invitesNeedAPlan`**, `true` when `invitesLeft` is `0` only
+  because the account has not paid yet, on the caller's own view and the
+  operator's. Additive: an older client reads `invitesLeft: 0`, which is true.
+
 ## [0.20.0] - 2026-09-23
 
 ### Added

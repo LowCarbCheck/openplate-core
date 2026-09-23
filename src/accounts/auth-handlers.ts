@@ -50,7 +50,8 @@ import type { Mailer } from '../mail/mailer.js';
 import { DEFAULT_INVITE_TTL_MS, type InviteStore } from '../admin/invite-store.js';
 import {
   MEMBER_INVITE_CAP_REACHED,
-  invitesLeft,
+  MEMBER_INVITES_NEED_A_PLAN,
+  memberInviteFields,
   type MemberInvitePolicy,
 } from './member-invites.js';
 import {
@@ -69,7 +70,7 @@ import type { AccountView } from '../protocol.js';
 import { SIGNUP_REQUEST_REFUSALS, type OpenSignupSurface } from './open-signup.js';
 import { isDisposableAddress } from './disposable-domains.js';
 import { trialKeyFor } from './trial-key.js';
-import { trialScansView } from './scan-trial.js';
+import { isUnpaidTrial, trialScansView } from './scan-trial.js';
 
 /** Everything the handlers need from the outside world. All of it injected — none of it imported. */
 export interface AuthContext {
@@ -258,7 +259,12 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
     allowanceExpiresAt: account.allowanceExpiresAt?.toISOString() ?? null,
     trialScans: trialScansView({ granted: account.trialScans, used: account.trialScansUsed }),
     suspendedAt: account.suspendedAt?.toISOString() ?? null,
-    invitesLeft: invitesLeft({ role: account.role, minted, policy: memberInvites?.policy ?? null }),
+    ...memberInviteFields({
+      role: account.role,
+      minted,
+      policy: memberInvites?.policy ?? null,
+      isUnpaidTrial: isUnpaidTrial({ trialScans: account.trialScans, allowanceExpiresAt: account.allowanceExpiresAt, now: ctx.now() }),
+    }),
     createdAt: account.createdAt.toISOString(),
   };
 }
@@ -1209,6 +1215,14 @@ export async function handleMintMemberInvite(
     const minted = await surface.invites.countMintedBy({ accountId: account.id });
     if (minted >= surface.policy.lifetimeCap) {
       return { status: 'forbidden', reason: MEMBER_INVITE_CAP_REACHED };
+    }
+
+    // A SCAN TRIAL NOBODY HAS PAID FOR INVITES NOBODY (M253/11). Each member
+    // invitation is a new trial, so without this one free account mints more.
+    // Asked after the cap, because paying does not help a spent allowance,
+    // and before the re-invite rule, which answers `202` and would hide it.
+    if (isUnpaidTrial({ trialScans: account.trialScans, allowanceExpiresAt: account.allowanceExpiresAt, now: ctx.now() })) {
+      return { status: 'forbidden', reason: MEMBER_INVITES_NEED_A_PLAN };
     }
 
     // THE RE-INVITE RULE, AND IT STANDS ON `ON DELETE SET NULL`. An address

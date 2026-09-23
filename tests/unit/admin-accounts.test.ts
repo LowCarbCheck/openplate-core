@@ -135,6 +135,8 @@ test('PATCH changes a role, an allowance and a name, and returns the AccountView
     'email',
     'id',
     'invitesLeft',
+    // M253/11: why `invitesLeft` is 0 for a scan trial nobody has paid for.
+    'invitesNeedAPlan',
     'keyRecordKinds',
     'lastSeenAt',
     'role',

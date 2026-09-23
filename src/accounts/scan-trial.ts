@@ -78,3 +78,27 @@ export function trialScansView(input: { granted: number | null; used: number }):
 export function isScanGated(input: { trialScans: number | null; allowanceExpiresAt: Date | null }): boolean {
   return input.allowanceExpiresAt === null && input.trialScans !== null;
 }
+
+/**
+ * Whether this account is a scan trial nobody has paid for yet (M253/11).
+ *
+ * THE SAME DATE RULE AS {@link isScanGated}, READ FOR A DIFFERENT QUESTION.
+ * The biller extends `allowanceExpiresAt` on payment and never touches
+ * `trialScans`, so a paying account may still carry its trial. What tells the
+ * two apart is the date: one in the future is a paid or granted window. The
+ * proxy never needs the past-date case, because it refused that request one
+ * step earlier; this rule does, and a date that has passed is no plan.
+ *
+ * AN ACCOUNT WITH NO SCAN TRIAL IS NEVER AN UNPAID TRIAL. An operator's
+ * standing grant and every account from before M253 read `false` here, which
+ * is what keeps them unaffected.
+ */
+export function isUnpaidTrial(input: {
+  trialScans: number | null;
+  allowanceExpiresAt: Date | null;
+  now: Date;
+}): boolean {
+  if (input.trialScans === null) return false;
+  if (input.allowanceExpiresAt === null) return true;
+  return input.allowanceExpiresAt.getTime() <= input.now.getTime();
+}

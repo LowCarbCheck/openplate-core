@@ -295,6 +295,18 @@ export interface AccountView {
    * client believes.
    */
   invitesLeft: number | null;
+  /**
+   * `true` when `invitesLeft` is `0` only because this account is a scan
+   * trial nobody has paid for yet (M253/11), and `POST /v1/auth/invites`
+   * answers `403 invites-need-a-plan`. `false` in every other case, an
+   * administrator and an instance with the feature off included.
+   *
+   * ADDITIVE. An older client ignores it and reads `invitesLeft: 0`, which is
+   * still true. A client that reads it can say "invitations open once you
+   * have a plan" instead of "you have used them all". A future
+   * `allowanceExpiresAt` is what turns it `false`.
+   */
+  invitesNeedAPlan: boolean;
   createdAt: IsoTimestamp;
 }
 

@@ -73,7 +73,7 @@ import {
   type InviteStore,
   type InviteSummary,
 } from '../admin/invite-store.js';
-import { invitesLeft, type MemberInvitePolicy } from '../accounts/member-invites.js';
+import { memberInviteFields, type MemberInvitePolicy } from '../accounts/member-invites.js';
 import {
   NUTRIENT_REFERENCE_BASES,
   isAccountRole,
@@ -99,7 +99,7 @@ import {
 } from '../admin/account-activity.js';
 import { AI_USAGE_RETENTION_DAYS } from '../ai/usage-retention.js';
 import { asArray, asBoolean, asNumber, asObject, asString, type JsonObject, type JsonValue } from '../lib/json.js';
-import { MAX_TRIAL_SCANS, trialScansView, type TrialPolicy } from '../accounts/scan-trial.js';
+import { isUnpaidTrial, MAX_TRIAL_SCANS, trialScansView, type TrialPolicy } from '../accounts/scan-trial.js';
 import { getAdminPrincipal } from './admin-auth.js';
 import { SERVICE_FIELD_REFUSAL, SERVICE_PRINCIPAL_PATCH_FIELDS } from './service-principal-scope.js';
 
@@ -255,7 +255,12 @@ interface AdminStatsView {
  * configured `MEMBER_INVITE_LIFETIME_CAP`, so an operator's console can never
  * show a number the route does not enforce.
  */
-function toAccountView(summary: AdminAccountSummary, memberInvites: MemberInvitePolicy | null): AdminAccountView {
+function toAccountView(input: {
+  summary: AdminAccountSummary;
+  memberInvites: MemberInvitePolicy | null;
+  now: Date;
+}): AdminAccountView {
+  const { summary, memberInvites, now } = input;
   return {
     id: summary.id,
     email: summary.email,
@@ -266,7 +271,16 @@ function toAccountView(summary: AdminAccountSummary, memberInvites: MemberInvite
     allowanceExpiresAt: summary.allowanceExpiresAt?.toISOString() ?? null,
     trialScans: trialScansView({ granted: summary.trialScans, used: summary.trialScansUsed }),
     suspendedAt: summary.suspendedAt?.toISOString() ?? null,
-    invitesLeft: invitesLeft({ role: summary.role, minted: summary.invitesMinted, policy: memberInvites }),
+    ...memberInviteFields({
+      role: summary.role,
+      minted: summary.invitesMinted,
+      policy: memberInvites,
+      isUnpaidTrial: isUnpaidTrial({
+        trialScans: summary.trialScans,
+        allowanceExpiresAt: summary.allowanceExpiresAt,
+        now,
+      }),
+    }),
     createdAt: summary.createdAt.toISOString(),
     lastSeenAt: summary.lastSeenAt?.toISOString() ?? null,
     blob:
@@ -876,7 +890,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         day: utcDayKey(options.now()),
       });
       res.status(200).json({
-        accounts: page.accounts.map((summary) => toAccountView(summary, options.memberInvites)),
+        accounts: page.accounts.map((summary) => toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() })),
         total: page.total,
         limit: limit.value,
         offset: offset.value,
@@ -942,7 +956,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         res.status(200).json({ account: toServiceAccountView(summary) });
         return;
       }
-      res.status(200).json({ account: toAccountView(summary, options.memberInvites) });
+      res.status(200).json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
     }),
   );
 
@@ -1149,7 +1163,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       // The account id, never the values: a display name is personal data and a
       // role change is already legible from the row.
       logger.info('Account changed by admin', { accountId });
-      res.status(200).json({ account: toAccountView(summary, options.memberInvites) });
+      res.status(200).json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
     }),
   );
 

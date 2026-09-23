@@ -625,6 +625,65 @@ test('a dailyAiLimit in the member mint body is ignored, so the allowance is not
   }
 });
 
+test('an unpaid scan trial is refused over the wire, and the same account is accepted once a paid date lands', async () => {
+  const service = await startWithMemberInvites();
+  try {
+    const member = await service.signupThroughInvite({ email: 'anna@example.org' });
+    const accessToken = member.tokens.accessToken;
+    const standing = (patch: JsonObject) =>
+      service.request({
+        method: 'PATCH',
+        path: `/v1/admin/accounts/${member.account.id}`,
+        adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+        body: patch,
+      });
+    const operatorView = async () =>
+      (
+        await service.request<{ account: { invitesLeft: number | null; invitesNeedAPlan: boolean } }>({
+          method: 'GET',
+          path: `/v1/admin/accounts/${member.account.id}`,
+          adminToken: MEMBER_SUITE_ADMIN_TOKEN,
+        })
+      ).body.account;
+
+    // A scan trial with no date: what every trial door writes.
+    assert.equal((await standing({ trialScans: 10 })).status, 200);
+
+    const refused = await memberMint(service, { accessToken, email: 'boris@example.org' });
+    assert.equal(refused.status, 403);
+    assert.deepEqual(refused.body, { error: 'invites-need-a-plan' });
+    const rowsWhileUnpaid = await database.db
+      .select()
+      .from(signupInvites)
+      .where(eq(signupInvites.invitedByAccountId, member.account.id));
+    assert.equal(rowsWhileUnpaid.length, 0, 'a refusal writes no invitation row');
+
+    const own = await service.request<{ account: { invitesLeft: number | null; invitesNeedAPlan: boolean } }>({
+      method: 'GET',
+      path: '/v1/auth/account',
+      accessToken,
+    });
+    assert.equal(own.body.account.invitesLeft, 0);
+    assert.equal(own.body.account.invitesNeedAPlan, true);
+    // The operator's console says the same thing through its own query.
+    const unpaid = await operatorView();
+    assert.equal(unpaid.invitesLeft, 0);
+    assert.equal(unpaid.invitesNeedAPlan, true);
+
+    // THE CONTROL: a date in the future, which is what the biller writes on
+    // payment. `trialScans` stays, and the same address is now accepted.
+    const paidUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    assert.equal((await standing({ allowanceExpiresAt: paidUntil })).status, 200);
+    const accepted = await memberMint(service, { accessToken, email: 'boris@example.org' });
+    assert.equal(accepted.status, 202);
+    const paid = await operatorView();
+    assert.equal(paid.invitesLeft, 4);
+    assert.equal(paid.invitesNeedAPlan, false);
+  } finally {
+    await service.close();
+  }
+});
+
 test('invitesLeft counts down on the caller’s own account view, and the operator sees the same number', async () => {
   const service = await startWithMemberInvites();
   try {

@@ -37,7 +37,11 @@ import {
   type AuthContext,
   type AuthOutcome,
 } from '../../src/accounts/auth-handlers.js';
-import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, MEMBER_INVITE_CAP_REACHED } from '../../src/accounts/member-invites.js';
+import {
+  DEFAULT_MEMBER_INVITE_LIFETIME_CAP,
+  MEMBER_INVITE_CAP_REACHED,
+  MEMBER_INVITES_NEED_A_PLAN,
+} from '../../src/accounts/member-invites.js';
 import { createAuthFixture, type AuthFixture } from './auth-context-fixture.js';
 import { createFakeInviteStore, type FakeInviteStore } from './fake-invite-store.js';
 import type { JsonObject } from '../../src/lib/json.js';
@@ -348,6 +352,106 @@ async function invitesLeftFor(ctx: AuthContext, accountId: number): Promise<numb
   if (outcome.status !== 'ok') throw new Error(`expected an account view, got ${outcome.status}`);
   return outcome.body.account.invitesLeft;
 }
+
+// ── An unpaid scan trial invites nobody (M253/11) ──────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Turns a seeded member into a scan trial with no date, which is what every trial door writes. */
+async function makeTrial(fixture: AuthFixture, accountId: number): Promise<void> {
+  const updated = await fixture.store.updateStanding({ accountId, trialScans: 10, allowanceExpiresAt: null });
+  if (updated === null) throw new Error('the seeded account vanished');
+}
+
+async function accountViewFor(ctx: AuthContext, accountId: number) {
+  const outcome = await handleGetAccount({ accountId }, ctx);
+  if (outcome.status !== 'ok') throw new Error(`expected an account view, got ${outcome.status}`);
+  return outcome.body.account;
+}
+
+test('an unpaid scan trial is refused with its own code, and the same account after a paid date is accepted', async () => {
+  const { fixture, invites, ctx } = withMemberInvites();
+  const accountId = await seedMember(fixture);
+  await makeTrial(fixture, accountId);
+
+  const refused = await mint(ctx, { accountId, email: FRIEND_EMAIL });
+  assert.equal(refused.status, 'forbidden');
+  assert.equal(refused.status === 'forbidden' ? refused.reason : '', MEMBER_INVITES_NEED_A_PLAN);
+  // A refusal is a refusal: no row, no letter, and nothing counted against the cap.
+  assert.equal(invites.rows().length, 0);
+  assert.equal(fixture.mailer.invites.length, 0);
+  const unpaid = await accountViewFor(ctx, accountId);
+  assert.equal(unpaid.invitesLeft, 0);
+  assert.equal(unpaid.invitesNeedAPlan, true);
+
+  // THE CONTROL: the biller writes a date in the future on payment and leaves
+  // `trialScans` alone. The same account, the same address, is now accepted.
+  await fixture.store.updateStanding({
+    accountId,
+    allowanceExpiresAt: new Date(fixture.now().getTime() + 30 * DAY_MS),
+  });
+  const accepted = await mint(ctx, { accountId, email: FRIEND_EMAIL });
+  assert.equal(accepted.status, 'accepted');
+  assert.equal(invites.rows().length, 1);
+  const paid = await accountViewFor(ctx, accountId);
+  assert.equal(paid.trialScans?.granted, 10, 'a paying account still carries its trial');
+  assert.equal(paid.invitesLeft, POLICY.lifetimeCap - 1);
+  assert.equal(paid.invitesNeedAPlan, false);
+});
+
+test('a paid date that has passed is no plan, so the refusal comes back', async () => {
+  const { fixture, ctx } = withMemberInvites();
+  const accountId = await seedMember(fixture);
+  await makeTrial(fixture, accountId);
+  await fixture.store.updateStanding({ accountId, allowanceExpiresAt: new Date(fixture.now().getTime() + DAY_MS) });
+  assert.equal((await mint(ctx, { accountId, email: FRIEND_EMAIL })).status, 'accepted');
+
+  fixture.advance(DAY_MS);
+  const lapsed = await mint(ctx, { accountId, email: 'clara@example.org' });
+  assert.equal(lapsed.status === 'forbidden' ? lapsed.reason : lapsed.status, MEMBER_INVITES_NEED_A_PLAN);
+  assert.equal((await accountViewFor(ctx, accountId)).invitesNeedAPlan, true);
+});
+
+test('a standing member and an administrator are unaffected by the plan rule', async () => {
+  const { fixture, ctx } = withMemberInvites();
+  const memberId = await seedMember(fixture);
+  const adminId = await seedAdmin(fixture);
+  // An administrator with a trial is still exempt: the rule is about members.
+  await makeTrial(fixture, adminId);
+
+  assert.equal((await mint(ctx, { accountId: memberId, email: FRIEND_EMAIL })).status, 'accepted');
+  assert.equal((await mint(ctx, { accountId: adminId, email: 'clara@example.org' })).status, 'accepted');
+  const member = await accountViewFor(ctx, memberId);
+  assert.equal(member.invitesLeft, POLICY.lifetimeCap - 1);
+  assert.equal(member.invitesNeedAPlan, false);
+  const admin = await accountViewFor(ctx, adminId);
+  assert.equal(admin.invitesLeft, null);
+  assert.equal(admin.invitesNeedAPlan, false);
+});
+
+test('a spent allowance hears the cap, not the plan, because paying would not help', async () => {
+  const { fixture, ctx } = withMemberInvites();
+  const accountId = await seedMember(fixture);
+  for (let index = 0; index < POLICY.lifetimeCap; index += 1) {
+    await mint(ctx, { accountId, email: `friend-${index}@example.org` });
+  }
+  await makeTrial(fixture, accountId);
+
+  const outcome = await mint(ctx, { accountId, email: 'one-too-many@example.org' });
+  assert.equal(outcome.status === 'forbidden' ? outcome.reason : outcome.status, MEMBER_INVITE_CAP_REACHED);
+  const view = await accountViewFor(ctx, accountId);
+  assert.equal(view.invitesLeft, 0);
+  assert.equal(view.invitesNeedAPlan, false);
+});
+
+test('invitesNeedAPlan is false on an instance where members cannot invite anybody, trial or not', async () => {
+  const fixture = createAuthFixture();
+  const accountId = await seedMember(fixture);
+  await makeTrial(fixture, accountId);
+  const view = await accountViewFor(fixture.ctx, accountId);
+  assert.equal(view.invitesLeft, null);
+  assert.equal(view.invitesNeedAPlan, false);
+});
 
 // ── The dark instance ──────────────────────────────────────────────────────
 

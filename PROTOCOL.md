@@ -766,6 +766,7 @@ All three bearer.
   "trialScans": { "granted": 10, "left": 7 },
   "suspendedAt": null,
   "invitesLeft": 5,
+  "invitesNeedAPlan": false,
   "createdAt": "2026-09-04T10:11:12.000Z"
 }
 ```
@@ -773,6 +774,8 @@ All three bearer.
 Nothing secret is in it and nothing can be: no verifier, no KDF descriptor, no wrapped DEK, no escrow, no token. Every field is either the person's own information or the standing an operator granted them. `aiUsedToday` counts against `dailyAiLimit` on the current UTC day; `suspendedAt` is non-`null` while every authenticated call answers `403 account-suspended`.
 
 `invitesLeft` is how many invitations this account may still send through `POST /v1/auth/invites` (§5.21), or `null` when that cap is not about it. **`null`, never `0`, for an administrator**: `0` reads as "you have used them all", and an administrator has used none, because they mint through the admin API, which is exempt from the cap and from the re-invite rule. An instance with `instance.memberInvites: false` sends `null` for the same reason: there is no cap there, because there is no route, and a `0` would announce a spent allowance that never existed. A client may render it and MUST NOT authorize on it; the service refuses a sixth mint whatever a client believes.
+
+`invitesNeedAPlan` is `true` when `invitesLeft` is `0` only because the account is a scan trial nobody has paid for yet (§5.21), and `false` in every other case, an administrator and an instance with `instance.memberInvites: false` included. An account is such a trial when it carries `trialScans` and its `allowanceExpiresAt` is `null` or already past; a future `allowanceExpiresAt`, which is what the biller writes on payment, opens invitations again and leaves `trialScans` in place. The field is additive: a client that ignores it reads `invitesLeft: 0`, which is still true, and a client that reads it can say that invitations open with a plan instead of saying they are all used.
 
 `allowanceExpiresAt` is an ISO instant or `null`, and `null` means the AI allowance has no end date, which is what a self-hosted instance keeps. From that instant on, the proxy of §5.19 answers `403 allowance-expired`. **It gates AI and nothing else**: sync keeps working past the date, because the diary belongs to the account and a new device must be able to pull it. A client may render the date and must not authorize on it; the proxy is where the rule lives.
 
@@ -1402,6 +1405,8 @@ When the address already holds an account, the service mails **that person** a s
 **An address that has already redeemed a member-caused invitation gets no second one**, and the caller is still told `202`. The evidence outlives the account: the invite row keeps its address and its redemption instant when either account is deleted, so a self-delete followed by a friend's re-invite is not a fresh allowance. On an instance that runs a scan trial the deletion removes the address from the row instead and keeps the keyed hash of §5.15, and the rule reads that hash. An operator's mint is not a member-caused invitation and is never withheld by this rule.
 
 **The lifetime cap is five per account, ever, counted as rows.** Withdrawn and expired invitations count: the cap is on how many letters an account caused, not on how many worked. Exceeding it is `403 {"error":"member-invite-cap-reached"}`, and it is the one thing this endpoint says about the caller's own account, which is a fact about them and about nobody else. An administrator is exempt, on this route and on the admin one, which is what `invitesLeft: null` means (§5.15).
+
+**A scan trial nobody has paid for invites nobody.** Every member invitation under `MEMBER_INVITE_TRIAL` is a new scan trial, so a free account that could invite would mint more free accounts. An account that carries `trialScans` and has no `allowanceExpiresAt` in the future answers `403 {"error":"invites-need-a-plan"}`, writes no row and sends no letter. A future date opens the route, whoever wrote it: the biller on payment, or an operator. The lifetime cap is asked first, so an account that has spent its allowance hears `member-invite-cap-reached`, because paying would not help it. An administrator is exempt here too, and the admin mint (§5.20) is untouched. `invitesNeedAPlan` on the account view (§5.15) says the same thing before the person tries.
 
 `202` also carries **no token and no link**, unlike the admin mint. The caller is not the operator and must not hold a capability that creates an account.
 

@@ -604,6 +604,8 @@ test('GET /account reports the whole AccountView, including today’s AI spend',
     'email',
     'id',
     'invitesLeft',
+    // M253/11: why `invitesLeft` is 0 for a scan trial nobody has paid for.
+    'invitesNeedAPlan',
     'role',
     'suspendedAt',
     // M253: the free scans, `null` here because this account has no scan trial.

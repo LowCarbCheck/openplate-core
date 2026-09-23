@@ -165,6 +165,8 @@ test('the account body carries exactly the documented metadata fields and nothin
     'email',
     'id',
     'invitesLeft',
+    // M253/11: why `invitesLeft` is 0 for a scan trial nobody has paid for.
+    'invitesNeedAPlan',
     'keyRecordKinds',
     'lastSeenAt',
     'role',
