@@ -37,6 +37,8 @@ import { generateFamilyId, generatePasswordResetToken, generateToken } from '../
 import { deriveServerSecrets } from '../../src/lib/server-secrets.js';
 import type { AuthContext, SessionResponse } from '../../src/accounts/auth-handlers.js';
 import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP } from '../../src/accounts/member-invites.js';
+import { SIGNUP_LETTER_THROTTLE, type OpenSignupSurface } from '../../src/accounts/open-signup.js';
+import type { CaptchaVerifier } from '../../src/accounts/captcha.js';
 import type {
   Mailer,
   SendAccountNoticeInput,
@@ -53,7 +55,7 @@ import { RESEARCH_BODY_MIN_BYTES } from '../../src/server/research-routes.js';
 import { createDrizzleBlobRollbackStore } from '../../src/db/blob-rollback-store.js';
 import { createDrizzleInstanceSettingsStore } from '../../src/db/settings-store.js';
 import { startInstanceSettings, type InstanceSettings } from '../../src/instance/instance-settings.js';
-import type { NutrientReferenceBasis } from '../../src/protocol.js';
+import type { InstanceInfo, NutrientReferenceBasis } from '../../src/protocol.js';
 
 export interface HttpResponse<T> {
   status: number;
@@ -312,6 +314,38 @@ export interface StartServiceOptions {
    * `legal-declarations.test.ts` opts in to a small number deliberately.
    */
   legal?: { rateLimitPerMinute?: number };
+  /**
+   * `OPEN_SIGNUP=true` (M253). Absent (the default) is every invite-only
+   * instance: `POST /v1/auth/signup-request` answers the ordinary
+   * unknown-path 404 and `/health` says `openSignup: false`.
+   *
+   * THE PER-SOURCE BOUND DEFAULTS PERMISSIVE, for the reason
+   * `PERMISSIVE_THROTTLE` exists; the suite about it passes the production
+   * config. The one-letter-per-mailbox bound runs on its production config,
+   * because it is part of what every accepting branch does.
+   */
+  openSignup?: {
+    dailyAiLimit?: number;
+    /** Absent is no captcha. A suite passes a stub; nothing here reaches Cloudflare. */
+    captcha?: CaptchaVerifier | null;
+    /** What `/health` publishes as the site key when `captcha` is set. */
+    captchaSiteKey?: string;
+    ipThrottleConfig?: ThrottleConfig;
+  } | null;
+  /**
+   * Express `trust proxy`. Absent is `false`, what every suite that is not
+   * about client addresses wants. The open sign-up suite sets `1` so a request
+   * can name its source in `X-Forwarded-For`, which is the only way two
+   * sources exist on one loopback socket.
+   */
+  trustProxy?: boolean | number;
+  /**
+   * The logger the AUTH HANDLERS write to. Absent is silent. Separate from
+   * {@link StartServiceOptions.logger}, which the routes use, so a suite that
+   * reads the admin routes' lines is not handed every sign-in as well; the
+   * open sign-up suite passes one to prove no address reaches a log line.
+   */
+  authLogger?: Logger;
 }
 
 /** The application server key the harness advertises when a suite opts in. Public by definition, and not a real one. */
@@ -338,6 +372,16 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           },
         };
 
+  const openSignupSurface: OpenSignupSurface | null =
+    options.openSignup == null
+      ? null
+      : {
+          invites: inviteStore,
+          grant: { dailyAiLimit: options.openSignup.dailyAiLimit ?? 0 },
+          captcha: options.openSignup.captcha ?? null,
+          letters: createThrottleStore(SIGNUP_LETTER_THROTTLE),
+        };
+
   const authContext: AuthContext = {
     store: createDrizzleAccountStore(options.db),
     pepper: secrets.verifierPepper,
@@ -348,10 +392,13 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     mintToken: generateToken,
     mintResetToken: generatePasswordResetToken,
     mintFamilyId: generateFamilyId,
-    logger: createSilentLogger(),
+    logger: options.authLogger ?? createSilentLogger(),
     // `null` by default, which is what takes the route away, see
     // `StartServiceOptions.memberInvites`.
     memberInvites: memberInviteSurface,
+    // `null` by default, which takes the route away, see
+    // `StartServiceOptions.openSignup`.
+    openSignup: openSignupSurface,
   };
 
   const aiSurface =
@@ -403,6 +450,30 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     refreshIntervalMs: options.settingsRefreshIntervalMs,
   });
 
+  const instance: InstanceInfo = {
+    name: 'integration',
+    language: 'en',
+    mail: false,
+    // Reported from the SAME surface the route is mounted on, as `main.ts`
+    // does it, so a `create-app` that forgot to report it fails a suite.
+    memberInvites: memberInviteSurface !== null,
+    // From the SAME surface the route is mounted on, as `main.ts` does it.
+    openSignup: openSignupSurface !== null,
+    ai: aiSurface === null ? null : { model: options.ai?.advertisedModel ?? null },
+    // Reported from the SAME binding the subtree is mounted on, so a suite
+    // that opts in to `StartServiceOptions.plans` sees `true` here too.
+    // `tests/unit` owns both halves of the unconfigured case, see
+    // `plans-404-when-unset.test.ts`.
+    plans: options.plans != null,
+    // Reported from the SAME surface the routes are mounted on, as `main.ts`
+    // does it, so a `create-app` that forgot to report it fails a suite.
+    push: pushSurface !== null,
+  };
+  // THE CAPTCHA, ABSENT unless the door is open with one, as `main.ts` does it.
+  if (openSignupSurface?.captcha != null) {
+    instance.signupCaptcha = { provider: 'turnstile', siteKey: options.openSignup?.captchaSiteKey ?? 'test-site-key' };
+  }
+
   const app = createApp({
     authContext,
     storage: createDrizzleStorageAdapter(options.db),
@@ -411,8 +482,9 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     // is on the device. See ADR-0007.
     pulse: createDrizzlePulseStore(options.db),
     throttle: createThrottleStore(options.throttleConfig ?? PERMISSIVE_THROTTLE),
+    signupRequestThrottle: createThrottleStore(options.openSignup?.ipThrottleConfig ?? PERMISSIVE_THROTTLE),
     logger: options.logger ?? createSilentLogger(),
-    trustProxy: false,
+    trustProxy: options.trustProxy ?? false,
     mailer,
     now: () => new Date(clock),
     admin: {
@@ -447,23 +519,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
     // than omitting it: `/health` is the ONLY way a client learns whether this
     // instance can scan a plate at all, so a fixture that left it off would
     // let a `create-app` that forgot to report `ai` pass every suite.
-    instance: {
-      name: 'integration',
-      language: 'en',
-      mail: false,
-      // Reported from the SAME surface the route is mounted on, as `main.ts`
-      // does it, so a `create-app` that forgot to report it fails a suite.
-      memberInvites: memberInviteSurface !== null,
-      ai: aiSurface === null ? null : { model: options.ai?.advertisedModel ?? null },
-      // Reported from the SAME binding the subtree is mounted on, so a suite
-      // that opts in to `StartServiceOptions.plans` sees `true` here too.
-      // `tests/unit` owns both halves of the unconfigured case, see
-      // `plans-404-when-unset.test.ts`.
-      plans: options.plans != null,
-      // Reported from the SAME surface the routes are mounted on, as `main.ts`
-      // does it, so a `create-app` that forgot to report it fails a suite.
-      push: pushSurface !== null,
-    },
+    instance,
   });
 
   const server: Server = app.listen(0);
@@ -494,6 +550,7 @@ export async function startService(options: StartServiceOptions): Promise<Servic
         expiresAt: new Date(clock + 7 * 24 * 60 * 60 * 1000),
         now,
         invitedByAccountId: input.invitedByAccountId ?? null,
+        source: null,
       });
       if (!minted.ok) throw new Error(`could not mint an invite for ${input.email}: ${minted.reason}`);
 

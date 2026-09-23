@@ -7,6 +7,26 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **A person can ask an instance for an account.** With `OPEN_SIGNUP=true`,
+  `POST /v1/auth/signup-request` takes an address, mints an ordinary addressed
+  invite with the operator's own mint code and mails it there, so the letter
+  is still the address check. It needs mail configured and refuses to boot
+  without it. Every address gets the same `202`: an address with an account
+  gets the short note with no link, and one that already holds a letter from
+  the operator or a member gets nothing new. Five requests per source per hour,
+  one letter per mailbox per day, and addresses at known throwaway mail
+  services are refused with `400 email-domain-refused` (a vendored CC0 list,
+  refreshed with `pnpm sync:disposable-domains`). An optional Cloudflare
+  Turnstile captcha (`TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY`) answers
+  `400 captcha-failed` or `503 captcha-unavailable`. `/health` gains
+  `instance.openSignup` and, with a captcha, `instance.signupCaptcha`.
+  `GET /v1/admin/stats` gains `signup`, the invites this door minted today and
+  in the last seven days. Migration `0019` adds `source` and `trial_key` to
+  `signup_invites`. Every instance that does not set the variable stays
+  invite-only and unchanged.
+
 ## [0.19.0] - 2026-09-23
 
 ### Changed

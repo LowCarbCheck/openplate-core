@@ -514,3 +514,66 @@ test('both set is the feature on, with the trailing slash stripped once', () => 
 
   assert.deepEqual(config.plans, { baseUrl: 'http://openplate-billing:3000/plans', secret: 'a-shared-secret' });
 });
+
+// ── open sign-up (M253) ────────────────────────────────────────────────────
+
+/** A complete mail block, which `OPEN_SIGNUP=true` needs beside it. */
+const MAIL_ENV = {
+  MAIL_API_URL: 'http://pigeon:3601/v1/emails',
+  MAIL_API_KEY: 'a-pigeon-tenant-key',
+  MAIL_API_FROM: 'openplate <openplate@mail.openplate.de>',
+  MAIL_OPERATOR_EMAIL: 'operator@example.org',
+  SERVER_PUBLIC_URL: 'https://sync.openplate.de',
+  CLIENT_BASE_URL: 'https://openplate.de',
+};
+
+test('open sign-up is off unless set, and every instance that says nothing stays invite-only', () => {
+  const config = parseConfig(baseEnv());
+  assert.equal(config.openSignup, false);
+  assert.equal(config.turnstile, null);
+});
+
+test('OPEN_SIGNUP=true without mail refuses to boot and says why', () => {
+  assert.throws(() => parseConfig(baseEnv({ OPEN_SIGNUP: 'true' })), /OPEN_SIGNUP=true needs mail/);
+});
+
+test('OPEN_SIGNUP=true with mail boots with the door open', () => {
+  // THE CONTROL for the refusal above: without it that test would pass against
+  // a parser that refused every open instance.
+  assert.equal(parseConfig(baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: 'true' })).openSignup, true);
+});
+
+test('OPEN_SIGNUP accepts "true" or nothing, and names any other value', () => {
+  for (const value of ['false', '1', 'yes', 'TRUE ']) {
+    // `TRUE ` is trimmed to `TRUE`, which is still not the one spelling.
+    assert.throws(() => parseConfig(baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: value })), /Invalid OPEN_SIGNUP/, value);
+  }
+  assert.equal(parseConfig(baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: '' })).openSignup, false);
+});
+
+test('the Turnstile pair is both or neither, and a gap names the missing key and never a value', () => {
+  const secret = 'turnstile-secret-that-must-not-be-logged';
+  assert.throws(
+    () => parseConfig(baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: 'true', TURNSTILE_SECRET_KEY: secret })),
+    (error: Error) => /TURNSTILE_SITE_KEY/.test(error.message) && !error.message.includes(secret),
+  );
+  assert.throws(
+    () => parseConfig(baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: 'true', TURNSTILE_SITE_KEY: 'site' })),
+    /TURNSTILE_SECRET_KEY/,
+  );
+});
+
+test('a Turnstile pair on an invite-only instance refuses to boot: there is no door for it to guard', () => {
+  assert.throws(
+    () => parseConfig(baseEnv({ TURNSTILE_SECRET_KEY: 'secret', TURNSTILE_SITE_KEY: 'site' })),
+    /OPEN_SIGNUP is not/,
+  );
+});
+
+test('the Turnstile pair beside an open door is the captcha on', () => {
+  // THE CONTROL for the three refusals above.
+  const config = parseConfig(
+    baseEnv({ ...MAIL_ENV, OPEN_SIGNUP: 'true', TURNSTILE_SECRET_KEY: 'secret', TURNSTILE_SITE_KEY: 'site' }),
+  );
+  assert.deepEqual(config.turnstile, { secretKey: 'secret', siteKey: 'site' });
+});

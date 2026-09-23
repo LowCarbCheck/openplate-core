@@ -313,6 +313,29 @@ export interface InstanceInfo {
    */
   memberInvites: boolean;
   /**
+   * Whether anybody may ask this instance for an account with their own
+   * address (`OPEN_SIGNUP=true`, M253), at `POST /v1/auth/signup-request`.
+   *
+   * A BOOLEAN, LIKE `memberInvites` AND `plans`: it says only whether a door
+   * exists. `false` is the honest answer for an invite-only instance and for
+   * every service older than the field, and a client that finds `false` or no
+   * field draws the invite wording, not a sign-up form.
+   *
+   * DESCRIPTIVE, NEVER A GRANT. `false` means the route answers the ordinary
+   * unknown-path 404; `true` still leaves the throttles, the captcha, the
+   * refused domains and the one letter per address per day on the server.
+   */
+  openSignup: boolean;
+  /**
+   * What a client renders before it posts to the sign-up request, or ABSENT
+   * when the door asks for no captcha (M253).
+   *
+   * PRESENT ONLY WHILE {@link InstanceInfo.openSignup} IS `true` AND the
+   * operator configured Turnstile. The site key is public by design: it is
+   * what a browser renders the widget with, and it grants nothing.
+   */
+  signupCaptcha?: InstanceSignupCaptcha;
+  /**
    * Whether this instance has a biller behind it, so `/v1/plans/*` exists
    * here (`PLANS_UPSTREAM_URL` and `PLANS_UPSTREAM_SECRET`, both or neither).
    *
@@ -432,6 +455,13 @@ export function isNutrientReferenceBasis(value: JsonValue | undefined): value is
   return NUTRIENT_REFERENCE_BASES.some((basis) => basis === value);
 }
 
+/** The captcha the sign-up request needs (M253). One provider today, named so a second is additive. */
+export interface InstanceSignupCaptcha {
+  provider: 'turnstile';
+  /** The public Turnstile site key. The token the widget produces travels as `captchaToken`. */
+  siteKey: string;
+}
+
 /**
  * What the instance's AI proxy advertises. Diagnostics and UI copy only, never
  * a routing decision: `instance.ai` being non-`null` says an upstream is
@@ -468,7 +498,8 @@ export interface ProtocolHandshake {
    * it entirely, and a client that required it would refuse to talk to every
    * such instance: a compatibility break wearing the clothes of an additive
    * change. It replaced `signupMode`, which described a setting that no longer
-   * exists (signup is invite-only, always).
+   * exists: an account is created by redeeming an invite, and
+   * {@link InstanceInfo.openSignup} says whether a person may ask for one.
    *
    * It is DESCRIPTIVE, never authoritative. `mail: true` does not promise a
    * letter arrives, and `ai` is what the operator configured rather than a

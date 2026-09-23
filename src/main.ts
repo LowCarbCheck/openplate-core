@@ -33,6 +33,8 @@ import { createDrizzleInstanceSettingsStore } from './db/settings-store.js';
 import { startInstanceSettings } from './instance/instance-settings.js';
 import { deriveServerSecrets } from './lib/server-secrets.js';
 import { createThrottleStore } from './lib/throttle.js';
+import { SIGNUP_LETTER_THROTTLE, type OpenSignupSurface } from './accounts/open-signup.js';
+import { createTurnstileVerifier } from './accounts/captcha.js';
 import { generateFamilyId, generatePasswordResetToken, generateToken } from './lib/tokens.js';
 import { createMailer } from './mail/mailer.js';
 import { createDeclarationTemplateSource } from './mail/declaration-templates.js';
@@ -100,6 +102,28 @@ async function main(): Promise<void> {
   // `AuthContext.memberInvites`.
   const invites = createDrizzleInviteStore(database.db);
 
+  // THE OPEN SIGN-UP DOOR (M253), `null` unless `OPEN_SIGNUP=true`, which
+  // leaves `POST /v1/auth/signup-request` answering the ordinary unknown-path
+  // 404. It mints through the SAME invite store the operator's mint uses.
+  const openSignup: OpenSignupSurface | null = config.openSignup
+    ? {
+        invites,
+        // No trial exists yet, so a new account gets no AI until an operator
+        // grants some; the boot line below says so.
+        grant: { dailyAiLimit: 0 },
+        captcha: config.turnstile === null ? null : createTurnstileVerifier({ config: config.turnstile }),
+        letters: createThrottleStore(SIGNUP_LETTER_THROTTLE),
+      }
+    : null;
+  if (openSignup !== null) {
+    logger.info('Open sign-up is on, and new accounts get no AI until an operator grants some');
+    if (config.turnstile === null) {
+      logger.warn(
+        'Open sign-up runs without a captcha. Set TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY to require one.',
+      );
+    }
+  }
+
   const authContext: AuthContext = {
     store: createDrizzleAccountStore(database.db),
     pepper: secrets.verifierPepper,
@@ -115,6 +139,7 @@ async function main(): Promise<void> {
     // `POST /v1/auth/invites` answering the ordinary unknown-path 404, see
     // `accounts/register-auth-routes.ts`.
     memberInvites: config.memberInvites === null ? null : { invites, policy: config.memberInvites },
+    openSignup,
   };
 
   // ALWAYS PRESENT, because signup is invite-only and the invite store is the
@@ -182,6 +207,10 @@ async function main(): Promise<void> {
     // the throttle stay on the server whatever it says. Built from the SAME
     // config binding that decides whether the route exists at all.
     memberInvites: config.memberInvites !== null,
+    // DESCRIPTIVE, NEVER A GRANT, and built from the SAME binding that mounts
+    // `POST /v1/auth/signup-request`, so an instance cannot advertise a door
+    // it does not have. `false` keeps the client's invite wording.
+    openSignup: openSignup !== null,
     // DESCRIPTIVE, NEVER A GRANT. It says an upstream is configured, not that
     // the caller may use it: an account with `dailyAiLimit: 0` gets a 403
     // whatever this says. The model name is advertising copy the operator
@@ -256,6 +285,13 @@ async function main(): Promise<void> {
   // 404 keeps its `/v1/feedback` tree indistinguishable from one where the
   // feature was never written. A client that finds no window offers no report.
   if (feedback !== null) instance.feedback = feedbackRetentionAdvertisement();
+
+  // THE CAPTCHA A CLIENT RENDERS, ABSENT unless the door is open AND the
+  // operator configured Turnstile. The site key is public by design; the
+  // secret never leaves `config.turnstile`.
+  if (openSignup !== null && config.turnstile !== null) {
+    instance.signupCaptcha = { provider: 'turnstile', siteKey: config.turnstile.siteKey };
+  }
 
   // THE COMMUNITY PULSE, on every instance and with no flag to read: the opt in
   // is on the device, and the sweep at the bottom of this file has to run
@@ -340,6 +376,9 @@ async function main(): Promise<void> {
       research: research !== null,
       feedback: feedback !== null,
       memberInvites: config.memberInvites !== null,
+      openSignup: openSignup !== null,
+      // Whether a captcha guards that door, never a key.
+      signupCaptcha: openSignup?.captcha != null,
       // Whether a biller stands behind this instance, never its URL and never
       // its shared secret.
       plans: config.plans !== null,

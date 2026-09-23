@@ -220,6 +220,12 @@ export interface CreateAppOptions {
    */
   rotation: SyncRotationStore;
   throttle: ThrottleStore;
+  /**
+   * The per-source bucket of the open sign-up door (M253), or absent for a
+   * fresh one on the production bound. A suite that is not ABOUT that bound
+   * passes a permissive store, as it does for {@link CreateAppOptions.throttle}.
+   */
+  signupRequestThrottle?: ThrottleStore;
   logger: Logger;
   /** Express `trust proxy`. Wrong here means `req.ip` is the proxy's and the whole throttle is one shared bucket. */
   trustProxy: boolean | number;
@@ -403,7 +409,12 @@ export function createApp(options: CreateAppOptions): Express {
   });
 
   const requireAuth = createBearerAuthMiddleware(options.authContext);
-  registerAuthRoutes(app, { ctx: options.authContext, throttle: options.throttle, requireAuth });
+  registerAuthRoutes(app, {
+    ctx: options.authContext,
+    throttle: options.throttle,
+    requireAuth,
+    signupRequestThrottle: options.signupRequestThrottle,
+  });
 
   // THE SHARE TERMINATOR, AND WHY IT IS HERE AND NOT LOWER DOWN.
   //

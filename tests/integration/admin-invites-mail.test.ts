@@ -150,7 +150,7 @@ before(async () => {
     trustProxy: false,
     mailer,
     mailConfigured: true,
-    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, ai: null, plans: false, push: false },
+    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, openSignup: false, ai: null, plans: false, push: false },
     admin: {
       // The REAL store, against the real table: the rollback this service
       // offers deletes rows, and a fake here would prove nothing about that.

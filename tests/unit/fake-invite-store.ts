@@ -17,6 +17,8 @@ import type {
   MintInviteInput,
   MintInviteResult,
   MintedInvite,
+  InviteSource,
+  PendingInvite,
   ReissueInviteInput,
 } from '../../src/admin/invite-store.js';
 import { generateSignupInviteToken } from '../../src/lib/tokens.js';
@@ -25,6 +27,8 @@ interface FakeInviteRow extends InviteSummary {
   tokenHash: string;
   /** The account that caused this row, or `null` for an operator mint (M212). */
   invitedByAccountId: number | null;
+  /** Which door wrote this row (M253). */
+  source: InviteSource | null;
 }
 
 export interface FakeInviteStore extends InviteStore {
@@ -87,6 +91,7 @@ export function createFakeInviteStore(): FakeInviteStore {
         redeemedAccountId: null,
         tokenHash: token.hash,
         invitedByAccountId: input.invitedByAccountId,
+        source: input.source,
       };
       rows.push(row);
       return { ok: true, minted: { invite: summarize(row), token: token.raw } };
@@ -130,6 +135,18 @@ export function createFakeInviteStore(): FakeInviteStore {
       return rows.some(
         (row) => row.email === input.email && row.redeemedAt !== null && row.invitedByAccountId !== null,
       );
+    },
+
+    async findPendingInvite(input: { email: string; now: Date }): Promise<PendingInvite | null> {
+      // The same three predicates as the real store.
+      const row = rows.find(
+        (candidate) =>
+          candidate.email === input.email &&
+          candidate.redeemedAt === null &&
+          candidate.revokedAt === null &&
+          candidate.expiresAt.getTime() > input.now.getTime(),
+      );
+      return row === undefined ? null : { source: row.source };
     },
 
     digestOf(inviteId: number): string | undefined {

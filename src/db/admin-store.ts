@@ -363,6 +363,19 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
 
       const [keyRecordTotals] = await db.select({ total: count() }).from(syncKeyRecords);
 
+      // THE FARMING SIGNAL (M253): rows the open sign-up door wrote since the
+      // start of the UTC day, and in the trailing seven days.
+      const startOfDay = new Date(`${utcDayKey(input.now)}T00:00:00.000Z`);
+      const weekAgo = new Date(input.now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const [openToday] = await db
+        .select({ total: count() })
+        .from(signupInvites)
+        .where(and(eq(signupInvites.source, 'open-signup'), gte(signupInvites.createdAt, startOfDay)));
+      const [openWeek] = await db
+        .select({ total: count() })
+        .from(signupInvites)
+        .where(and(eq(signupInvites.source, 'open-signup'), gt(signupInvites.createdAt, weekAgo)));
+
       return {
         accounts: accountTotals?.total ?? 0,
         accountsWithBlob: blobTotals?.owners ?? 0,
@@ -377,6 +390,10 @@ export function createDrizzleAdminStore(db: Database): AdminMetadataStore {
         aiRequestsToday: toByteCount(aiTotals?.total ?? null),
         pulse,
         push,
+        signup: {
+          openSignupInvitesToday: openToday?.total ?? 0,
+          openSignupInvitesLast7Days: openWeek?.total ?? 0,
+        },
       };
     },
   };

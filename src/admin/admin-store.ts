@@ -152,6 +152,21 @@ export interface AdminStats {
    * `docs/adr/0008-push-is-a-scheduling-exception.md`.
    */
   push: PushStats;
+  /**
+   * The open sign-up door's farming signal (M253): how many invites it
+   * minted since the start of today (UTC) and in the last seven days.
+   *
+   * COUNTS OF ROWS, NEVER ADDRESSES. A spike here is what tells an operator
+   * that somebody is minting accounts in bulk; which addresses they used is
+   * in the invite list, behind the same credential, if it is needed at all.
+   */
+  signup: SignupStats;
+}
+
+/** See {@link AdminStats.signup}. */
+export interface SignupStats {
+  openSignupInvitesToday: number;
+  openSignupInvitesLast7Days: number;
 }
 
 export interface ListAccountsInput {

@@ -63,8 +63,11 @@ import {
   parseRecoveryCode,
   parseTokenField,
 } from './auth-input.js';
-import type { JsonObject, JsonValue } from '../lib/json.js';
+import { asString, type JsonObject, type JsonValue } from '../lib/json.js';
 import type { AccountView } from '../protocol.js';
+import { SIGNUP_REQUEST_REFUSALS, type OpenSignupSurface } from './open-signup.js';
+import { isDisposableAddress } from './disposable-domains.js';
+import { trialKeyFor } from './trial-key.js';
 
 /** Everything the handlers need from the outside world. All of it injected — none of it imported. */
 export interface AuthContext {
@@ -111,6 +114,19 @@ export interface AuthContext {
    * and no other handler in this file is given the surface.
    */
   memberInvites?: MemberInviteSurface | null;
+  /**
+   * The open sign-up door (M253), or `null`/absent on an instance without
+   * `OPEN_SIGNUP=true`, which is the default and every invite-only instance.
+   *
+   * `null` IS NOT "MOUNTED BUT REFUSING", for the reason
+   * {@link AuthContext.memberInvites} gives: `POST /v1/auth/signup-request` is
+   * not registered then, and the path answers the ordinary unknown-path 404.
+   * THE SECOND HANDLER HERE THAT MAY REACH THE OPERATOR'S `InviteStore`, and
+   * the only unauthenticated one. It mints on the instance's terms from
+   * {@link OpenSignupSurface.grant} and takes nothing from the body but an
+   * address and a captcha token.
+   */
+  openSignup?: OpenSignupSurface | null;
 }
 
 /** What `POST /v1/auth/invites` needs to exist: the invite table, and what an invitation is worth. */
@@ -160,7 +176,8 @@ export type AuthOutcome<T> =
   | { status: 'unauthorized'; reason: string }
   | { status: 'forbidden'; reason: string }
   | { status: 'not-found'; reason: string }
-  | { status: 'conflict'; reason: string };
+  | { status: 'conflict'; reason: string }
+  | { status: 'unavailable'; reason: string };
 
 /**
  * Compared against when no account exists, so an unknown address costs the same
@@ -1211,6 +1228,7 @@ export async function handleMintMemberInvite(
     // What makes this invitation count against the caller's five, and what
     // the re-invite rule reads afterwards.
     invitedByAccountId: account.id,
+    source: null,
   });
 
   if (!minted.ok) {
@@ -1238,6 +1256,138 @@ export async function handleMintMemberInvite(
   // token, which this handler holds for exactly as long as one send takes.
   ctx.logger.info('Member invite minted', { accountId: account.id, inviteId: minted.minted.invite.id });
   return MEMBER_INVITE_ACCEPTED;
+}
+
+// ---------------------------------------------------------------------------
+// Open sign-up (M253)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ONE response `POST /v1/auth/signup-request` gives when it accepts an
+ * address, and every accepting branch returns THIS value, for the reason
+ * {@link MEMBER_INVITE_ACCEPTED} is one constant: a new address, a pending
+ * one, an address that holds an account and a mailbox that already got its
+ * letter today must be the same bytes by construction.
+ */
+const SIGNUP_REQUEST_ACCEPTED: AuthOutcome<Record<string, never>> = { status: 'accepted', body: {} };
+
+/**
+ * `POST /v1/auth/signup-request`, a person asking for an account with their
+ * own address (M253).
+ *
+ * IT MINTS AN ORDINARY INVITE AND MAILS IT, with the operator's mint code, on
+ * the instance's terms ({@link OpenSignupSurface.grant}), `member`, the
+ * default lifetime, no inviter, and `source = 'open-signup'`. Nothing else
+ * about signup changes: the letter is the address check.
+ *
+ * WHAT IT REFUSES, AND WHY THESE ARE NOT ORACLES. A malformed address, a
+ * throwaway domain and a failed captcha are each a `400` with a code, and an
+ * unreachable captcha is a `503`. Each one describes the REQUEST, which the
+ * caller wrote, and never what this instance holds: a domain says nothing
+ * about an account.
+ *
+ * WHAT IT NEVER SAYS. Every other branch is the same `202` with the same body
+ * ({@link SIGNUP_REQUEST_ACCEPTED}): a new address gets the invitation, an
+ * address with an account gets the short note with no link, an address with
+ * a letter from an operator or a member gets nothing new, and a mailbox that
+ * already got a letter today gets nothing either.
+ *
+ * A PENDING INVITE FROM ANOTHER DOOR IS LEFT ALONE. A mint supersedes the
+ * address's pending invite, which is right when an operator re-sends and
+ * wrong here: a stranger posting somebody's address would otherwise withdraw
+ * the letter an operator just sent them, and replace a standing grant with
+ * this door's terms. The person already holds a working letter.
+ *
+ * NO ADDRESS IS LOGGED ON ANY BRANCH, and neither is the token.
+ */
+export async function handleSignupRequest(
+  body: JsonValue | undefined,
+  ctx: AuthContext,
+): Promise<AuthOutcome<Record<string, never>>> {
+  const surface = ctx.openSignup ?? null;
+  // DEFENCE IN DEPTH, NOT THE MECHANISM: the route is not registered at all
+  // on an instance without the door.
+  if (surface === null) return { status: 'not-found', reason: 'not found' };
+
+  const fields = asFields(body);
+  const email = parseEmail(fields.email);
+  if (!email.ok) return invalid(SIGNUP_REQUEST_REFUSALS.emailInvalid);
+  if (isDisposableAddress(email.value)) return invalid(SIGNUP_REQUEST_REFUSALS.domainRefused);
+
+  // AFTER the two local checks, so a request refused for its address costs no
+  // call to Turnstile, and BEFORE anything is read or written.
+  if (surface.captcha !== null) {
+    const verdict = await surface.captcha.verify({ token: asString(fields.captchaToken) });
+    if (verdict === 'unavailable') return { status: 'unavailable', reason: SIGNUP_REQUEST_REFUSALS.captchaUnavailable };
+    if (verdict === 'failed') return invalid(SIGNUP_REQUEST_REFUSALS.captchaFailed);
+  }
+
+  // ONE LETTER PER MAILBOX PER DAY, keyed on the trial key so `a.nna@` and
+  // `anna+x@` share it. Checked on every accepting branch alike, so the
+  // letter bound cannot tell a caller which kind of address it hit.
+  const letterKey = trialKeyFor(email.value);
+  if (surface.letters.check(letterKey).locked) {
+    ctx.logger.info('Sign-up request answered without a letter: this mailbox had one today');
+    return SIGNUP_REQUEST_ACCEPTED;
+  }
+  surface.letters.recordFailure(letterKey);
+
+  const now = ctx.now();
+  if ((await ctx.store.findAccountByEmail(email.value)) !== null) {
+    await trySignupLetter(ctx, () => ctx.mailer.sendAccountNotice({ email: email.value }));
+    ctx.logger.info('Sign-up request answered with the account notice');
+    return SIGNUP_REQUEST_ACCEPTED;
+  }
+
+  const pending = await surface.invites.findPendingInvite({ email: email.value, now });
+  if (pending !== null && pending.source !== 'open-signup') {
+    ctx.logger.info('Sign-up request left a pending invitation from another door alone');
+    return SIGNUP_REQUEST_ACCEPTED;
+  }
+
+  const minted = await surface.invites.mint({
+    email: email.value,
+    displayName: null,
+    role: 'member',
+    dailyAiLimit: surface.grant.dailyAiLimit,
+    expiresAt: new Date(now.getTime() + DEFAULT_INVITE_TTL_MS),
+    now,
+    // NOBODY INVITED THIS PERSON, so nobody's member cap is spent and the
+    // member re-invite rule does not read this row.
+    invitedByAccountId: null,
+    source: 'open-signup',
+  });
+  if (!minted.ok) {
+    // An account appeared between the read above and the mint's own check.
+    await trySignupLetter(ctx, () => ctx.mailer.sendAccountNotice({ email: email.value }));
+    ctx.logger.info('Sign-up request answered with the account notice');
+    return SIGNUP_REQUEST_ACCEPTED;
+  }
+
+  await trySignupLetter(ctx, () =>
+    ctx.mailer.sendInvite({
+      email: email.value,
+      displayName: null,
+      inviteToken: minted.minted.token,
+      expiresAt: minted.minted.invite.expiresAt.toISOString(),
+    }),
+  );
+  // The invite's id. Never the address and never the token.
+  ctx.logger.info('Sign-up request minted an invite', { inviteId: minted.minted.invite.id });
+  return SIGNUP_REQUEST_ACCEPTED;
+}
+
+/**
+ * Sends one sign-up letter and swallows a transport failure, for the reason
+ * {@link trySend} gives: the status code must not depend on the send, and the
+ * error may echo the address or the link, so it is not logged.
+ */
+async function trySignupLetter(ctx: AuthContext, send: () => Promise<void>): Promise<void> {
+  try {
+    await send();
+  } catch {
+    ctx.logger.warn('A sign-up letter could not be sent');
+  }
 }
 
 /**

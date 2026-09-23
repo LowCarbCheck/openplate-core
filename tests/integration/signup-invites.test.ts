@@ -98,6 +98,7 @@ async function mintInvite(
     // An operator mint by default: it is exempt from the member cap and from
     // the re-invite rule, and it writes no allowance expiry at redemption.
     invitedByAccountId,
+    source: null,
   });
   if (!minted.ok) throw new Error(`could not mint an invite for ${email}: ${minted.reason}`);
   return minted.minted.token;
@@ -244,6 +245,7 @@ test('invite-lookup shows the addressee, and every bad token is one 404', async 
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       now: new Date(),
       invitedByAccountId: null,
+      source: null,
     });
     if (!minted.ok) throw new Error('expected a minted invite');
 

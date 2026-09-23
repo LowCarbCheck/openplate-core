@@ -76,11 +76,13 @@ import {
   handleResetOpen,
   handleResetRequest,
   handleSignup,
+  handleSignupRequest,
   handleUpdateAccount,
 } from './auth-handlers.js';
 import { handleNotFound } from '../server/error-middleware.js';
 import { getRequestSession } from '../server/bearer-auth.js';
-import { throttleKey, type ThrottleStore } from '../lib/throttle.js';
+import { createThrottleStore, throttleKey, type ThrottleStore } from '../lib/throttle.js';
+import { SIGNUP_REQUEST_IP_THROTTLE } from './open-signup.js';
 import { asFields } from './auth-input.js';
 import { asString } from '../lib/json.js';
 
@@ -95,6 +97,16 @@ export interface AuthRoutesOptions {
   throttle: ThrottleStore;
   /** The bearer middleware — injected so this module never reaches for a singleton. */
   requireAuth: RequestHandler;
+  /**
+   * The per-source bucket of `POST /v1/auth/signup-request` (M253), or absent
+   * for a fresh one on {@link SIGNUP_REQUEST_IP_THROTTLE}.
+   *
+   * ITS OWN STORE, NOT {@link AuthRoutesOptions.throttle}. That store runs on
+   * one config for every route (fifteen minutes of memory), and this door
+   * counts per HOUR. A bucket's config is fixed by its store, so a second
+   * bound needs a second store.
+   */
+  signupRequestThrottle?: ThrottleStore;
 }
 
 /** Maps a handler outcome onto the wire. The only place status codes are chosen. */
@@ -126,6 +138,9 @@ function sendOutcome<T>(res: Response, outcome: AuthOutcome<T>): void {
       return;
     case 'conflict':
       res.status(409).json({ error: outcome.reason });
+      return;
+    case 'unavailable':
+      res.status(503).json({ error: outcome.reason });
       return;
   }
 }
@@ -419,6 +434,36 @@ export function registerAuthRoutes(app: Express, options: AuthRoutesOptions): vo
     });
   } else {
     router.use(`${AUTH_API_PREFIX}/invites`, handleNotFound);
+  }
+
+  // THE OPEN SIGN-UP DOOR, OR NOTHING THAT ADMITS TO BEING ONE (M253).
+  //
+  // `OPEN_SIGNUP` is unset on every invite-only instance. The path then
+  // answers the ordinary unknown-path 404, with the terminator in the same
+  // position the route would occupy, for the reason the member mint above
+  // gives. Unauthenticated when mounted, like `/signup` and `/invite-lookup`.
+  if (ctx.openSignup != null) {
+    const signupRequestThrottle = options.signupRequestThrottle ?? createThrottleStore(SIGNUP_REQUEST_IP_THROTTLE);
+    router.post(`${AUTH_API_PREFIX}/signup-request`, async (req, res, next) => {
+      try {
+        // By IP alone, and every attempt counts, BEFORE the handler: a caller
+        // who is locked out costs no captcha call, no database read and no
+        // letter. Keying it by the submitted address would hand out a fresh
+        // allowance per address, which is the attack.
+        const key = throttleKey({ namespace: 'signup-request', ip: clientIp(req) });
+        const decision = signupRequestThrottle.check(key);
+        if (decision.locked) {
+          sendThrottled(res, decision.retryAfterMs);
+          return;
+        }
+        signupRequestThrottle.recordFailure(key);
+        sendOutcome(res, await handleSignupRequest(req.body, ctx));
+      } catch (error) {
+        next(error);
+      }
+    });
+  } else {
+    router.use(`${AUTH_API_PREFIX}/signup-request`, handleNotFound);
   }
 
   router.post(`${AUTH_API_PREFIX}/delete`, requireAuth, async (req, res, next) => {

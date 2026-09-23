@@ -303,6 +303,7 @@ test('an operator-minted invitation is not a member one, so that address can sti
     expiresAt: new Date(fixture.now().getTime() + 60_000),
     now: fixture.now(),
     invitedByAccountId: null,
+    source: null,
   });
   assert.ok(operatorMint.ok);
   invites.markRedeemed(operatorMint.minted.invite.id, 4242);

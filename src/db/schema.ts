@@ -35,6 +35,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type { AccountRole, InstanceLanguage, NutrientReferenceBasis, SyncKeyRecordKind } from '../protocol.js';
+import type { InviteSource } from '../admin/invite-store.js';
 import type { AccountTokenKind } from '../lib/tokens.js';
 import type { KdfDescriptor } from '../lib/kdf-descriptor.js';
 import type { JsonObject } from '../lib/json.js';
@@ -373,6 +374,35 @@ export const signupInvites = pgTable(
      * counted against nobody's five and skips the re-invite rule.
      */
     invitedByAccountId: integer('invited_by_account_id').references(() => accounts.id, { onDelete: 'set null' }),
+    /**
+     * Which door wrote this row, or `NULL` for the two older ones (M253).
+     *
+     * `'open-signup'` is a person who asked for an account with their own
+     * address (`POST /v1/auth/signup-request`). `NULL` is an operator mint or
+     * a member mint, which `invited_by_account_id` already tells apart, so a
+     * third value for them would be a second place to say the same thing.
+     *
+     * IT IS WHAT THE FARMING SIGNAL COUNTS. `GET /v1/admin/stats` reports how
+     * many rows this door wrote today and in the last seven days, and that is
+     * the number an operator watches to see whether somebody is minting
+     * accounts in bulk.
+     */
+    source: text('source').$type<InviteSource>(),
+    /**
+     * The mailbox's trial key (`accounts/trial-key.ts`): the address with a
+     * `+tag` removed, and with its dots removed for Gmail (M253).
+     *
+     * WRITTEN ON EVERY NEW ROW, whichever door minted it, so the one address,
+     * one trial rule can ask one indexed question at mint and at redemption:
+     * did this mailbox already redeem a row that carried a trial. `NULL` only
+     * on rows minted before the column existed; redemption derives the key
+     * from `email` for those.
+     *
+     * IT OUTLIVES THE ACCOUNT, exactly as `email` and `redeemed_at` do: the
+     * account foreign keys on this table are `ON DELETE SET NULL`, so a
+     * self-delete does not reset the mailbox's trial.
+     */
+    trialKey: text('trial_key'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
@@ -389,6 +419,10 @@ export const signupInvites = pgTable(
     // Supports the lifetime cap, which is counted as "how many rows carry this
     // account" on every member mint. NOT unique, obviously: five is the point.
     index('signup_invites_inviter_idx').on(table.invitedByAccountId),
+    // Supports the one address, one trial rule, asked on every mint that
+    // carries a trial and on every redemption (M253). NOT unique: a mailbox
+    // may have several rows over time, and only redeemed ones count.
+    index('signup_invites_trial_key_idx').on(table.trialKey),
   ],
 );
 

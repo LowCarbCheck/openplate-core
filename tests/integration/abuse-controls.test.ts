@@ -85,6 +85,7 @@ async function mintInvite(email: string): Promise<string> {
     // An operator mint, which is what every fixture outside the member-invite
     // suite wants.
     invitedByAccountId: null,
+    source: null,
   });
   if (!minted.ok) throw new Error(`could not mint an invite for ${email}: ${minted.reason}`);
   return minted.minted.token;

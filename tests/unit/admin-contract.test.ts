@@ -117,7 +117,7 @@ async function startHarness({ basis }: { basis: NutrientReferenceBasis | null })
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: createSilentLogger(),
     trustProxy: false,
-    instance: { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, push: false, plans: false },
+    instance: { name: 'openplate', language: 'en', mail: false, memberInvites: false, openSignup: false, ai: null, push: false, plans: false },
     settings,
     admin: {
       token: ADMIN_TOKEN,

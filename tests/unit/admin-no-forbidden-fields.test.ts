@@ -85,6 +85,7 @@ before(async () => {
     dailyAiLimit: 0,
     expiresAt: new Date('2027-01-01T00:00:00.000Z'),
     invitedByAccountId: null,
+    source: null,
     now: new Date('2026-08-31T12:00:00.000Z'),
   });
   if (!minted.ok) throw new Error('expected the fake store to mint an invite');

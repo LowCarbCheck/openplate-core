@@ -32,7 +32,7 @@ const servers: Server[] = [];
 
 /** A minimal instance block with one field under test, so a case names only what it is about. */
 function instanceInfo({ plans }: { plans: boolean }): InstanceInfo {
-  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, ai: null, plans, push: false };
+  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, openSignup: false, ai: null, plans, push: false };
 }
 
 after(async () => {
@@ -148,6 +148,7 @@ test('an instance block is published whole, and omitted entirely when there is n
     language: 'de',
     mail: false,
     memberInvites: false,
+    openSignup: false,
     ai: null,
     push: false,
     plans: false,

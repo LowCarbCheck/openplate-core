@@ -222,6 +222,14 @@ interface AdminStatsView {
     subscriptions: number;
     sentToday: number;
   };
+  /**
+   * The open sign-up door's farming signal (M253): invites it minted today
+   * (UTC) and in the last seven days. Counts, never addresses.
+   */
+  signup: {
+    openSignupInvitesToday: number;
+    openSignupInvitesLast7Days: number;
+  };
 }
 
 /**
@@ -325,6 +333,11 @@ function toStatsView(input: { stats: AdminStats; aiInstanceDailyLimit: number | 
     push: {
       subscriptions: stats.push.subscriptions,
       sentToday: stats.push.sentToday,
+    },
+    // PROJECTED, not spread, for the reason the pulse block above is.
+    signup: {
+      openSignupInvitesToday: stats.signup.openSignupInvitesToday,
+      openSignupInvitesLast7Days: stats.signup.openSignupInvitesLast7Days,
     },
   };
 }
@@ -1256,6 +1269,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         // re-inviting somebody who left and came back is the case the
         // exemption exists for.
         invitedByAccountId: null,
+        source: null,
       });
       if (!minted.ok) {
         // The one place this service confirms that an address holds an account,

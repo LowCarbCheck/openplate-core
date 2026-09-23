@@ -459,6 +459,8 @@ test('stats reports the three fields the console shows beside the counts', async
     'pulse',
     // M223: two integers about web push, and never a subscription row.
     'push',
+    // M253: the open sign-up door's farming signal, two counts.
+    'signup',
   ]);
   assert.equal(asNumber(stats?.admins), 1);
   // THIS HARNESS HAS NO AI SURFACE, so there is no ceiling to report and the

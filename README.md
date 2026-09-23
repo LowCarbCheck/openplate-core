@@ -78,9 +78,9 @@ That is the whole install. Postgres comes up alongside the service, the schema m
 
 Then point your openplate app at it by setting `SYNC_SERVER_URL` to this service's public URL, the one a **browser** can reach, since the sync client runs in the page. If you want both halves in one file, openplate ships a combined [`docker/topologies/compose.sync.yml`](https://github.com/LowCarbCheck/openplate/blob/main/docker/topologies/compose.sync.yml) that brings up the app, this service and a shared Postgres together.
 
-### Signup is invite-only, and mail is optional
+### Signup is by invitation, and mail is optional
 
-An account is an **email address plus a passphrase**, and it is created by redeeming an invite you addressed to somebody. There is no open registration and no closed mode: the invite is the only door.
+An account is an **email address plus a passphrase**, and it is created by redeeming an invite addressed to somebody. By default you mint every invite yourself, and the instance is invite-only.
 
 ```bash
 pnpm sync-api invites create --email anna@example.org --display-name "Anna"
@@ -89,6 +89,8 @@ pnpm sync-api invites create --email anna@example.org --display-name "Anna"
 That prints a link (or, if you configured no `CLIENT_BASE_URL`, the raw token) **once**. It is not stored, only its digest is. One invite creates one account, at the address it names, and a failed attempt does not spend it.
 
 **The invitation is the address verification.** `POST /v1/auth/signup` reads the address from the invite row, never from the request body, so the person who received the letter is the person who signs up. There is no confirmation link and nothing left to confirm afterwards.
+
+**You can let people ask for an invitation themselves.** With `OPEN_SIGNUP=true`, `POST /v1/auth/signup-request` takes an address, mints an ordinary invite for it and mails it there, so the letter is still the address check. It needs the mail block, and it refuses to boot without it. Every address gets the same `202`: an address that already has an account receives a short note with no link, and one that already holds a letter from you or a member receives nothing new. One source address may ask five times an hour, one mailbox receives one letter a day, and addresses at known throwaway mail services are refused (a vendored copy of the CC0 list at [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains), refreshed with `pnpm sync:disposable-domains`). Set `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` to require a Cloudflare Turnstile captcha as well; `/health` then publishes the site key for the app. `GET /v1/admin/stats` counts the invites this door minted today and in the last seven days, so a burst shows.
 
 **Mail is optional.** Set `MAIL_API_*` and this service sends the invitation and the password reset itself; leave it unset and both come back to you as links to paste. Nothing is silently dropped either way. `SMTP_*` and `PIGEON_*` are boot failures rather than no-ops: this service speaks pigeon's HTTP API and nothing else.
 
@@ -421,7 +423,8 @@ never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
 `AI_MAX_REQUEST_BYTES`, `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
 `FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`,
 `MEMBER_INVITE_DAILY_AI_LIMIT`, `MEMBER_INVITE_ALLOWANCE_DAYS`,
-`MEMBER_INVITE_LIFETIME_CAP`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+`MEMBER_INVITE_LIFETIME_CAP`, `OPEN_SIGNUP`, `TURNSTILE_SECRET_KEY`,
+`TURNSTILE_SITE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
 `VAPID_SUBJECT`, `PLANS_UPSTREAM_URL`, `PLANS_UPSTREAM_SECRET` and
 `BILLING_TOKEN` are forwarded there too. If you run your own Compose file
 rather than the one in `docker/`, name each variable you rely on in its

@@ -199,6 +199,9 @@ export function createFakeAdminStore(): FakeAdminStore {
         // are the numbers the real store reports for an instance with no VAPID
         // keys. `tests/integration/push-routes.test.ts` owns the non-zero case.
         push: { subscriptions: 0, sentToday: 0 },
+        // ZEROES: this fake holds no invites. `tests/integration/
+        // signup-request.test.ts` owns the non-zero case.
+        signup: { openSignupInvitesToday: 0, openSignupInvitesLast7Days: 0 },
       };
     },
   };

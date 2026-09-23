@@ -17,16 +17,18 @@
  * record that a letter went out and was taken back, which a missing row cannot
  * say.
  */
-import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, count, desc, eq, gt, isNotNull, isNull } from 'drizzle-orm';
 import type {
   InviteStore,
   InviteSummary,
   MintInviteInput,
   MintInviteResult,
   MintedInvite,
+  PendingInvite,
   ReissueInviteInput,
 } from '../admin/invite-store.js';
 import { generateSignupInviteToken } from '../lib/tokens.js';
+import { trialKeyFor } from '../accounts/trial-key.js';
 import type { Database } from './client.js';
 import { accounts, signupInvites } from './schema.js';
 
@@ -91,6 +93,11 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
             // `null` for an operator mint, which is what makes the admin door
             // exempt from the cap and from the re-invite rule (M212).
             invitedByAccountId: input.invitedByAccountId,
+            // Which door, and the mailbox's trial key (M253). The key is
+            // derived HERE, from the same canonical address the row keeps, so
+            // no caller can store a key that disagrees with its own address.
+            source: input.source,
+            trialKey: trialKeyFor(input.email),
           })
           .returning(SUMMARY_COLUMNS);
         if (!row) throw new Error('Failed to insert invite');
@@ -178,6 +185,24 @@ export function createDrizzleInviteStore(db: Database): InviteStore {
         )
         .limit(1);
       return found.length > 0;
+    },
+
+    async findPendingInvite(input: { email: string; now: Date }): Promise<PendingInvite | null> {
+      // The SAME three predicates a redemption applies, so "pending" here is
+      // exactly "a letter somebody could still spend".
+      const [row] = await db
+        .select({ source: signupInvites.source })
+        .from(signupInvites)
+        .where(
+          and(
+            eq(signupInvites.email, input.email),
+            isNull(signupInvites.redeemedAt),
+            isNull(signupInvites.revokedAt),
+            gt(signupInvites.expiresAt, input.now),
+          ),
+        )
+        .limit(1);
+      return row === undefined ? null : { source: row.source };
     },
   };
 }

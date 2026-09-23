@@ -27,6 +27,7 @@ import type { PlansUpstreamConfig } from './server/plans-proxy.js';
 import type { VapidCredentials } from './push/web-push-sender.js';
 import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
 import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
+import type { TurnstileConfig } from './accounts/captcha.js';
 
 /**
  * Minimum accepted `SERVER_SECRET` length. 32 characters is the shortest
@@ -195,6 +196,34 @@ export interface ServiceConfig {
    * one thing separating this route from the operator's.
    */
   memberInvites: MemberInvitePolicy | null;
+  /**
+   * Whether anybody may ask this instance for an account with their own
+   * address (`OPEN_SIGNUP=true`, M253). `false`, the default, and what every
+   * instance that did not set it keeps: invite-only.
+   *
+   * IT IS STILL AN INVITE. `POST /v1/auth/signup-request` mints an ordinary
+   * addressed invite with the same code the operator's mint uses and MAILS it
+   * to the address, so the letter is the address check. That is why this is a
+   * boot failure without mail: a door that mints links nobody receives is a
+   * door that only fills a table.
+   *
+   * `false` IS NOT "MOUNTED BUT REFUSING". The path answers the ordinary
+   * unknown-path 404, like every optional tree here.
+   */
+  openSignup: boolean;
+  /**
+   * The Turnstile keys the open sign-up door checks a captcha with, or `null`
+   * when this instance runs no captcha (M253).
+   *
+   * `TURNSTILE_SECRET_KEY` AND `TURNSTILE_SITE_KEY`, BOTH OR NEITHER, and only
+   * beside `OPEN_SIGNUP=true`: the captcha guards that one door, so a pair set
+   * on an invite-only instance is a dial with nothing to turn.
+   *
+   * OPTIONAL EVEN WITH THE DOOR OPEN, and `main.ts` says so in a boot log
+   * line. This repository is self-hosted by people who may not want a
+   * Cloudflare account; a managed instance that opens its door sets both.
+   */
+  turnstile: TurnstileConfig | null;
   /**
    * The largest request body the proxy route accepts, in bytes.
    * `AI_MAX_REQUEST_BYTES`, default 8 MB.
@@ -935,6 +964,68 @@ function parseMemberInvites(env: NodeJS.ProcessEnv): MemberInvitePolicy | null {
   return { dailyAiLimit, allowanceDays: parsePositiveInteger(env, 'MEMBER_INVITE_ALLOWANCE_DAYS', 0), lifetimeCap };
 }
 
+/**
+ * `OPEN_SIGNUP`, `true` or unset (M253). Any other value, `false` included,
+ * is a boot failure that says so.
+ *
+ * STRICTER THAN {@link parseBoolean}, on purpose. This variable opens a door
+ * to strangers, and an operator who wrote `OPEN_SIGNUP=yes` or `=1` believes
+ * they opened it; one who wrote `=false` believes they closed something that
+ * is closed by default. Both deserve the message rather than a guess.
+ *
+ * MAIL IS REQUIRED BESIDE IT. The mailed letter is the address check: without
+ * it the route could only mint links that nobody receives.
+ */
+function parseOpenSignup(env: NodeJS.ProcessEnv, mail: HttpMailConfig | null): boolean {
+  const raw = env.OPEN_SIGNUP?.trim();
+  if (raw === undefined || raw === '') return false;
+  if (raw !== 'true') {
+    throw new Error(`Invalid OPEN_SIGNUP: expected "true" or unset, got "${raw}". Unset it to stay invite-only.`);
+  }
+  if (mail === null) {
+    throw new Error(
+      'OPEN_SIGNUP=true needs mail: the letter with the link is how a new address proves it is real. ' +
+        'Set MAIL_API_URL, MAIL_API_KEY, MAIL_API_FROM and MAIL_OPERATOR_EMAIL, or unset OPEN_SIGNUP.',
+    );
+  }
+  return true;
+}
+
+/** The two names that make up the captcha block. Listed once so every message below can name both. */
+const TURNSTILE_VARIABLES = ['TURNSTILE_SECRET_KEY', 'TURNSTILE_SITE_KEY'] as const;
+
+/**
+ * `TURNSTILE_SECRET_KEY` + `TURNSTILE_SITE_KEY`, both or neither, and only
+ * beside `OPEN_SIGNUP=true` (M253).
+ *
+ * A HALF-CONFIGURED BLOCK IS A BOOT FAILURE THAT NAMES THE MISSING VARIABLE,
+ * never a value, for the reason the mail block gives: a secret in a startup
+ * log is a secret in a log. A pair on an instance with no open door is refused
+ * too, because the operator who set it believes a captcha guards something.
+ */
+function parseTurnstile(env: NodeJS.ProcessEnv, openSignup: boolean): TurnstileConfig | null {
+  const present = TURNSTILE_VARIABLES.filter((name) => (env[name]?.trim() ?? '') !== '');
+  if (present.length === 0) return null;
+
+  const missing = TURNSTILE_VARIABLES.filter((name) => !present.includes(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete captcha configuration: ${missing.join(', ')} is not set. ` +
+        `${TURNSTILE_VARIABLES.join(' and ')} are all-or-nothing: set both, or neither and run no captcha.`,
+    );
+  }
+  if (!openSignup) {
+    throw new Error(
+      `${TURNSTILE_VARIABLES.join(' and ')} are set, but OPEN_SIGNUP is not, so there is no sign-up door ` +
+        'for a captcha to guard. Set OPEN_SIGNUP=true, or unset both.',
+    );
+  }
+  return {
+    secretKey: env.TURNSTILE_SECRET_KEY?.trim() ?? '',
+    siteKey: env.TURNSTILE_SITE_KEY?.trim() ?? '',
+  };
+}
+
 function parseLogLevel(env: NodeJS.ProcessEnv): LogLevel {
   const raw = env.LOG_LEVEL?.trim().toLowerCase() ?? 'info';
   if (!isLogLevel(raw)) throw new Error(`Invalid LOG_LEVEL: expected debug/info/warn/error, got "${raw}"`);
@@ -966,19 +1057,23 @@ const MAILER_DELETED =
 /**
  * Every variable this service refuses, one by one.
  *
- * `SIGNUP_MODE` JOINED THE LIST IN M192, and `CLIENT_BASE_URL` left it. Signup
- * is invite-only, always: an account is created by redeeming an addressed
- * invite an operator minted, and there is no other door. An instance that
- * booted with a stale `SIGNUP_MODE=open` in its environment would be an
- * operator believing public registration is on, on a service where it is not
- * implemented at all, and, worse, an operator believing they had turned it
- * OFF with `closed` when the variable is simply unread.
+ * `SIGNUP_MODE` JOINED THE LIST IN M192, and `CLIENT_BASE_URL` left it. An
+ * account is created by redeeming an addressed invite, and there is no other
+ * way to create one. An instance that booted with a stale `SIGNUP_MODE=open`
+ * in its environment would be an operator believing public registration is
+ * on through a variable that is unread, and, worse, an operator believing
+ * they had turned it OFF with `closed`.
+ *
+ * `OPEN_SIGNUP` (M253) IS NOT ITS RETURN. It lets a person ask for an invite
+ * addressed to themselves; the account is still created by redeeming it, and
+ * an instance that does not set it stays invite-only. The message below names
+ * it, so an operator with the old variable learns which one exists now.
  */
 function rejectRemovedEnvVars(env: NodeJS.ProcessEnv): void {
   throwIfRemoved(
     env,
     'SIGNUP_MODE',
-    'signup is invite-only on every instance, always: mint an addressed invite with POST /v1/admin/invites (there is no open or closed mode any more)',
+    'signup is invite-only unless OPEN_SIGNUP=true: an account is created by redeeming an addressed invite, minted with POST /v1/admin/invites or asked for at POST /v1/auth/signup-request (there is no open or closed mode any more)',
   );
   throwIfRemoved(
     env,
@@ -1013,6 +1108,10 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   // configuration that has no link to put in a letter.
   const serverPublicUrl = parseOptionalBaseUrl(env, 'SERVER_PUBLIC_URL');
   const clientBaseUrl = parseOptionalBaseUrl(env, 'CLIENT_BASE_URL');
+  // Read before the object below, because open sign-up refuses to boot
+  // without mail and the captcha refuses to boot without open sign-up.
+  const mail = parseMail(env, { serverPublicUrl, clientBaseUrl });
+  const openSignup = parseOpenSignup(env, mail);
 
   return {
     port: parsePositiveInteger(env, 'PORT', 3000),
@@ -1024,13 +1123,15 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     instanceLanguage: parseInstanceLanguage(env),
     serverPublicUrl,
     clientBaseUrl,
-    mail: parseMail(env, { serverPublicUrl, clientBaseUrl }),
+    mail,
     contentDir: env.CONTENT_DIR?.trim() || null,
     ai: parseAi(env),
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),
     aiInstanceDailyLimit: parseAiInstanceDailyLimit(env),
     memberInvites: parseMemberInvites(env),
+    openSignup,
+    turnstile: parseTurnstile(env, openSignup),
     aiMaxRequestBytes: parsePositiveInteger(env, 'AI_MAX_REQUEST_BYTES', DEFAULT_AI_MAX_REQUEST_BYTES),
     trustProxy: parseTrustProxy(env),
     adminToken: parseAdminToken(env),

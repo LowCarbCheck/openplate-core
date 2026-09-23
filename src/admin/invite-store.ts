@@ -33,6 +33,14 @@ import type { AccountRole } from '../protocol.js';
  */
 export type InviteStatus = 'pending' | 'redeemed' | 'revoked' | 'expired';
 
+/**
+ * Which door wrote an invite, when it is not one of the two older ones
+ * (M253). `'open-signup'` is a person who asked for an account with their own
+ * address. An operator mint and a member mint carry `null` here, because
+ * `invitedByAccountId` already tells those two apart.
+ */
+export type InviteSource = 'open-signup';
+
 /** One invite as an operator sees it. The digest is absent by construction, and the raw token never existed here. */
 export interface InviteSummary {
   id: number;
@@ -84,6 +92,21 @@ export interface MintInviteInput {
    * invitation.
    */
   invitedByAccountId: number | null;
+  /**
+   * Which door wrote this row (M253): `'open-signup'` for
+   * `POST /v1/auth/signup-request`, `null` for the operator and member mints.
+   *
+   * REQUIRED AND NULLABLE, for the reason {@link MintInviteInput.invitedByAccountId}
+   * is: the farming count in `GET /v1/admin/stats` reads it back, so every
+   * call site has to say which door it is.
+   */
+  source: InviteSource | null;
+}
+
+/** A still-spendable invite for one address, as the open sign-up door needs to see it (M253). */
+export interface PendingInvite {
+  /** `null` for an operator or member mint, see {@link InviteSource}. */
+  source: InviteSource | null;
 }
 
 export interface ReissueInviteInput {
@@ -181,6 +204,17 @@ export interface InviteStore {
    * invited by a member later, and an operator can always re-invite anybody.
    */
   hasRedeemedMemberInvite(input: { email: string }): Promise<boolean>;
+  /**
+   * The still-spendable invite for this address, or `null` when it has none
+   * (M253). Pending means not redeemed, not revoked and not expired at `now`.
+   *
+   * THE OPEN SIGN-UP DOOR ASKS THIS BEFORE IT MINTS. A mint supersedes the
+   * address's pending invite, which is right for the operator and the member
+   * doors, and wrong for a stranger: without this question, anybody could post
+   * somebody's address and withdraw the letter an operator had just sent them,
+   * and replace a standing grant with a trial.
+   */
+  findPendingInvite(input: { email: string; now: Date }): Promise<PendingInvite | null>;
 }
 
 /** Derives an invite's status from its three lifecycle columns. The ONE place that decides. */
