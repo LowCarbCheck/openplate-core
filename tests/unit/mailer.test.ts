@@ -183,6 +183,30 @@ test('a reset send posts the reset letter, in the configured language', async ()
   assert.ok(payload.text.includes('/reset#server='), 'the reset link, not the join link');
 });
 
+test('the sign-up door posts its own letter and its own note, never the invitation', async () => {
+  const api = await startFakeMailApi();
+  const captured = createCapturingLogger();
+  const mailer = mailerFor(api.url, captured.logger);
+
+  await mailer.sendSignupRequest({
+    email: 'anna@example.org',
+    displayName: null,
+    inviteToken: 'si_a-token',
+    expiresAt: '2026-09-11T10:00:00.000Z',
+  });
+  await mailer.sendSignupAccountNotice({ email: 'bert@example.org' });
+
+  // SAFETY: as above, our own adapter posted these bodies.
+  const letter = JSON.parse(api.received[0]?.body ?? '{}') as MailPayload;
+  // SAFETY: as above, our own adapter posted this body.
+  const note = JSON.parse(api.received[1]?.body ?? '{}') as MailPayload;
+  assert.equal(letter.subject, 'Create your openplate account');
+  assert.ok(letter.text.includes('/join#server=') && letter.text.includes('si_a-token'));
+  assert.ok(!letter.text.includes('invited'));
+  assert.equal(note.subject, 'You already have an openplate account');
+  assert.ok(!note.text.includes('http') && !note.text.includes('invited'));
+});
+
 test('an account-notice send posts the third letter, and posts no link with it', async () => {
   const api = await startFakeMailApi();
   const captured = createCapturingLogger();

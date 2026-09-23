@@ -45,6 +45,7 @@
  * code would become the enumeration oracle the endpoint exists to avoid. An
  * implementation logs its own failures and resolves.
  */
+import { buildSignupAccountNoticeMessage, buildSignupRequestMessage } from './signup-message.js';
 import type { InstanceLanguage, IsoTimestamp } from '../protocol.js';
 import type { Logger } from '../logger.js';
 import { buildAccountNoticeMessage } from './account-notice-message.js';
@@ -108,6 +109,14 @@ export interface Mailer {
   sendReset(input: SendResetInput): Promise<void>;
   /** The M212 note. See `SendAccountNoticeInput` above and the module header. */
   sendAccountNotice(input: SendAccountNoticeInput): Promise<void>;
+  /**
+   * The open sign-up door's letter (M253): the invite's link, in words for a
+   * person who asked for it themselves. Never the invitation, which says
+   * somebody invited them. See `signup-message.ts`.
+   */
+  sendSignupRequest(input: SendInviteInput): Promise<void>;
+  /** The open sign-up door's note to an address that already holds an account (M253). No link. */
+  sendSignupAccountNotice(input: SendAccountNoticeInput): Promise<void>;
   /** M214/09. See `SendDeclarationReceiptInput` above and the module header. */
   sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void>;
   /** M214/09. See `SendDeclarationOperatorAlertInput` above and the module header. */
@@ -132,6 +141,13 @@ export function createNoopMailer(): Mailer {
     },
     async sendReset(): Promise<void> {
       // Deliberately nothing. See the doc above.
+    },
+    async sendSignupRequest(): Promise<void> {
+      // Deliberately nothing: `OPEN_SIGNUP` refuses to boot without mail, so
+      // this is only ever the default of a test or a misbuilt context.
+    },
+    async sendSignupAccountNotice(): Promise<void> {
+      // Deliberately nothing, as above.
     },
     async sendAccountNotice(): Promise<void> {
       // Deliberately nothing. See the doc above. An instance with no mail
@@ -310,6 +326,32 @@ export function createHttpMailer(options: CreateHttpMailerOptions): Mailer {
       });
       // No address, and nothing that says which member's mint caused it.
       logger.info('Account notice mailed');
+    },
+
+    async sendSignupRequest(input: SendInviteInput): Promise<void> {
+      const message = buildSignupRequestMessage({
+        clientBaseUrl: links.clientBaseUrl,
+        serverPublicUrl: links.serverPublicUrl,
+        inviteToken: input.inviteToken,
+        expiresAt: input.expiresAt,
+        language,
+      });
+      await postMail({
+        mail,
+        timeoutMs,
+        outgoing: { to: input.email, subject: message.subject, text: message.text, html: message.html },
+      });
+      logger.info('Sign-up letter mailed');
+    },
+
+    async sendSignupAccountNotice(input: SendAccountNoticeInput): Promise<void> {
+      const message = buildSignupAccountNoticeMessage({ language });
+      await postMail({
+        mail,
+        timeoutMs,
+        outgoing: { to: input.email, subject: message.subject, text: message.text, html: message.html },
+      });
+      logger.info('Sign-up account notice mailed');
     },
 
     async sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void> {

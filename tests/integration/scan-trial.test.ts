@@ -499,7 +499,7 @@ interface RedeemedBody {
 test('a trial invite redeems into ten scans and no date', async () => {
   await withService({ openSignup: {} }, async (service) => {
     await service.request({ method: 'POST', path: '/v1/auth/signup-request', body: { email: 'new@example.org' } });
-    const letter = service.mailer.invites[0];
+    const letter = service.mailer.signupRequests[0];
     assert.ok(letter);
     const created = await redeem(service, letter.inviteToken);
     assert.equal(created.status, 201);
@@ -568,9 +568,9 @@ test('/health promises the trial only where there is one: the key is absent, not
 
 /** Opens a trial account through the door and returns its session. */
 async function openAccount(service: ServiceHarness, email: string): Promise<HttpResponse<RedeemedBody>> {
-  const lettersBefore = service.mailer.invites.length;
+  const lettersBefore = service.mailer.signupRequests.length;
   await service.request({ method: 'POST', path: '/v1/auth/signup-request', body: { email } });
-  const letter = service.mailer.invites[lettersBefore];
+  const letter = service.mailer.signupRequests[lettersBefore];
   if (letter === undefined) throw new Error(`no letter for ${email}`);
   return redeem(service, letter.inviteToken);
 }

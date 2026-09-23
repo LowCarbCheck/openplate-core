@@ -128,7 +128,7 @@ test('with OPEN_SIGNUP unset the route is the ordinary 404 and /health says open
     assert.equal(response.status, 404);
     const health = await service.request<HealthBody>({ method: 'GET', path: '/health' });
     assert.equal(health.body.instance.openSignup, false);
-    assert.equal(service.mailer.invites.length, 0);
+    assert.equal(service.mailer.signupRequests.length, 0);
   } finally {
     await service.close();
   }
@@ -150,8 +150,8 @@ test('with OPEN_SIGNUP set the route answers 202 and /health says openSignup: tr
 test('the mailed invitation is an ordinary one: member, no AI, no inviter, and it redeems', async () => {
   await withOpenDoor({}, async (service) => {
     await requestSignup(service, { email: 'Anna@Example.org ', dailyAiLimit: 500, role: 'admin' });
-    assert.equal(service.mailer.invites.length, 1);
-    const letter = service.mailer.invites[0];
+    assert.equal(service.mailer.signupRequests.length, 1);
+    const letter = service.mailer.signupRequests[0];
     // Canonicalised by the one `parseEmail`, and nothing else from the body was read.
     assert.equal(letter?.email, 'anna@example.org');
 
@@ -213,11 +213,11 @@ test('a new address, a pending letter from another door and an existing account 
     // ONLY THE LETTERS DIFFER: one invitation for the new address, one note
     // for the account, and nothing for the address that already holds one.
     assert.deepEqual(
-      service.mailer.invites.map((letter) => letter.email),
+      service.mailer.signupRequests.map((letter) => letter.email),
       ['new@example.org'],
     );
     assert.deepEqual(
-      service.mailer.accountNotices.map((letter) => letter.email),
+      service.mailer.signupAccountNotices.map((letter) => letter.email),
       ['existing@example.org'],
     );
 
@@ -245,7 +245,7 @@ test('the sixth request from one source in an hour is a 429, and a second source
       const sixth = await requestSignup(service, { email: 'a6@example.org' }, fromA);
       assert.equal(sixth.status, 429);
       assert.ok(Number(sixth.headers.get('retry-after')) > 0, 'a 429 names when to come back');
-      assert.equal(service.mailer.invites.length, 5, 'the refused request sent nothing');
+      assert.equal(service.mailer.signupRequests.length, 5, 'the refused request sent nothing');
 
       // THE CONTROL: another source on the same instance, at the same moment.
       const fromB = await requestSignup(service, { email: 'b1@example.org' }, { 'x-forwarded-for': '198.51.100.9' });
@@ -260,11 +260,11 @@ test('one mailbox gets one letter a day, however it is spelled, and every reques
     const again = await requestSignup(service, { email: 'anna@gmail.com' });
     const dotted = await requestSignup(service, { email: 'a.n.n.a+diet@gmail.com' });
     for (const response of [first, again, dotted]) assert.equal(response.status, 202);
-    assert.equal(service.mailer.invites.length, 1);
+    assert.equal(service.mailer.signupRequests.length, 1);
 
     // THE CONTROL: a different mailbox is not held back by the first one.
     await requestSignup(service, { email: 'bert@gmail.com' });
-    assert.equal(service.mailer.invites.length, 2);
+    assert.equal(service.mailer.signupRequests.length, 2);
   });
 });
 
@@ -275,7 +275,7 @@ test('a throwaway domain is refused with a code, and nothing is minted or mailed
     assert.deepEqual(refused.body, { error: 'email-domain-refused' });
     const subdomain = await requestSignup(service, { email: 'anna@x.mailinator.com' });
     assert.equal(subdomain.status, 400);
-    assert.equal(service.mailer.invites.length, 0);
+    assert.equal(service.mailer.signupRequests.length, 0);
     assert.equal((await database.db.select().from(signupInvites)).length, 0);
 
     // THE CONTROL: an ordinary domain through the same door.
@@ -298,7 +298,7 @@ test('a failed captcha is a 400 and mints nothing; an unreachable one is a 503',
     assert.equal(response.status, 400);
     assert.deepEqual(response.body, { error: 'captcha-failed' });
     assert.deepEqual(failing.tokens, ['the-token']);
-    assert.equal(service.mailer.invites.length, 0);
+    assert.equal(service.mailer.signupRequests.length, 0);
     assert.equal((await database.db.select().from(signupInvites)).length, 0);
   });
 
@@ -306,7 +306,7 @@ test('a failed captcha is a 400 and mints nothing; an unreachable one is a 503',
     const response = await requestSignup(service, { email: 'anna@example.org', captchaToken: 'the-token' });
     assert.equal(response.status, 503);
     assert.deepEqual(response.body, { error: 'captcha-unavailable' });
-    assert.equal(service.mailer.invites.length, 0);
+    assert.equal(service.mailer.signupRequests.length, 0);
   });
 });
 
@@ -321,7 +321,7 @@ test('a passed captcha mints, a refused domain never reaches the captcha, and /h
     const response = await requestSignup(service, { email: 'anna@example.org', captchaToken: 'two' });
     assert.equal(response.status, 202);
     assert.deepEqual(passing.tokens, ['two']);
-    assert.equal(service.mailer.invites.length, 1);
+    assert.equal(service.mailer.signupRequests.length, 1);
 
     const health = await service.request<HealthBody>({ method: 'GET', path: '/health' });
     assert.deepEqual(health.body.instance.signupCaptcha, { provider: 'turnstile', siteKey: 'site-key-123' });
@@ -370,4 +370,49 @@ test('no address reaches a log line on any branch', async () => {
   for (const address of ['fresh-person', 'held@', 'throwaway', 'mailinator']) {
     assert.deepEqual(linesCarrying(lines, address), [], `a log line carries ${address}`);
   }
+});
+
+test('the door sends its own two letters, and a member invite still sends the invitation and its notice', async () => {
+  await withOpenDoor({ memberInvites: {} }, async (service) => {
+    const member = await service.signupThroughInvite({ email: 'member@example.org' });
+    await service.signupThroughInvite({ email: 'held@example.org' });
+
+    // The door: a new address and an address with an account.
+    await requestSignup(service, { email: 'asked@example.org' });
+    await requestSignup(service, { email: 'held@example.org' });
+    assert.deepEqual(
+      service.mailer.signupRequests.map((letter) => letter.email),
+      ['asked@example.org'],
+    );
+    assert.deepEqual(
+      service.mailer.signupAccountNotices.map((letter) => letter.email),
+      ['held@example.org'],
+    );
+    // Neither letter that says somebody invited them went to either address.
+    assert.equal(service.mailer.invites.length, 0);
+    assert.equal(service.mailer.accountNotices.length, 0);
+
+    // THE CONTROL: the member door, on the same instance, still sends the
+    // invitation and the invitation's notice.
+    const invite = async (email: string): Promise<void> => {
+      const response = await service.request({
+        method: 'POST',
+        path: '/v1/auth/invites',
+        accessToken: member.tokens.accessToken,
+        body: { email },
+      });
+      assert.equal(response.status, 202);
+    };
+    await invite('friend@example.org');
+    await invite('held@example.org');
+    assert.deepEqual(
+      service.mailer.invites.map((letter) => letter.email),
+      ['friend@example.org'],
+    );
+    assert.deepEqual(
+      service.mailer.accountNotices.map((letter) => letter.email),
+      ['held@example.org'],
+    );
+    assert.equal(service.mailer.signupRequests.length, 1, 'the member door sent no sign-up letter');
+  });
 });

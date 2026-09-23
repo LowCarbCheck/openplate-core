@@ -1301,8 +1301,9 @@ const SIGNUP_REQUEST_ACCEPTED: AuthOutcome<Record<string, never>> = { status: 'a
  * about an account.
  *
  * WHAT IT NEVER SAYS. Every other branch is the same `202` with the same body
- * ({@link SIGNUP_REQUEST_ACCEPTED}): a new address gets the invitation, an
- * address with an account gets the short note with no link, an address with
+ * ({@link SIGNUP_REQUEST_ACCEPTED}): a new address gets the sign-up letter, an
+ * address with an account gets the sign-up note with no link (both in
+ * `mail/signup-message.ts`, never the letters that say somebody invited them), an address with
  * a letter from an operator or a member gets nothing new, and a mailbox that
  * already got a letter today gets nothing either.
  *
@@ -1349,7 +1350,7 @@ export async function handleSignupRequest(
   surface.letters.recordFailure(letterKey, now.getTime());
 
   if ((await ctx.store.findAccountByEmail(email.value)) !== null) {
-    await trySignupLetter(ctx, () => ctx.mailer.sendAccountNotice({ email: email.value }));
+    await trySignupLetter(ctx, () => ctx.mailer.sendSignupAccountNotice({ email: email.value }));
     ctx.logger.info('Sign-up request answered with the account notice');
     return SIGNUP_REQUEST_ACCEPTED;
   }
@@ -1376,13 +1377,14 @@ export async function handleSignupRequest(
   });
   if (!minted.ok) {
     // An account appeared between the read above and the mint's own check.
-    await trySignupLetter(ctx, () => ctx.mailer.sendAccountNotice({ email: email.value }));
+    await trySignupLetter(ctx, () => ctx.mailer.sendSignupAccountNotice({ email: email.value }));
     ctx.logger.info('Sign-up request answered with the account notice');
     return SIGNUP_REQUEST_ACCEPTED;
   }
 
+  // THE DOOR'S OWN LETTER, never the invitation: nobody invited this person.
   await trySignupLetter(ctx, () =>
-    ctx.mailer.sendInvite({
+    ctx.mailer.sendSignupRequest({
       email: email.value,
       displayName: null,
       inviteToken: minted.minted.token,

@@ -86,6 +86,9 @@ export interface RecordingMailer extends Mailer {
   resets: SendResetInput[];
   /** The M212 notes, so a suite can assert that an invited address which already has an account got one INSTEAD. */
   accountNotices: SendAccountNoticeInput[];
+  /** M253: the open sign-up door's own letter and its note to an existing account. */
+  signupRequests: SendInviteInput[];
+  signupAccountNotices: SendAccountNoticeInput[];
   /** M214/09. One entry per address a receipt went to — up to two per declaration, see `mail/mailer.ts`. */
   declarationReceipts: SendDeclarationReceiptInput[];
   /** M214/09. One entry per declaration, matched or not. */
@@ -96,12 +99,16 @@ function createRecordingMailer(): RecordingMailer {
   const invites: SendInviteInput[] = [];
   const resets: SendResetInput[] = [];
   const accountNotices: SendAccountNoticeInput[] = [];
+  const signupRequests: SendInviteInput[] = [];
+  const signupAccountNotices: SendAccountNoticeInput[] = [];
   const declarationReceipts: SendDeclarationReceiptInput[] = [];
   const declarationOperatorAlerts: SendDeclarationOperatorAlertInput[] = [];
   return {
     invites,
     resets,
     accountNotices,
+    signupRequests,
+    signupAccountNotices,
     declarationReceipts,
     declarationOperatorAlerts,
     async sendInvite(input: SendInviteInput): Promise<void> {
@@ -112,6 +119,12 @@ function createRecordingMailer(): RecordingMailer {
     },
     async sendAccountNotice(input: SendAccountNoticeInput): Promise<void> {
       accountNotices.push(input);
+    },
+    async sendSignupRequest(input: SendInviteInput): Promise<void> {
+      signupRequests.push(input);
+    },
+    async sendSignupAccountNotice(input: SendAccountNoticeInput): Promise<void> {
+      signupAccountNotices.push(input);
     },
     async sendDeclarationReceipt(input: SendDeclarationReceiptInput): Promise<void> {
       declarationReceipts.push(input);

@@ -12,9 +12,13 @@ change moves the minor.
 - **A person can ask an instance for an account.** With `OPEN_SIGNUP=true`,
   `POST /v1/auth/signup-request` takes an address, mints an ordinary addressed
   invite with the operator's own mint code and mails it there, so the letter
-  is still the address check. It needs mail configured and refuses to boot
-  without it. Every address gets the same `202`: an address with an account
-  gets the short note with no link, and one that already holds a letter from
+  is still the address check, in its own letter: "you, or someone using this
+  address, asked to create an account", the link, its expiry, and that
+  ignoring it changes nothing. The English is final; the other five languages
+  carry the English until they are translated, listed in
+  `SIGNUP_LETTERS_AWAITING_TRANSLATION`. It needs mail configured and refuses
+  to boot without it. Every address gets the same `202`: an address with an
+  account gets the door's own note with no link, and one that already holds a letter from
   the operator or a member gets nothing new. Five requests per source per hour,
   one letter per mailbox per day, and addresses at known throwaway mail
   services are refused with `400 email-domain-refused` (a vendored CC0 list,

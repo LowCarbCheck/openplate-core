@@ -20,6 +20,8 @@ import { buildInviteMessage, buildInviteLink, escapeHtml } from '../../src/mail/
 import { buildResetMessage, buildResetLink } from '../../src/mail/reset-message.js';
 import { buildAccountNoticeMessage } from '../../src/mail/account-notice-message.js';
 import { MAIL_STRINGS, formatExpiryDate } from '../../src/mail/strings.js';
+import { buildSignupAccountNoticeMessage, buildSignupRequestMessage } from '../../src/mail/signup-message.js';
+import { SIGNUP_LETTERS_AWAITING_TRANSLATION, SIGNUP_LETTER_STRINGS } from '../../src/mail/signup-letter-strings.js';
 import { INSTANCE_LANGUAGES, type InstanceLanguage } from '../../src/protocol.js';
 
 const CLIENT_BASE_URL = 'https://openplate.de';
@@ -378,4 +380,95 @@ test('the invite letter tells the reader what happens next, in every language', 
     assert.ok(invite.text.includes(MAIL_STRINGS[language].invite.password));
     assert.ok(invite.text.length > 200, `invite/${language} is suspiciously short`);
   }
+});
+
+// ── The open sign-up door's own letters (M253) ─────────────────────────────
+
+function signupRequestFor(language: InstanceLanguage) {
+  return buildSignupRequestMessage({
+    clientBaseUrl: CLIENT_BASE_URL,
+    serverPublicUrl: SERVER_PUBLIC_URL,
+    inviteToken: INVITE_TOKEN,
+    expiresAt: EXPIRES_AT,
+    language,
+  });
+}
+
+test('the sign-up letters name no service and use no dash, in any language', () => {
+  for (const language of INSTANCE_LANGUAGES) {
+    const request = signupRequestFor(language);
+    const notice = buildSignupAccountNoticeMessage({ language });
+    const letters = [
+      [
+        `signup/${language}`,
+        `${request.subject}\n${request.text}\n${request.html}`
+          .split(request.link)
+          .join('')
+          .split(escapeHtml(request.link))
+          .join(''),
+      ],
+      [`signup-notice/${language}`, `${notice.subject}\n${notice.text}\n${notice.html}`],
+    ] as const;
+    for (const [name, whole] of letters) {
+      for (const word of BANNED_WORDS) assert.ok(!whole.includes(word), `${name} contains "${word}"`);
+      for (const dash of BANNED_DASHES) assert.ok(!whole.includes(dash), `${name} contains a dash`);
+    }
+  }
+});
+
+test('nobody invited this reader: the sign-up letters never say so, and the invitation does', () => {
+  const request = signupRequestFor('en');
+  const notice = buildSignupAccountNoticeMessage({ language: 'en' });
+  // The link is excluded: its grammar says `invite=`, which is a parameter
+  // name the reader never reads as a sentence.
+  const words = request.text.split(request.link).join('');
+  for (const text of [words, notice.text, request.subject, notice.subject]) {
+    assert.ok(!/invit/i.test(text), `a sign-up letter talks about an invitation: ${text.slice(0, 80)}`);
+  }
+  // THE CONTROL: the check above would catch the invitation's own words.
+  assert.ok(/invit/i.test(inviteFor('en').text));
+  assert.ok(/invit/i.test(buildAccountNoticeMessage({ language: 'en' }).text));
+});
+
+test('the sign-up letter carries the join link once, the expiry date, and says what ignoring it does', () => {
+  const strings = SIGNUP_LETTER_STRINGS.en.request;
+  const message = signupRequestFor('en');
+  assert.equal(
+    message.link,
+    buildInviteLink({ clientBaseUrl: CLIENT_BASE_URL, serverPublicUrl: SERVER_PUBLIC_URL, inviteToken: INVITE_TOKEN }),
+  );
+  assert.equal(countOccurrences(message.text, INVITE_TOKEN), 1);
+  assert.ok(message.text.includes(formatExpiryDate({ expiresAt: EXPIRES_AT, language: 'en' })));
+  // Every paragraph, in the order the builder documents, with the link after `open`.
+  const paragraphs = message.text.split('\n\n');
+  assert.deepEqual(paragraphs, [
+    strings.greeting,
+    strings.asked,
+    strings.open,
+    message.link,
+    strings.expiry.replace('{date}', formatExpiryDate({ expiresAt: EXPIRES_AT, language: 'en' })),
+    strings.password,
+    strings.ignore,
+    strings.help,
+  ]);
+});
+
+test('the sign-up note to an existing account carries no url at all', () => {
+  for (const language of INSTANCE_LANGUAGES) {
+    const notice = buildSignupAccountNoticeMessage({ language });
+    assert.ok(!notice.text.includes('http'), `${language} note carries a url`);
+    assert.ok(!notice.html.includes('href'), `${language} note carries a link`);
+  }
+});
+
+test('the awaiting-translation list is exactly the languages that are still the English', () => {
+  // Both ways, so a translation cannot land without the list shrinking, and
+  // the list cannot shrink without a translation.
+  for (const language of INSTANCE_LANGUAGES) {
+    if (language === 'en') continue;
+    const isEnglish = JSON.stringify(SIGNUP_LETTER_STRINGS[language]) === JSON.stringify(SIGNUP_LETTER_STRINGS.en);
+    const isListed = SIGNUP_LETTERS_AWAITING_TRANSLATION.includes(language);
+    assert.equal(isEnglish, isListed, `${language}: still English is ${isEnglish}, listed is ${isListed}`);
+  }
+  assert.equal(SIGNUP_LETTERS_AWAITING_TRANSLATION.includes('en'), false, 'English is the source, never awaiting');
 });
