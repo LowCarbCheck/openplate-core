@@ -53,8 +53,8 @@ There are now **four** places this service's zero-knowledge position does not
 hold. All four are optional, all four are off until somebody turns them on, and
 they are not the same shape.
 
-|                          | The AI proxy (first)       | Feedback reports (second)   | The community pulse (third)              | Push scheduling (fourth)                       |
-| ------------------------ | -------------------------- | --------------------------- | ---------------------------------------- | ---------------------------------------------- |
+|                          | The AI proxy (first)       | Feedback reports (second)   | The community pulse (third)              | Push scheduling (fourth)                        |
+| ------------------------ | -------------------------- | --------------------------- | ---------------------------------------- | ----------------------------------------------- |
 | Who opts in              | The operator               | The operator, then a person | A person, on their own device            | The operator, then a person, on their own phone |
 | What crosses the process | A photograph and an answer | A photograph and figures    | Four small integers                      | A push endpoint, a clock and a kind             |
 | What is written          | Nothing                    | The image bytes             | An instance-wide day sum                 | One subscription row per device                 |

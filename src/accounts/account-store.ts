@@ -138,8 +138,7 @@ export interface RedeemInviteAndCreateAccountInput {
  * after redemption. `trial`: the scan trial, no date.
  */
 export type MemberInviteGrant =
-  | { kind: 'days'; allowanceDays: number }
-  | { kind: 'trial'; scans: number; dailyAiLimit: number };
+  { kind: 'days'; allowanceDays: number } | { kind: 'trial'; scans: number; dailyAiLimit: number };
 
 /**
  * What `POST /v1/auth/invite-lookup` shows a person before they choose a
@@ -301,7 +300,6 @@ export interface AccountStore {
    * purpose, so "last seen" means what an operator reads it as.
    */
   touchLastSeen(input: { accountId: number; seenAt: Date }): Promise<void>;
-
 
   /** How many AI requests this account has spent on the given UTC day (`lib/utc-day.ts`). Read-only here; spec 03 writes. */
   aiUsageOn(input: { accountId: number; day: string }): Promise<number>;

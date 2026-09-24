@@ -17,11 +17,7 @@ import {
   selectPrunableBlobIds,
   type RetainedBlobVersion,
 } from '../../src/lib/blob-retention.js';
-import {
-  BLOB_DAILY_RETENTION_DAYS,
-  BLOB_PRE_SHRINK_PIN_LIMIT,
-  BLOB_VERSION_RETENTION,
-} from '../../src/protocol.js';
+import { BLOB_DAILY_RETENTION_DAYS, BLOB_PRE_SHRINK_PIN_LIMIT, BLOB_VERSION_RETENTION } from '../../src/protocol.js';
 
 const NOW = new Date('2026-09-12T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -82,7 +78,10 @@ test('the recent tier keeps the newest five and prunes what is under them', () =
   // newest one and the recent tier is doing all the work.
   const versions = [1, 2, 3, 4, 5, 6, 7].map((n) => version({ id: n, blobVersion: n }));
   const pruned = selectPrunableBlobIds({ versions, now: NOW });
-  assert.deepEqual(pruned.toSorted((a, b) => a - b), [1, 2]);
+  assert.deepEqual(
+    pruned.toSorted((a, b) => a - b),
+    [1, 2],
+  );
   assert.equal(versions.length - pruned.length, BLOB_VERSION_RETENTION);
 });
 
@@ -115,7 +114,10 @@ test('a live pin survives a sweep the recent and daily tiers would both have pru
   );
   const pruned = selectPrunableBlobIds({ versions, now: NOW });
   assert.equal(pruned.includes(2), false, 'the pinned pre-shrink version must survive');
-  assert.deepEqual(pruned.toSorted((a, b) => a - b), [1, 3, 4, 5]);
+  assert.deepEqual(
+    pruned.toSorted((a, b) => a - b),
+    [1, 3, 4, 5],
+  );
 });
 
 test('an EXPIRED pin holds nothing: the fortnight is a window, not a permanent exemption', () => {
@@ -134,7 +136,10 @@ test('pins are capped: past the limit the oldest of them become prunable again',
   );
   const pruned = selectPrunableBlobIds({ versions, now: NOW });
   assert.equal(pruned.length, 20 - BLOB_PRE_SHRINK_PIN_LIMIT, 'six of the twenty are past the pin cap');
-  assert.deepEqual(pruned.toSorted((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(
+    pruned.toSorted((a, b) => a - b),
+    [1, 2, 3, 4, 5, 6],
+  );
 });
 
 test('a push loop cannot reach past the daily tier: a thousand versions in one hour keep five', () => {

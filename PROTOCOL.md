@@ -355,14 +355,14 @@ Request:
 
 Responses:
 
-| Status      | Body                    | Meaning                                                                                                                       |
-| ----------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `200`       | `{"newVersion": 4}`     | Accepted. The blob is now at `newVersion`.                                                                                    |
-| `409`       | `{"currentVersion": 5}` | Lost the race. Another device wrote first.                                                                                    |
-| `400`       | `{"error": "..."}`      | `baseVersion` not a non-negative integer, `envelopeVersion` not a positive integer, `ciphertext` absent/not base64, or empty, or `shrinkAcknowledged` present and not a boolean. |
-| `400`       | `{"error": "...", "currentSizeBytes": 5310, "nextSizeBytes": 1588}` | An unacknowledged large shrink. **Nothing was written.** See below. |
-| `413`       | `{"error": "..."}`      | Blob exceeds `MAX_BLOB_BYTES`.                                                                                                |
-| `401`/`403` | `{"error": "..."}`      | Not authenticated / not permitted.                                                                                            |
+| Status      | Body                                                                | Meaning                                                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `200`       | `{"newVersion": 4}`                                                 | Accepted. The blob is now at `newVersion`.                                                                                                                                       |
+| `409`       | `{"currentVersion": 5}`                                             | Lost the race. Another device wrote first.                                                                                                                                       |
+| `400`       | `{"error": "..."}`                                                  | `baseVersion` not a non-negative integer, `envelopeVersion` not a positive integer, `ciphertext` absent/not base64, or empty, or `shrinkAcknowledged` present and not a boolean. |
+| `400`       | `{"error": "...", "currentSizeBytes": 5310, "nextSizeBytes": 1588}` | An unacknowledged large shrink. **Nothing was written.** See below.                                                                                                              |
+| `413`       | `{"error": "..."}`                                                  | Blob exceeds `MAX_BLOB_BYTES`.                                                                                                                                                   |
+| `401`/`403` | `{"error": "..."}`                                                  | Not authenticated / not permitted.                                                                                                                                               |
 
 **The shrink guard (M224).** A push whose decoded `ciphertext` is **strictly under half** of the stored version's `size_bytes` (`BLOB_SHRINK_ACK_RATIO`) is REFUSED with `400` unless the request carries `"shrinkAcknowledged": true`. An account with no blob yet is never refused; a first push is not a deletion.
 
@@ -380,10 +380,10 @@ The refusal is `400` and deliberately NOT `409`: a `409` on this route means "an
 
 ### 5.2 `GET /blob`: pull
 
-| Status | Body                                                                                                                |
-| ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `200`  | `{"blobVersion": 4, "envelopeVersion": 1, "ciphertext": "<base64>", "createdAt": "<iso>"}`                          |
-| `404`  | `{"error": "..."}`: this account has never pushed a blob. Not an error condition; it is how a fresh account looks.  |
+| Status | Body                                                                                                               |
+| ------ | ------------------------------------------------------------------------------------------------------------------ |
+| `200`  | `{"blobVersion": 4, "envelopeVersion": 1, "ciphertext": "<base64>", "createdAt": "<iso>"}`                         |
+| `404`  | `{"error": "..."}`: this account has never pushed a blob. Not an error condition; it is how a fresh account looks. |
 
 ### 5.3 `GET /key-records`: list
 
@@ -425,10 +425,10 @@ Validation, all `400`:
 
 Responses:
 
-| Status | Body                                                                      |
-| ------ | ------------------------------------------------------------------------- |
-| `200`  | The stored record, same shape as a `GET /key-records` entry.              |
-| `409`  | `{"currentUpdatedAt": "<iso>" \| null}`: the CAS assertion did not hold.  |
+| Status | Body                                                                     |
+| ------ | ------------------------------------------------------------------------ |
+| `200`  | The stored record, same shape as a `GET /key-records` entry.             |
+| `409`  | `{"currentUpdatedAt": "<iso>" \| null}`: the CAS assertion did not hold. |
 
 ### 5.5 `DELETE /key-records/:kind`
 
@@ -631,13 +631,13 @@ Request: `{"email": "anna@example.org", "captchaToken": "…"}`. `captchaToken` 
 
 **For a new address the service mints an ordinary addressed invite and mails it**: role `member`, the default invite lifetime, no inviter, and the instance's terms, which are its scan trial when it runs one (§5.19) and no AI otherwise. The mailed link leads to §5.8.2 and §5.8, unchanged. **The response MUST NOT vary with what is true about the address**, as in §5.21: a new address, an address that holds an account, an address that already holds a pending letter from the operator or a member, and a mailbox that already got a letter today are one `202` with one body. The letters are the door's own, never the invitation or the note of §5.21, which say somebody invited the reader: a new address gets a letter saying that it, or someone using it, asked to create an account, with the one link, its expiry, and that ignoring the mail changes nothing; an account holder gets a note saying the same and that no second account was made, with no link. A pending letter from another door is left alone, so a stranger cannot withdraw an operator's invitation by posting the address. Only the letters differ.
 
-| Status | Meaning |
-| ------ | ------- |
-| `202`  | `{}`. Accepted, whatever is true about the address |
+| Status | Meaning                                                                                                                                                                                                                                                                |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `202`  | `{}`. Accepted, whatever is true about the address                                                                                                                                                                                                                     |
 | `400`  | `{"error":"email-invalid"}`: not an address. `{"error":"email-domain-refused"}`: an address at a known throwaway mail service, matched on the domain and every parent of it. `{"error":"captcha-failed"}`: the captcha token is missing or was refused; solve it again |
-| `404`  | The instance runs no open sign-up |
-| `429`  | More than five requests from one source address in an hour. `Retry-After` in seconds |
-| `503`  | `{"error":"captcha-unavailable"}`: the captcha provider could not be asked. Retry later |
+| `404`  | The instance runs no open sign-up                                                                                                                                                                                                                                      |
+| `429`  | More than five requests from one source address in an hour. `Retry-After` in seconds                                                                                                                                                                                   |
+| `503`  | `{"error":"captcha-unavailable"}`: the captcha provider could not be asked. Retry later                                                                                                                                                                                |
 
 The `400`s describe the request, never the instance's accounts: a domain says nothing about who holds an account, so refusing one is not an oracle.
 
@@ -904,12 +904,12 @@ with no way to retire one.
   five further pushes, and dropping them during a rotation would throw away
   the owner's only defence against a bad client write in the same operation.
 
-| Status | Body                                                                                                                       |
-| ------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `200`  | `{"newVersion": 4, "keptShares": 1, "revokedShares": 2}`                                                                   |
-| `400`  | `{"error": "..."}`: a missing key-record kind, a malformed or absent field, a keep list naming a share that is not there.  |
-| `409`  | `{"currentVersion": 5}`: the blob CAS did not hold. Nothing was written.                                                   |
-| `413`  | `{"error": "..."}`: the new blob exceeds `MAX_BLOB_BYTES`.                                                                 |
+| Status | Body                                                                                                                      |
+| ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `200`  | `{"newVersion": 4, "keptShares": 1, "revokedShares": 2}`                                                                  |
+| `400`  | `{"error": "..."}`: a missing key-record kind, a malformed or absent field, a keep list naming a share that is not there. |
+| `409`  | `{"currentVersion": 5}`: the blob CAS did not hold. Nothing was written.                                                  |
+| `413`  | `{"error": "..."}`: the new blob exceeds `MAX_BLOB_BYTES`.                                                                |
 
 **Rotation is Tier 2 revocation, and the wording rules of §5.16 still bind.**
 Deleting a share row stops the server serving; rotating adds that future
@@ -925,11 +925,11 @@ not, with the terminator mounted ahead of authentication. Independent of
 
 **Contributor side**, authenticated as the contributor:
 
-| Verb     | Path                             | Notes                                                                                                                                                                                                                                                                                   |
-| -------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUT`    | `/contributions/:studyAccountId` | `{"pseudonym","schemaTier","body","contributionVersion"}`. CAS on a monotonic `contributionVersion`. The contribution is the cumulative dataset for the window, recomputed and re-pushed whole; the client always holds the source, so this row is a projection, never a primary copy.  |
-| `GET`    | `/contributions`                 | The contributor's own enrolments. Never returns `body`.                                                                                                                                                                                                                                 |
-| `DELETE` | `/contributions/:studyAccountId` | **Withdrawal.** One transaction: hard-delete the row, insert a pseudonym-keyed tombstone. `204`, idempotent.                                                                                                                                                                            |
+| Verb     | Path                             | Notes                                                                                                                                                                                                                                                                                  |
+| -------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT`    | `/contributions/:studyAccountId` | `{"pseudonym","schemaTier","body","contributionVersion"}`. CAS on a monotonic `contributionVersion`. The contribution is the cumulative dataset for the window, recomputed and re-pushed whole; the client always holds the source, so this row is a projection, never a primary copy. |
+| `GET`    | `/contributions`                 | The contributor's own enrolments. Never returns `body`.                                                                                                                                                                                                                                |
+| `DELETE` | `/contributions/:studyAccountId` | **Withdrawal.** One transaction: hard-delete the row, insert a pseudonym-keyed tombstone. `204`, idempotent.                                                                                                                                                                           |
 
 **Study side**, authenticated as the study account:
 
@@ -959,12 +959,12 @@ anywhere but the client. An unknown tier is `400`.
 and bounded. It cannot verify one (that would need the contributor's root) and
 a structural check would imply an authority it does not have.
 
-| Status | When                                                                         |
-| ------ | ---------------------------------------------------------------------------- |
-| `400`  | malformed body, unknown `schemaTier`, absent `contributionVersion`           |
-| `404`  | unknown study, unknown contribution, and any other not-found: one code path  |
-| `409`  | `contributionVersion` not strictly greater than the stored one               |
-| `413`  | contribution exceeds `MAX_CONTRIBUTION_BYTES` (256 KiB)                      |
+| Status | When                                                                        |
+| ------ | --------------------------------------------------------------------------- |
+| `400`  | malformed body, unknown `schemaTier`, absent `contributionVersion`          |
+| `404`  | unknown study, unknown contribution, and any other not-found: one code path |
+| `409`  | `contributionVersion` not strictly greater than the stored one              |
+| `413`  | contribution exceeds `MAX_CONTRIBUTION_BYTES` (256 KiB)                     |
 
 **One pseudonym per study, enforced by the database.** Two contributors
 submitting the same pseudonym would silently merge into one participant series,
@@ -1056,24 +1056,24 @@ avoid.
 Each account carries `dailyAiLimit`: requests per **UTC day**, defaulting to
 `0`. Every proxied response carries the account's position in it:
 
-| Header          | Meaning                                        |
-| --------------- | ---------------------------------------------- |
-| `X-Quota-Used`  | Requests spent today, after this one           |
-| `X-Quota-Limit` | The account's `dailyAiLimit`                   |
+| Header               | Meaning                                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `X-Quota-Used`       | Requests spent today, after this one                                                                 |
+| `X-Quota-Limit`      | The account's `dailyAiLimit`                                                                         |
 | `X-Trial-Scans-Left` | Free scans left after this request, on an account the scan gate applies to (below). Absent otherwise |
 
-| Status | `error`                          | When                                                                    |
-| ------ | -------------------------------- | ----------------------------------------------------------------------- |
-| `401`  | `authentication required`        | No access token, or one that is expired or revoked                       |
-| `403`  | `ai-not-allowed`                 | `dailyAiLimit` is `0`. Refused before anything leaves the host           |
-| `403`  | `allowance-expired`              | `allowanceExpiresAt` is set and not after the instant the request arrived. Refused before anything leaves the host, and before a usage row is written |
-| `403`  | `trial-scans-spent`              | The account's free scans are used up and it has no allowance date. Refused before anything leaves the host, and before a usage row is written. `X-Trial-Scans-Left: 0` |
-| `403`  | `account-suspended`              | The account is suspended (§5.9 uses the same code)                       |
-| `400`  | `request body must be a JSON object` | The body is not an object. The input is never quoted back            |
-| `400`  | `intake-id-invalid`              | `X-Intake-Id` is present and not 16 to 64 characters of `A-Z a-z 0-9 _ -`. Refused before any row is written |
-| `429`  | a sentence naming the reset instant | The allowance is spent. `Retry-After` is seconds to the next UTC midnight |
-| `429`  | a sentence naming the per-minute bound | More than `AI_RATE_LIMIT_PER_MINUTE` requests in any trailing 60 s   |
-| `503`  | `ai-instance-ceiling`            | The whole instance has spent its daily ceiling, or the scan-trial accounts have spent theirs. `Retry-After` is seconds to the next UTC midnight |
+| Status | `error`                                | When                                                                                                                                                                   |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | `authentication required`              | No access token, or one that is expired or revoked                                                                                                                     |
+| `403`  | `ai-not-allowed`                       | `dailyAiLimit` is `0`. Refused before anything leaves the host                                                                                                         |
+| `403`  | `allowance-expired`                    | `allowanceExpiresAt` is set and not after the instant the request arrived. Refused before anything leaves the host, and before a usage row is written                  |
+| `403`  | `trial-scans-spent`                    | The account's free scans are used up and it has no allowance date. Refused before anything leaves the host, and before a usage row is written. `X-Trial-Scans-Left: 0` |
+| `403`  | `account-suspended`                    | The account is suspended (§5.9 uses the same code)                                                                                                                     |
+| `400`  | `request body must be a JSON object`   | The body is not an object. The input is never quoted back                                                                                                              |
+| `400`  | `intake-id-invalid`                    | `X-Intake-Id` is present and not 16 to 64 characters of `A-Z a-z 0-9 _ -`. Refused before any row is written                                                           |
+| `429`  | a sentence naming the reset instant    | The allowance is spent. `Retry-After` is seconds to the next UTC midnight                                                                                              |
+| `429`  | a sentence naming the per-minute bound | More than `AI_RATE_LIMIT_PER_MINUTE` requests in any trailing 60 s                                                                                                     |
+| `503`  | `ai-instance-ceiling`                  | The whole instance has spent its daily ceiling, or the scan-trial accounts have spent theirs. `Retry-After` is seconds to the next UTC midnight                        |
 
 `403 ai-not-allowed` is a machine code because a client MUST branch on it; it
 means "this account will never succeed here until an operator changes
@@ -1138,15 +1138,15 @@ every row of the table below except a delivered `2xx`, and on every refusal
 after the claim (the ceilings and the daily allowance). This differs from the
 daily unit on purpose, row by row:
 
-| Outcome                              | Daily unit | Scan     | Why the scan differs, where it does |
-| ------------------------------------ | ---------- | -------- | ----------------------------------- |
-| Connection refused / header timeout  | released   | released |                                     |
-| Upstream `4xx`                       | released   | released |                                     |
-| Upstream `5xx`                       | spent      | released | The unit protects the bill: generation may have run. The scan protects the promise that a failed attempt costs nothing, and the person got no answer. A retry loop on a flaky provider is still bounded by the daily unit |
-| Body timeout / stream aborted by the provider | spent | released | Headers arrived, so the provider may bill; the person still got no answer |
-| Upstream `2xx`, then the caller hangs up | spent  | spent    | The answer was on its way |
-| Upstream `2xx`                       | spent      | spent    |                                     |
-| A ceiling or the daily allowance refuses after the claim | not taken, or released | released | The request reached nobody |
+| Outcome                                                  | Daily unit             | Scan     | Why the scan differs, where it does                                                                                                                                                                                       |
+| -------------------------------------------------------- | ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused / header timeout                      | released               | released |                                                                                                                                                                                                                           |
+| Upstream `4xx`                                           | released               | released |                                                                                                                                                                                                                           |
+| Upstream `5xx`                                           | spent                  | released | The unit protects the bill: generation may have run. The scan protects the promise that a failed attempt costs nothing, and the person got no answer. A retry loop on a flaky provider is still bounded by the daily unit |
+| Body timeout / stream aborted by the provider            | spent                  | released | Headers arrived, so the provider may bill; the person still got no answer                                                                                                                                                 |
+| Upstream `2xx`, then the caller hangs up                 | spent                  | spent    | The answer was on its way                                                                                                                                                                                                 |
+| Upstream `2xx`                                           | spent                  | spent    |                                                                                                                                                                                                                           |
+| A ceiling or the daily allowance refuses after the claim | not taken, or released | released | The request reached nobody                                                                                                                                                                                                |
 
 #### The instance ceiling
 
@@ -1191,14 +1191,14 @@ Counting afterwards has a window in which N parallel requests all read the old
 count and all go through, and a client that retries on error is precisely the
 client that fires them together.
 
-| Outcome                          | Unit     | Why                                                                                     |
-| -------------------------------- | -------- | --------------------------------------------------------------------------------------- |
-| Connection refused / DNS failure  | released | The request never left this host                                                        |
-| Header timeout (no bytes yet)     | released | Nothing was served to us; our own bound gave up before the provider answered             |
-| Upstream `4xx`                    | released | The provider REFUSED it. It reached no model, so nobody billed it, and charging the account for the operator's own misconfiguration would let a broken proxy eat an organization's whole allowance in a minute  |
-| Upstream `5xx`                    | spent    | The provider accepted it and failed while serving. Generation may have run. Releasing here is a free infinite retry loop against exactly the provider that is flaking |
-| Body timeout / stream aborted     | spent    | Headers already arrived, so the provider ran it. That we failed to read the answer is our problem, not a refund |
-| Upstream `2xx`                    | spent    | Obviously                                                                                |
+| Outcome                          | Unit     | Why                                                                                                                                                                                                            |
+| -------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused / DNS failure | released | The request never left this host                                                                                                                                                                               |
+| Header timeout (no bytes yet)    | released | Nothing was served to us; our own bound gave up before the provider answered                                                                                                                                   |
+| Upstream `4xx`                   | released | The provider REFUSED it. It reached no model, so nobody billed it, and charging the account for the operator's own misconfiguration would let a broken proxy eat an organization's whole allowance in a minute |
+| Upstream `5xx`                   | spent    | The provider accepted it and failed while serving. Generation may have run. Releasing here is a free infinite retry loop against exactly the provider that is flaking                                          |
+| Body timeout / stream aborted    | spent    | Headers already arrived, so the provider ran it. That we failed to read the answer is our problem, not a refund                                                                                                |
+| Upstream `2xx`                   | spent    | Obviously                                                                                                                                                                                                      |
 
 The service records **one integer per account per UTC day** and nothing else:
 no prompt, no response, no model name, no timestamp finer than the day (§9.2).
@@ -1230,29 +1230,29 @@ token is indistinguishable from one built before the feature existed. A `401`
 there would announce that a credential exists and is merely locked. Setting
 either token turns that `404` into the `401` a wrong value gets.
 
-| Endpoint                                | Does                                                                     |
-| --------------------------------------- | ------------------------------------------------------------------------ |
-| `GET /v1/admin/stats`                    | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling); `aiTrialInstanceDailyLimit`; and `signup`: invites the request door of §5.8.3 minted today and in the last seven days, trials granted in the last seven days, and today's scan-trial requests |
-| `GET /v1/admin/accounts`                 | A page of `AccountView`s, plus `total`                                    |
-| `GET /v1/admin/accounts/expiring`        | A page of `{ id, allowanceExpiresAt }` for accounts whose allowance ends in the future, plus `total` |
-| `GET /v1/admin/accounts/:id`             | One `AccountView`                                                         |
-| `GET /v1/admin/accounts/:id/activity`    | Last sign-in, and one entry per UTC day over a bounded window             |
-| `GET /v1/admin/activity`                 | The same day-by-day strip for a whole PAGE of accounts, in the list's order |
-| `PATCH /v1/admin/accounts/:id`           | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `trialScans` (the free scans granted, an integer from 0 to 100, or `null` to take the scan trial away; it never touches how many are used), `suspended`, `displayName`. At least one required |
-| `POST /v1/admin/accounts/:id/reset-mail` | Starts the reset of §5.12 on the operator's initiative                    |
-| `DELETE /v1/admin/accounts/:id`          | Erases the account and everything attached to it                          |
-| `GET /v1/admin/accounts/:id/blob/versions` | Every retained blob version: number, envelope version, byte count, time, and the pin if it has one. Never ciphertext |
-| `POST /v1/admin/accounts/:id/blob/rollback` | `{"targetVersion": n}`. Makes that version current again by DELETING every version above it (§5.1's shrink guard, ADR-0009). Refuses an unknown version, the current version, an envelope version this build does not accept, and a zero-byte row. A rollback rather than a re-upload, because §3.2's AAD binds `blobVersion`: re-inserting old bytes as a new version yields something no client can decrypt |
-| `GET /v1/admin/invites`                  | A page of pending invitations, plus `total`                               |
-| `POST /v1/admin/invites`                 | Mints one (§5.8). The token is returned **once**. `"trial": true` writes the instance's scan trial instead of an allowance: `400` on an instance that runs none, and `400` beside a `dailyAiLimit`. Without the field the mint is a standing grant, as before |
-| `POST /v1/admin/trials/grant-lapsed`     | `{"trialDays": n, "apply": false, "excludeAccountIds": []}`. Lists, or with `apply: true` grants the instance's scan trial to, every member whose day trial of `trialDays` ended and was never moved: its allowance date still equals its redemption plus `trialDays` to the millisecond, which only a payment or an operator changes. Clears the date and sets the trial's daily limit. Idempotent: a granted account is never listed again. Answers `{"accountIds": [...], "applied": bool}` |
-| `POST /v1/admin/invites/:id/resend`      | A NEW token on the SAME row, and a new expiry                             |
-| `DELETE /v1/admin/invites/:id`           | Withdraws a pending invitation                                            |
-| `PATCH /v1/admin/settings`               | `{"nutrientReferenceBasis": "dge" \| "efsa" \| "us"}`. The instance-wide reference basis (§5.6). Required; anything else is `400` and NOTHING is written. Answers `{"settings": {...}}` with what the instance now holds |
-| `GET /v1/admin/feedback`                 | A page of reported estimates (§5.25), newest first: `{ id, accountId, hasImage, consentWordingVersion, createdAt }` each, plus `total`, `limit` and `offset`. No figures and no photograph |
-| `GET /v1/admin/feedback/:id`             | One report: the list fields, `measurements` exactly as the device sent them, and `consent: { agreedAt, wordingVersion }` |
-| `GET /v1/admin/feedback/:id/image`       | The photograph's bytes under its stored `Content-Type`, with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. `404` when the report has none. Every read is logged with the report id and which credential asked |
-| `DELETE /v1/admin/feedback/:id`          | Deletes the photograph, then the report. `204`, or `404` for an unknown id |
+| Endpoint                                    | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/admin/stats`                       | Aggregate counts: accounts, blobs, bytes, key records, `pendingInvites`, `admins`, `aiRequestsToday`, and the `aiInstanceDailyLimit` that bounds it (`null` for no ceiling); `aiTrialInstanceDailyLimit`; and `signup`: invites the request door of §5.8.3 minted today and in the last seven days, trials granted in the last seven days, and today's scan-trial requests                                                                                                                     |
+| `GET /v1/admin/accounts`                    | A page of `AccountView`s, plus `total`                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `GET /v1/admin/accounts/expiring`           | A page of `{ id, allowanceExpiresAt }` for accounts whose allowance ends in the future, plus `total`                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET /v1/admin/accounts/:id`                | One `AccountView`                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `GET /v1/admin/accounts/:id/activity`       | Last sign-in, and one entry per UTC day over a bounded window                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET /v1/admin/activity`                    | The same day-by-day strip for a whole PAGE of accounts, in the list's order                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `PATCH /v1/admin/accounts/:id`              | `role`, `dailyAiLimit`, `allowanceExpiresAt` (an ISO instant, or `null` to clear it), `trialScans` (the free scans granted, an integer from 0 to 100, or `null` to take the scan trial away; it never touches how many are used), `suspended`, `displayName`. At least one required                                                                                                                                                                                                            |
+| `POST /v1/admin/accounts/:id/reset-mail`    | Starts the reset of §5.12 on the operator's initiative                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `DELETE /v1/admin/accounts/:id`             | Erases the account and everything attached to it                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `GET /v1/admin/accounts/:id/blob/versions`  | Every retained blob version: number, envelope version, byte count, time, and the pin if it has one. Never ciphertext                                                                                                                                                                                                                                                                                                                                                                           |
+| `POST /v1/admin/accounts/:id/blob/rollback` | `{"targetVersion": n}`. Makes that version current again by DELETING every version above it (§5.1's shrink guard, ADR-0009). Refuses an unknown version, the current version, an envelope version this build does not accept, and a zero-byte row. A rollback rather than a re-upload, because §3.2's AAD binds `blobVersion`: re-inserting old bytes as a new version yields something no client can decrypt                                                                                  |
+| `GET /v1/admin/invites`                     | A page of pending invitations, plus `total`                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `POST /v1/admin/invites`                    | Mints one (§5.8). The token is returned **once**. `"trial": true` writes the instance's scan trial instead of an allowance: `400` on an instance that runs none, and `400` beside a `dailyAiLimit`. Without the field the mint is a standing grant, as before                                                                                                                                                                                                                                  |
+| `POST /v1/admin/trials/grant-lapsed`        | `{"trialDays": n, "apply": false, "excludeAccountIds": []}`. Lists, or with `apply: true` grants the instance's scan trial to, every member whose day trial of `trialDays` ended and was never moved: its allowance date still equals its redemption plus `trialDays` to the millisecond, which only a payment or an operator changes. Clears the date and sets the trial's daily limit. Idempotent: a granted account is never listed again. Answers `{"accountIds": [...], "applied": bool}` |
+| `POST /v1/admin/invites/:id/resend`         | A NEW token on the SAME row, and a new expiry                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `DELETE /v1/admin/invites/:id`              | Withdraws a pending invitation                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `PATCH /v1/admin/settings`                  | `{"nutrientReferenceBasis": "dge" \| "efsa" \| "us"}`. The instance-wide reference basis (§5.6). Required; anything else is `400` and NOTHING is written. Answers `{"settings": {...}}` with what the instance now holds                                                                                                                                                                                                                                                                       |
+| `GET /v1/admin/feedback`                    | A page of reported estimates (§5.25), newest first: `{ id, accountId, hasImage, consentWordingVersion, createdAt }` each, plus `total`, `limit` and `offset`. No figures and no photograph                                                                                                                                                                                                                                                                                                     |
+| `GET /v1/admin/feedback/:id`                | One report: the list fields, `measurements` exactly as the device sent them, and `consent: { agreedAt, wordingVersion }`                                                                                                                                                                                                                                                                                                                                                                       |
+| `GET /v1/admin/feedback/:id/image`          | The photograph's bytes under its stored `Content-Type`, with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. `404` when the report has none. Every read is logged with the report id and which credential asked                                                                                                                                                                                                                                                               |
+| `DELETE /v1/admin/feedback/:id`             | Deletes the photograph, then the report. `204`, or `404` for an unknown id                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 **`PATCH` is the one auth-adjacent write an operator has**, and it is bounded
 deliberately. It cannot set a passphrase, and there is no endpoint that can:
@@ -1281,7 +1281,10 @@ service already stores and collects nothing new.
   "accountId": 7,
   "lastSeenAt": "2026-09-06T18:30:00.000Z",
   "window": { "days": 90, "fromDay": "2026-06-10", "toDay": "2026-09-07" },
-  "days": [{ "day": "2026-06-10", "count": 0 }, { "day": "2026-06-11", "count": 3 }]
+  "days": [
+    { "day": "2026-06-10", "count": 0 },
+    { "day": "2026-06-11", "count": 3 }
+  ]
 }
 ```
 
@@ -1345,10 +1348,10 @@ address on the instance, the erase button and the reported photographs, so the
 credential is scoped at the door instead. It is optional, unset by default, and
 carries the same 24-character minimum the operator token does.
 
-| Endpoint                         | The billing principal may                                             |
-| -------------------------------- | --------------------------------------------------------------------- |
-| `GET /v1/admin/accounts/expiring` | Read `{ id, allowanceExpiresAt }` for accounts whose end date is in the future, paged with the same `limit`, `offset` and `400` sentence as every other paged endpoint here |
-| `GET /v1/admin/accounts/:id`      | Read `{ id, allowanceExpiresAt, dailyAiLimit }` for that one account   |
+| Endpoint                          | The billing principal may                                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/admin/accounts/expiring` | Read `{ id, allowanceExpiresAt }` for accounts whose end date is in the future, paged with the same `limit`, `offset` and `400` sentence as every other paged endpoint here           |
+| `GET /v1/admin/accounts/:id`      | Read `{ id, allowanceExpiresAt, dailyAiLimit }` for that one account                                                                                                                  |
 | `PATCH /v1/admin/accounts/:id`    | Write `allowanceExpiresAt` and `dailyAiLimit`, and nothing else. `trialScans` is refused like every other field: a credential that pays for an allowance does not hand out free scans |
 
 - **Every other route in this section answers `403` with
@@ -1364,7 +1367,7 @@ carries the same 24-character minimum the operator token does.
   relaxes no validation.
 - **The two reads are projections and never an `AccountView`.** No address, no
   display name, no role, no suspension, no usage, no blob. `GET
-  /v1/admin/accounts/expiring` selects two columns in the query rather than
+/v1/admin/accounts/expiring` selects two columns in the query rather than
   filtering a row afterwards.
 - **A deleted account and an unknown id are the same `404`.** Erasure here is a
   cascade and not a tombstone (§9), so there is nothing left to tell them apart
@@ -1638,18 +1641,18 @@ The two version numbers are independent on purpose: re-framing the crypto and re
 
 ## 8. Size limits and the capacity plan
 
-| Limit                   | Value                        | Enforced by                                              |
-| ----------------------- | ---------------------------- | -------------------------------------------------------- |
-| Max blob size           | 2 MiB (`MAX_BLOB_BYTES`)     | Service (`413`), mirrored client-side for a better error |
-| Blob versions retained  | Three tiers, see below       | Service, swept after each accepted write                 |
-| Key records per account | 2 (one per `kind`)           | Service                                                  |
+| Limit                   | Value                    | Enforced by                                              |
+| ----------------------- | ------------------------ | -------------------------------------------------------- |
+| Max blob size           | 2 MiB (`MAX_BLOB_BYTES`) | Service (`413`), mirrored client-side for a better error |
+| Blob versions retained  | Three tiers, see below   | Service, swept after each accepted write                 |
+| Key records per account | 2 (one per `kind`)       | Service                                                  |
 
 **Retention is tiered (M224).** A version is kept if ANY tier keeps it:
 
-| Tier            | Rule                                                                     | Cap |
-| --------------- | ------------------------------------------------------------------------ | --- |
-| Recent          | The newest versions (`BLOB_VERSION_RETENTION`)                           | 5   |
-| Daily           | The newest version of each UTC calendar day for `BLOB_DAILY_RETENTION_DAYS` | 14  |
+| Tier            | Rule                                                                                                                              | Cap |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------- | --- |
+| Recent          | The newest versions (`BLOB_VERSION_RETENTION`)                                                                                    | 5   |
+| Daily           | The newest version of each UTC calendar day for `BLOB_DAILY_RETENTION_DAYS`                                                       | 14  |
 | Pre-shrink pins | Versions replaced by an acknowledged large shrink, for `BLOB_PRE_SHRINK_PIN_DAYS`, newest first up to `BLOB_PRE_SHRINK_PIN_LIMIT` | 14  |
 
 So at most **33 versions**, and therefore at most **66 MiB**, per account. The daily tier is per calendar DAY rather than per count on purpose: two devices in a merge loop produce versions as fast as the network allows, and a count-based tier is exhausted by that in minutes. The pin tier is capped because a pin is taken on a client's own claim.

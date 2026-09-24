@@ -16,12 +16,12 @@ has never held it.
 
 Two customers hide inside that one sentence, and they are not the same product.
 
-| | Dietician | Researcher |
-|---|---|---|
-| Subject | One named patient | A pseudonymous cohort |
-| Needs | The whole diary, ongoing | Usually daily totals |
-| GDPR basis | Art 9(2)(h), care | Art 9(2)(j), research |
-| Full-diary access is | proportionate | a data-minimisation failure |
+|                      | Dietician                | Researcher                  |
+| -------------------- | ------------------------ | --------------------------- |
+| Subject              | One named patient        | A pseudonymous cohort       |
+| Needs                | The whole diary, ongoing | Usually daily totals        |
+| GDPR basis           | Art 9(2)(h), care        | Art 9(2)(j), research       |
+| Full-diary access is | proportionate            | a data-minimisation failure |
 
 **This ADR decides the dietician case only.** The researcher case is a reduced,
 date-bounded, pseudonymous payload encrypted to the researcher and pushed as its
@@ -31,7 +31,7 @@ read plumbing below, and it is deliberately not a flag on this mechanism.
 Two designs were available and both are wrong. Giving the operator a decryption
 key ends zero-knowledge for everybody. Reconstructing intake from the sibling
 gateway's `ORG_MODE` audit trail (its ADR-0003) produces a confident, wrong
-number: that trail holds what a vision model *proposed* for a photograph, not
+number: that trail holds what a vision model _proposed_ for a photograph, not
 what the person ate, and it never sees food logged by search.
 
 ## Decision
@@ -57,7 +57,7 @@ hold half of a decryption capability, and gateway-plus-sync collusion would be
 total compromise by construction.
 
 An asymmetric wrap puts only a **public** key in the mail. The strongest
-mail-channel attack becomes *substitution* — an active attack, detectable by
+mail-channel attack becomes _substitution_ — an active attack, detectable by
 fingerprint comparison, and never retroactive.
 
 So the "no asymmetric primitive anywhere in this stack" property is spent here,
@@ -103,7 +103,7 @@ tag failure rather than a misattributed diary. Same argument §3.2 makes for the
 blob.
 
 **It binds the recipient's key fingerprint, not the grantee's account id.**
-Substitution attacks the *key*, so the key is what the binding must name. It
+Substitution attacks the _key_, so the key is what the binding must name. It
 also lets the clinician reconstruct the AAD from a fingerprint she computed
 locally, instead of trusting an identifier the server handed her — no
 server-supplied value enters the trust path.
@@ -119,7 +119,7 @@ a new trust decision.
 `sync_key_records` has an honest invariant: one row per (account, kind), CAS'd
 on `updatedAt`, both kinds owner-held wraps participating in §5.14's atomic
 rotation. A share breaks every clause. It is multi-valued, it is held by a
-*different principal*, its lifecycle is grant and revoke rather than create and
+_different principal_, its lifecycle is grant and revoke rather than create and
 rotate, its wrap is 125 bytes rather than 60, and it must never ride through
 change-passphrase or reset — those rotate KEKs, and a share has no KEK to
 rotate.
@@ -148,7 +148,7 @@ with no sweeper.
 **Revocation is a hard delete, not a tombstone.** A tombstone would defend
 nothing here. A whole-database restore predates the revoke, so the restored copy
 lacks the tombstone too — it cannot prevent what it never contains. The
-gateway's ADR-0002 resurrection was real because a *second live source of truth*
+gateway's ADR-0002 resurrection was real because a _second live source of truth_
 was merged back in at boot; this service has no second source. Re-creating a
 deleted row needs the patient's own bearer token **and** a fresh wrap only the
 patient's client can produce, which makes it a re-grant, a legitimate act.
@@ -161,7 +161,7 @@ where it belongs.
 
 **The grantee's public key is not stored here.** Storing it invites the key
 directory this ADR rejects. The fingerprint is stored for pinning; the full
-public key is pinned inside the *patient's own encrypted snapshot*, so a new
+public key is pinned inside the _patient's own encrypted snapshot_, so a new
 patient device can re-wrap after a rotation without re-running the invite.
 
 ### The endpoints, and the seam that must not be used
@@ -198,16 +198,18 @@ of a share must not confirm that an account exists.
 
 **`resolveEntitledUser` is not the door.** `create-app.ts` advertises it as "the
 seam a future entitlement rule would use", and it is the wrong seam for this,
-because its type answers *who are you* and every route then uses that one id as
-the *target*:
+because its type answers _who are you_ and every route then uses that one id as
+the _target_:
 
 ```ts
-interface SyncEntitledUser { userId: number }
+interface SyncEntitledUser {
+  userId: number;
+}
 const result = await handlePullBlob(user.userId, context.storage);
 ```
 
 Resolving a clinician to the patient's id would not grant read access — it would
-make the clinician *become* the patient, for the write path and key-record
+make the clinician _become_ the patient, for the write path and key-record
 rotation too. That is a confused deputy. Caller and target stay separate, and
 the grantee read path is a parallel, read-only route that names the grantor
 explicitly. The owner-only routes remain provably owner-only.
@@ -231,19 +233,19 @@ The DEK is immortal today because nothing ever needed to rotate it. The moment a
 second human can hold it, rotation must exist. **Confirming the third wrap means
 committing to rotation**; shipping one without the other is the corner.
 
-The user-facing wording is binding: *"X can no longer access your diary through
+The user-facing wording is binding: _"X can no longer access your diary through
 openplate. Data they already viewed, they may have kept — as with anything you
-have shared."* Rotation adds that future entries are sealed with a key X never
+have shared."_ Rotation adds that future entries are sealed with a key X never
 had.
 
-*Revocation controls the future. It cannot repossess the past, and pretending
-otherwise would be the only actual lie in this protocol.*
+_Revocation controls the future. It cannot repossess the past, and pretending
+otherwise would be the only actual lie in this protocol._
 
 ### Trust: the invite carries the key, the room verifies it
 
 A server-hosted clinician directory is rejected outright. It would make this
 service an identity provider — a trust role it does not have — converting "the
-server *cannot* read your data" into "the server *promises* to hand your client
+server _cannot_ read your data" into "the server _promises_ to hand your client
 the right key". That is the class of promise this protocol exists to not need,
 and it carries an identity-verification burden (who certifies that this account
 is Dr. Meier?) the service cannot meet.
@@ -280,8 +282,8 @@ and correctly so — voids the share until a new ceremony.
 **The honest outer bound.** If the operator serves the client JavaScript, a
 malicious operator ships malicious JavaScript and no in-protocol ceremony
 survives it. That bound predates this feature and bounds the whole E2EE promise.
-The fingerprint defends against a compromised or coerced *sync server*; it does
-not defend against a compromised *client distribution*. This ADR does not imply
+The fingerprint defends against a compromised or coerced _sync server_; it does
+not defend against a compromised _client distribution_. This ADR does not imply
 otherwise.
 
 ### The clinician is an ordinary account
@@ -299,7 +301,7 @@ multi-device and recoverable by machinery that already exists.
 patient must re-share. That ships as-is. Any server-side softening is a
 decryption capability parked on the server, which is ADR-0001's forbidden back
 door wearing a support-tool label. What we owe instead is wording: clinician
-onboarding must present the recovery code as protecting *their patients'*
+onboarding must present the recovery code as protecting _their patients'_
 access, not only their own.
 
 **The concentration risk is real and has no cryptographic fix in v1.** One
@@ -327,7 +329,7 @@ below.
 The precondition below was taken, passed, and **went stale the same day**. That
 is worth more than the fix.
 
-A share is full-DEK, and the blob is the *whole* snapshot (§3.2). So "share the
+A share is full-DEK, and the blob is the _whole_ snapshot (§3.2). So "share the
 DEK" silently meant "share the DEK's entire domain", and that domain had no
 boundary. When the client slice put the owner's share private key and their
 pinned peers into the snapshot — correctly, so they would survive a recovery
@@ -337,7 +339,7 @@ discloses.
 **That is a cascade, not a leak.** A grantee holding the grantor's share private
 key can decrypt every wrap addressed to that grantor. A clinician is an ordinary
 account here, so a dietician who is also somebody's patient would hand their own
-grantee the keys to *their* patients' shares — reaching a third party who never
+grantee the keys to _their_ patients' shares — reaching a third party who never
 made any trust decision about the recipient. The counterargument, that the
 ciphertext is still gated because `/v1/sync/shared` authorises by bearer
 identity, is exactly the argument this service does not accept: §9.1's whole
@@ -345,7 +347,7 @@ claim is that confidentiality does not rest on server policy. Material protected
 only by an authorisation check is treated here as disclosed.
 
 The pinned-peer list is the second half: it hands every grantee a subset of the
-care graph that §9.2 only admits the *server* learns.
+care graph that §9.2 only admits the _server_ learns.
 
 ### The owner-private compartment
 
@@ -381,7 +383,7 @@ Lifecycle follows what the client already does, with three corrections found in
 implementation and recorded here because the first draft of this section was
 wrong about all three.
 
-- **A passphrase change rewraps the `K_pp` slot** — but *not* "in the same
+- **A passphrase change rewraps the `K_pp` slot** — but _not_ "in the same
   moment", which is not achievable. The key records ride in one atomic auth
   request; the compartment lives in the blob and needs a second write. There is
   an unavoidable residual window. The ordering is chosen so the device that can
@@ -430,7 +432,7 @@ Concretely: a frozen map classifies every snapshot key as `shared` or
 `owner-private`. The test derives the actual key set from a fully populated
 fixture built by the **real** snapshot builder — never a hand-copied list — and
 fails on any key the map does not classify. Absent means fail, never means
-shared. And it asserts the *positive* structure: owner-private material appears
+shared. And it asserts the _positive_ structure: owner-private material appears
 only as the compartment's opaque ciphertext, and its known plaintext markers are
 recoverable through the CDK path and provably not from the grantee's view. A
 grep for absence passes on an empty snapshot.

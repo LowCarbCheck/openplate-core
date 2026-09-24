@@ -18,6 +18,7 @@ staged state and does nothing against the real one. Eight controls were green.
 The staging was wrong, not the controls.
 
 **How to apply:**
+
 1. A test about BOOT must be its own FILE, because node --test gives each file
    a process and the singleton is per process. `tests/integration/sync-eviction-boot-order.test.ts`
    is the worked example: it seeds the account over HTTP and the baseline through

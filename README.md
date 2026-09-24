@@ -35,8 +35,8 @@ and The admin API sections read like standalone guides and are candidates for sp
 
 ### Reference
 
-| Guide | What it covers |
-| --- | --- |
+| Guide                         | What it covers                       |
+| ----------------------------- | ------------------------------------ |
 | [**Protocol**](./PROTOCOL.md) | The wire and key protocol, version 2 |
 
 ---
@@ -457,7 +457,7 @@ What it can never do, by design rather than by default:
   form. A blob is reported as a byte count and a timestamp.
 - **Return a verifier or a KDF descriptor.** Neither has an operational use
   that justifies putting it where a screenshot or a paste can carry it.
-- **Set anyone's passphrase.** It can send a reset *letter*, which starts the
+- **Set anyone's passphrase.** It can send a reset _letter_, which starts the
   ceremony the client performs; it cannot choose the new passphrase. The
   passphrase wraps the data key on the client, so a server-side credential
   change would produce an account that logs in and decrypts nothing.
@@ -588,21 +588,21 @@ The integration suite targets a local Postgres at `localhost:5433` (user `postgr
 
 ### Layout
 
-| Path                  | What lives there                                                              |
-| --------------------- | ----------------------------------------------------------------------------- |
-| `src/protocol.ts`     | The wire contract: versions, limits, request/response types, handshake check. |
-| `src/server/`         | Express glue, the sync handler cores, CORS, bearer auth, error handling.      |
-| `src/accounts/`       | Account policy as pure handlers over an injected `AccountStore`.              |
-| `src/db/`             | Drizzle schema and the two store implementations.                             |
-| `src/admin/`          | The admin metadata read contract, deliberately not part of `AccountStore`.    |
-| `src/ai/`             | The completion proxy, its quota store, the minute limiter, the scrubber and the usage retention sweep. |
-| `src/feedback/`       | Reported estimates: submit, the operator's read side, image storage, retention. |
-| `src/pulse/`          | The community pulse: its store, the rounding, the per account limits, the cache and the retention sweep. |
+| Path                  | What lives there                                                                                                                                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/protocol.ts`     | The wire contract: versions, limits, request/response types, handshake check.                                                                                                                                          |
+| `src/server/`         | Express glue, the sync handler cores, CORS, bearer auth, error handling.                                                                                                                                               |
+| `src/accounts/`       | Account policy as pure handlers over an injected `AccountStore`.                                                                                                                                                       |
+| `src/db/`             | Drizzle schema and the two store implementations.                                                                                                                                                                      |
+| `src/admin/`          | The admin metadata read contract, deliberately not part of `AccountStore`.                                                                                                                                             |
+| `src/ai/`             | The completion proxy, its quota store, the minute limiter, the scrubber and the usage retention sweep.                                                                                                                 |
+| `src/feedback/`       | Reported estimates: submit, the operator's read side, image storage, retention.                                                                                                                                        |
+| `src/pulse/`          | The community pulse: its store, the rounding, the per account limits, the cache and the retention sweep.                                                                                                               |
 | `src/mail/`           | The letters in six languages, their strings, and the HTTP mailer that sends them. `en` and `de` are hand-written in `strings.ts`; `strings.<lang>.ts` is generated from `memory/<lang>.json` by `pnpm translate:mail`. |
-| `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                 |
-| `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only: it imports no database code.        |
-| `scripts/lib/`        | The translator, a vendored copy of `openplate-website`'s written by `pnpm sync:translate-lib` and pinned by `TRANSLATE_SOURCE.json`; never edited here. |
-| `drizzle/migrations/` | Generated migrations. Never hand-written: see `src/db/schema.ts`.             |
+| `src/lib/`            | Pure primitives: verifier, tokens, KDF descriptors, throttle.                                                                                                                                                          |
+| `scripts/sync-api/`   | The `pnpm sync-api` admin CLI. HTTP only: it imports no database code.                                                                                                                                                 |
+| `scripts/lib/`        | The translator, a vendored copy of `openplate-website`'s written by `pnpm sync:translate-lib` and pinned by `TRANSLATE_SOURCE.json`; never edited here.                                                                |
+| `drizzle/migrations/` | Generated migrations. Never hand-written: see `src/db/schema.ts`.                                                                                                                                                      |
 
 ### Invariants
 

@@ -500,7 +500,7 @@ async function runInvites(client: AdminClient, invocation: Invocation): Promise<
     if (invocation.trial) {
       // The service refuses a trial beside an allowance; say so before sending.
       if (invocation.dailyAiLimit !== null) {
-        throw new CliError('--trial carries the instance\'s own daily limit: leave out --daily-ai-limit.');
+        throw new CliError("--trial carries the instance's own daily limit: leave out --daily-ai-limit.");
       }
       body.trial = true;
     }
@@ -603,7 +603,7 @@ async function runTrials(client: AdminClient, invocation: Invocation): Promise<v
   }
   const trialDays = Number(invocation.trialDays ?? '');
   if (!Number.isInteger(trialDays) || trialDays < 1 || trialDays > 30) {
-    throw new CliError('trials grant-lapsed needs --trial-days <n>, the old day trial\'s length, e.g. 3.');
+    throw new CliError("trials grant-lapsed needs --trial-days <n>, the old day trial's length, e.g. 3.");
   }
   const excludeAccountIds = (invocation.exclude ?? '')
     .split(',')
@@ -615,7 +615,9 @@ async function runTrials(client: AdminClient, invocation: Invocation): Promise<v
       return id;
     });
   const body: LapsedGrantBody = { trialDays, apply: invocation.apply, excludeAccountIds };
-  const grant = decodeLapsedGrant(await client.request({ method: 'POST', path: '/v1/admin/trials/grant-lapsed', body }));
+  const grant = decodeLapsedGrant(
+    await client.request({ method: 'POST', path: '/v1/admin/trials/grant-lapsed', body }),
+  );
   print(invocation.json ? JSON.stringify(grant, null, 2) : formatLapsedGrant(grant));
 }
 
@@ -645,9 +647,7 @@ async function runSettings(client: AdminClient, invocation: Invocation): Promise
     }
     // A service older than the field says nothing, and so does this: an
     // invented `dge` would be a setting nobody chose.
-    print(
-      `${NUTRIENT_REFERENCE_BASIS_KEY}   ${handshake.nutrientReferenceBasis ?? '(this instance publishes none)'}`,
-    );
+    print(`${NUTRIENT_REFERENCE_BASIS_KEY}   ${handshake.nutrientReferenceBasis ?? '(this instance publishes none)'}`);
     return;
   }
 

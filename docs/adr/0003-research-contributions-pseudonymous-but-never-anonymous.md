@@ -25,7 +25,7 @@ pseudonym changes that.**
 
 A researcher holding a cohort plus any auxiliary dataset — a fitness-app export,
 a workplace wellness programme, or simply knowing one participant personally —
-can re-identify a series. The pattern of *which days were logged at all* is high
+can re-identify a series. The pattern of _which days were logged at all_ is high
 entropy by itself. The sparsity results for longitudinal traces apply squarely:
 a handful of points identifies most individuals.
 
@@ -116,7 +116,7 @@ the response, and the fingerprint is computed **locally from her own key**, whic
 keeps the substitution defence out of the server's hands.
 
 **It contains no account id, and neither does any study-side response.** This is
-the exact inversion of §5.16, where `grantorAccountId` is *required* because
+the exact inversion of §5.16, where `grantorAccountId` is _required_ because
 §3.2's AAD binds it. Anyone reusing the shared-blob response shape here imports
 the leak. The AAD above was designed so the identifier is never needed.
 
@@ -126,14 +126,14 @@ Three layers with different physics.
 
 1. **The server's copy is genuinely erasable, and is erased.** Withdrawal
    hard-deletes the contribution row. Unlike the clinician case there is a real
-   window where this is *full* erasure — a contribution not yet pulled reaches
+   window where this is _full_ erasure — a contribution not yet pulled reaches
    nobody.
 2. **The researcher's pulled copy cannot be repossessed.** ADR-0002's sentence
    stands and no UI may contradict it.
 3. **A withdrawal tombstone, keyed by pseudonym only.** ADR-0002 rejected
    tombstones; that argument does not transfer. There, a tombstone defended
-   nothing. Here it carries exactly the payload the obligation needs — *which
-   pseudonym to purge* — while the thing §9.2 wants gone, the account edge, dies
+   nothing. Here it carries exactly the payload the obligation needs — _which
+   pseudonym to purge_ — while the thing §9.2 wants gone, the account edge, dies
    with the row. **The live system forgets who; it remembers only that a
    pseudonym withdrew.** The study client must purge tombstoned pseudonyms
    before presenting or exporting anything: mechanical, on every pull, tested,
@@ -142,10 +142,10 @@ Three layers with different physics.
 Erasability is what forces the server to know cohort membership: deleting my row
 requires finding my row. That trade is made deliberately and disclosed below.
 
-**The binding words:** *"Your contributions have been removed from this study and
+**The binding words:** _"Your contributions have been removed from this study and
 the study can no longer receive anything from you. Data the study team already
 retrieved is governed by their ethics obligations — this system has instructed
-them to delete it, and cannot force it."*
+them to delete it, and cannot force it."_
 
 Backups predate the delete. The live system forgetting is the claim; immunity of
 backups is not.
@@ -172,7 +172,7 @@ channel the sync server does not control.
 no shared DEK and no rotation analogue. If a study loses its passphrase and
 recovery code, existing ciphertexts are dead — but every contributor's client
 still holds the source, so active contributors re-encrypt and re-push after a
-new ceremony. The failure mode fails toward *less* data reaching the researcher,
+new ceremony. The failure mode fails toward _less_ data reaching the researcher,
 which is the correct direction. No escrow: that is ADR-0001's back door
 multiplied by N.
 
@@ -187,7 +187,7 @@ server breaks one of those, and traffic analysis un-blinds it anyway.
 So it goes into §9.2 in the same register as the care graph, in the first slice
 rather than at GA. An edge here says "this person's health data is in study Y".
 
-Do not build a half-measure that *pretends* to avoid it. A fake anonymity layer
+Do not build a half-measure that _pretends_ to avoid it. A fake anonymity layer
 that the withdrawal path contradicts is worse than the disclosure.
 
 ## Prohibitions

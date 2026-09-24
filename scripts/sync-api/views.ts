@@ -316,7 +316,13 @@ export function decodeBlobVersions(value: JsonValue): BlobVersionView[] {
     const envelopeVersion = asNumber(version?.envelopeVersion);
     const sizeBytes = asNumber(version?.sizeBytes);
     const createdAt = asString(version?.createdAt);
-    if (version === null || blobVersion === null || envelopeVersion === null || sizeBytes === null || createdAt === null) {
+    if (
+      version === null ||
+      blobVersion === null ||
+      envelopeVersion === null ||
+      sizeBytes === null ||
+      createdAt === null
+    ) {
       throw undocumentedResponse('blob versions');
     }
     return { blobVersion, envelopeVersion, sizeBytes, createdAt, pinnedUntil: asString(version.pinnedUntil) };

@@ -702,7 +702,9 @@ test('a provider that echoes the photograph back has it scrubbed from the respon
 
   const response = await postCompletion(harness, {
     model: 'm',
-    messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${PHOTOGRAPH}` } }] }],
+    messages: [
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${PHOTOGRAPH}` } }] },
+    ],
   });
   assert.equal(response.status, 422);
 

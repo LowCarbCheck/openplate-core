@@ -117,7 +117,16 @@ async function startHarness({ basis }: { basis: NutrientReferenceBasis | null })
     throttle: createThrottleStore({ freeAttempts: 10_000, baseLockoutMs: 1, maxLockoutMs: 1, attemptResetMs: 1 }),
     logger: createSilentLogger(),
     trustProxy: false,
-    instance: { name: 'openplate', language: 'en', mail: false, memberInvites: false, openSignup: false, ai: null, push: false, plans: false },
+    instance: {
+      name: 'openplate',
+      language: 'en',
+      mail: false,
+      memberInvites: false,
+      openSignup: false,
+      ai: null,
+      push: false,
+      plans: false,
+    },
     settings,
     admin: {
       token: ADMIN_TOKEN,
@@ -187,7 +196,11 @@ test('the handshake publishes the basis, and the next read of it carries a chang
 
   assert.equal(asString((await readInstance(harness)).nutrientReferenceBasis), 'dge');
 
-  const response = await harness.request({ method: 'PATCH', path: SETTINGS_PATH, body: { nutrientReferenceBasis: 'us' } });
+  const response = await harness.request({
+    method: 'PATCH',
+    path: SETTINGS_PATH,
+    body: { nutrientReferenceBasis: 'us' },
+  });
   assert.equal(response.status, 200);
 
   // READ AGAIN, because this is the field's whole purpose: an administrator
@@ -199,7 +212,11 @@ test('the handshake publishes the basis, and the next read of it carries a chang
 test('a fourth name is refused and nothing is written', async () => {
   const harness = await startHarness({ basis: 'dge' });
 
-  const response = await harness.request({ method: 'PATCH', path: SETTINGS_PATH, body: { nutrientReferenceBasis: 'eu' } });
+  const response = await harness.request({
+    method: 'PATCH',
+    path: SETTINGS_PATH,
+    body: { nutrientReferenceBasis: 'eu' },
+  });
 
   assert.equal(response.status, 400);
   assert.equal(harness.current(), 'dge', 'a refused value must leave the instance where it was');
@@ -224,6 +241,10 @@ test('a service that wires no settings surface publishes no basis and offers no 
   // two the same: it names no basis and takes the server's own.
   assert.equal(instance.nutrientReferenceBasis, undefined);
 
-  const response = await harness.request({ method: 'PATCH', path: SETTINGS_PATH, body: { nutrientReferenceBasis: 'us' } });
+  const response = await harness.request({
+    method: 'PATCH',
+    path: SETTINGS_PATH,
+    body: { nutrientReferenceBasis: 'us' },
+  });
   assert.equal(response.status, 404, 'the ordinary unknown-path answer, never a 501 announcing a feature that is off');
 });

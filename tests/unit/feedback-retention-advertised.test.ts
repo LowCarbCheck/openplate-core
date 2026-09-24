@@ -95,7 +95,12 @@ async function readHandshake(instance: InstanceInfo): Promise<JsonObject> {
     logger: createSilentLogger(),
     trustProxy: false,
     instance,
-    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
+    admin: {
+      token: null,
+      blobs: createFakeBlobRollbackStore(),
+      metadata: createFakeAdminStore(),
+      invites: createFakeInviteStore(),
+    },
   });
   const server = app.listen(0);
   servers.push(server);

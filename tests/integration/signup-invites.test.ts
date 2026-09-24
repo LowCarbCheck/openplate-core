@@ -363,10 +363,7 @@ test('five member invitations succeed, the sixth is refused, and a revoked row s
     // would make to recycle their five.
     const withdrawn = caused[0];
     assert.ok(withdrawn);
-    await database.db
-      .update(signupInvites)
-      .set({ revokedAt: new Date() })
-      .where(eq(signupInvites.id, withdrawn.id));
+    await database.db.update(signupInvites).set({ revokedAt: new Date() }).where(eq(signupInvites.id, withdrawn.id));
     const afterRevoke = await memberMint(service, { accessToken, email: 'one-too-many@example.org' });
     assert.equal(afterRevoke.status, 403, 'a revoked row must still count towards the cap');
 
@@ -490,7 +487,10 @@ test('a re-invite after a self-delete is not a fresh allowance, while an admin m
   const service = await startWithMemberInvites();
   try {
     const member = await service.signupThroughInvite({ email: 'anna@example.org' });
-    assert.equal((await memberMint(service, { accessToken: member.tokens.accessToken, email: 'boris@example.org' })).status, 202);
+    assert.equal(
+      (await memberMint(service, { accessToken: member.tokens.accessToken, email: 'boris@example.org' })).status,
+      202,
+    );
 
     // The friend redeems it, then deletes their own account. The invite row
     // survives with its address and its redemption instant, because both
@@ -510,7 +510,10 @@ test('a re-invite after a self-delete is not a fresh allowance, while an admin m
     });
     assert.equal(deleted.status, 204);
 
-    const surviving = await database.db.select().from(signupInvites).where(eq(signupInvites.email, 'boris@example.org'));
+    const surviving = await database.db
+      .select()
+      .from(signupInvites)
+      .where(eq(signupInvites.email, 'boris@example.org'));
     assert.equal(surviving.length, 1);
     assert.notEqual(surviving[0]?.redeemedAt, null, 'the redemption instant must survive the account');
 
@@ -600,7 +603,9 @@ test('a dailyAiLimit in the member mint body is ignored, so the allowance is not
     assert.equal(minted.status, 202);
 
     const inviteToken = service.mailer.invites.at(-1)?.inviteToken ?? '';
-    const friend = await service.request<{ account: { role: string; dailyAiLimit: number; displayName: string | null } }>({
+    const friend = await service.request<{
+      account: { role: string; dailyAiLimit: number; displayName: string | null };
+    }>({
       method: 'POST',
       path: '/v1/auth/signup',
       body: signupBody(inviteToken),

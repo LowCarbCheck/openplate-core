@@ -116,7 +116,9 @@ export function createDrizzleAiQuotaStore(db: Database): AiQuotaStore {
         .set({ count: sql`${aiUsageDays.count} - 1` })
         // Floored at zero: a double release must miscount upward, never
         // downward, because a negative counter is free requests.
-        .where(and(eq(aiUsageDays.accountId, input.accountId), eq(aiUsageDays.day, input.day), gt(aiUsageDays.count, 0)));
+        .where(
+          and(eq(aiUsageDays.accountId, input.accountId), eq(aiUsageDays.day, input.day), gt(aiUsageDays.count, 0)),
+        );
     },
 
     async countRequestsOn(day: string): Promise<number> {

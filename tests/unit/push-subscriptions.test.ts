@@ -113,7 +113,12 @@ test('replaces removes this account own predecessor and leaves another account r
   // Anna's old phone, Bert's phone, and Anna about to re-register.
   const annaOld = 'https://push.example.org/anna-old';
   const bertOnly = 'https://push.example.org/bert-only';
-  harness.store.seed({ endpoint: annaOld, accountId: harness.anna.accountId, timeZone: ZONE, lastSeenDay: '2026-01-15' });
+  harness.store.seed({
+    endpoint: annaOld,
+    accountId: harness.anna.accountId,
+    timeZone: ZONE,
+    lastSeenDay: '2026-01-15',
+  });
   harness.store.seed({
     endpoint: bertOnly,
     accountId: harness.bert.accountId,

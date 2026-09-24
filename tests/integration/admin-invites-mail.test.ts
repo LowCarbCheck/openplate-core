@@ -150,7 +150,16 @@ before(async () => {
     trustProxy: false,
     mailer,
     mailConfigured: true,
-    instance: { name: 'openplate', language: 'en', mail: true, memberInvites: true, openSignup: false, ai: null, plans: false, push: false },
+    instance: {
+      name: 'openplate',
+      language: 'en',
+      mail: true,
+      memberInvites: true,
+      openSignup: false,
+      ai: null,
+      plans: false,
+      push: false,
+    },
     admin: {
       // The REAL store, against the real table: the rollback this service
       // offers deletes rows, and a fake here would prove nothing about that.
@@ -330,7 +339,11 @@ test('a resend mails a NEW token and the old link stops working', async () => {
  */
 async function signInAsMember(email: string): Promise<string> {
   await request({ method: 'POST', path: '/v1/admin/invites', token: ADMIN_TOKEN, body: { email } });
-  const link = received.at(-1)?.text.split('\n').find((line) => line.startsWith(CLIENT_BASE_URL)) ?? '';
+  const link =
+    received
+      .at(-1)
+      ?.text.split('\n')
+      .find((line) => line.startsWith(CLIENT_BASE_URL)) ?? '';
   const signedUp = await request<{ tokens: { accessToken: string } }>({
     method: 'POST',
     path: '/v1/auth/signup',
@@ -341,7 +354,7 @@ async function signInAsMember(email: string): Promise<string> {
   return signedUp.body.tokens.accessToken;
 }
 
-test('a member invitation reaches the mail API with a join link, and its terms are the instance\'s', async () => {
+test("a member invitation reaches the mail API with a join link, and its terms are the instance's", async () => {
   const accessToken = await signInAsMember('anna@example.org');
 
   const minted = await request({

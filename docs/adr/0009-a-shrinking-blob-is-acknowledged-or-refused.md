@@ -109,11 +109,11 @@ update; a wipe nobody meant does not happen.
 
 Every tier is capped, so the worst case is arithmetic rather than a promise:
 
-| Tier              | Cap                                   |
-| ----------------- | ------------------------------------- |
-| Recent            | 5 versions                            |
-| Daily             | 14 versions, one per UTC calendar day |
-| Pre-shrink pins   | 14 versions, expiring after 14 days   |
+| Tier            | Cap                                   |
+| --------------- | ------------------------------------- |
+| Recent          | 5 versions                            |
+| Daily           | 14 versions, one per UTC calendar day |
+| Pre-shrink pins | 14 versions, expiring after 14 days   |
 
 At most **33 versions per account**, and a blob is capped at 2 MiB, so at most
 **66 MiB per account**, against 10 MiB before. In practice it is far less: the

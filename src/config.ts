@@ -562,9 +562,7 @@ function parsePush(env: NodeJS.ProcessEnv): VapidCredentials | null {
   try {
     parsed = new URL(subject);
   } catch {
-    throw new Error(
-      `Invalid VAPID_SUBJECT: expected a mailto: address or an absolute https URL, got "${subject}"`,
-    );
+    throw new Error(`Invalid VAPID_SUBJECT: expected a mailto: address or an absolute https URL, got "${subject}"`);
   }
   if (!VAPID_SUBJECT_SCHEMES.includes(parsed.protocol)) {
     throw new Error(
@@ -640,9 +638,7 @@ function parseNutrientReferenceBasis(env: NodeJS.ProcessEnv): NutrientReferenceB
   const raw = env.NUTRIENT_REFERENCE_BASIS?.trim().toLowerCase();
   if (raw === undefined || raw === '') return DEFAULT_NUTRIENT_REFERENCE_BASIS;
   if (!isNutrientReferenceBasis(raw)) {
-    throw new Error(
-      `Invalid NUTRIENT_REFERENCE_BASIS: expected ${NUTRIENT_REFERENCE_BASES.join('/')}, got "${raw}"`,
-    );
+    throw new Error(`Invalid NUTRIENT_REFERENCE_BASIS: expected ${NUTRIENT_REFERENCE_BASES.join('/')}, got "${raw}"`);
   }
   return raw;
 }

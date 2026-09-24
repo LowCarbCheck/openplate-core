@@ -339,14 +339,8 @@ test('the two member-invite settings are all-or-nothing, and the allowance has a
   // HALF THE PAIR IS A BOOT FAILURE THAT NAMES THE MISSING ONE. An allowance
   // with no end date is a trial that never ends, and an end date with no
   // allowance is a letter that grants nothing.
-  assert.throws(
-    () => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50' })),
-    /MEMBER_INVITE_ALLOWANCE_DAYS/,
-  );
-  assert.throws(
-    () => parseConfig(baseEnv({ MEMBER_INVITE_ALLOWANCE_DAYS: '30' })),
-    /MEMBER_INVITE_DAILY_AI_LIMIT/,
-  );
+  assert.throws(() => parseConfig(baseEnv({ MEMBER_INVITE_DAILY_AI_LIMIT: '50' })), /MEMBER_INVITE_ALLOWANCE_DAYS/);
+  assert.throws(() => parseConfig(baseEnv({ MEMBER_INVITE_ALLOWANCE_DAYS: '30' })), /MEMBER_INVITE_DAILY_AI_LIMIT/);
 
   // ONE MISTYPED DIGIT IS THE LARGEST BILL THIS FILE CAN WRITE: the allowance
   // is multiplied by every member times five invitations.
@@ -647,5 +641,8 @@ test('the trial sub-ceiling refuses zero and refuses an instance with no trial t
   assert.throws(() => parseConfig(baseEnv({ ...TRIAL_ENV, AI_TRIAL_INSTANCE_DAILY_LIMIT: '0' })), /AI_TRIAL_INSTANCE/);
   assert.throws(() => parseConfig(baseEnv({ AI_TRIAL_INSTANCE_DAILY_LIMIT: '1000' })), /nothing for it to bound/);
   // THE CONTROL.
-  assert.equal(parseConfig(baseEnv({ ...TRIAL_ENV, AI_TRIAL_INSTANCE_DAILY_LIMIT: '1000' })).aiTrialInstanceDailyLimit, 1000);
+  assert.equal(
+    parseConfig(baseEnv({ ...TRIAL_ENV, AI_TRIAL_INSTANCE_DAILY_LIMIT: '1000' })).aiTrialInstanceDailyLimit,
+    1000,
+  );
 });

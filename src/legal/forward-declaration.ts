@@ -29,8 +29,7 @@ export const FORWARD_DECLARATION_TIMEOUT_MS = 10_000;
 const TIMEOUT_ERROR_NAME = 'TimeoutError';
 
 export type ForwardDeclarationOutcome =
-  | { ok: true }
-  | { ok: false; code: 'plans-not-configured' | 'unreachable' | 'timeout' | 'rejected' };
+  { ok: true } | { ok: false; code: 'plans-not-configured' | 'unreachable' | 'timeout' | 'rejected' };
 
 export interface ForwardDeclarationUpstream {
   baseUrl: string;

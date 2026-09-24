@@ -30,7 +30,12 @@ import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { aiInstanceDays, aiUsageDays, accounts } from '../../src/db/schema.js';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
-import { startService, sampleCiphertext, DEFAULT_AI_MAX_REQUEST_BYTES, type ServiceHarness } from './service-harness.js';
+import {
+  startService,
+  sampleCiphertext,
+  DEFAULT_AI_MAX_REQUEST_BYTES,
+  type ServiceHarness,
+} from './service-harness.js';
 
 const UPSTREAM_KEY = 'sk-the-operators-own-provider-key';
 
@@ -113,7 +118,10 @@ after(async () => {
 beforeEach(async () => {
   await database.reset();
   received = [];
-  plan = { status: 200, body: JSON.stringify({ choices: [{ message: { content: 'a bowl of rice, about 45 g of carbs' } }] }) };
+  plan = {
+    status: 200,
+    body: JSON.stringify({ choices: [{ message: { content: 'a bowl of rice, about 45 g of carbs' } }] }),
+  };
 });
 
 async function startWithAi(perMinute?: number): Promise<ServiceHarness> {
@@ -350,7 +358,11 @@ test('a streaming answer arrives in pieces rather than at the end', async () => 
     plan = {
       status: 200,
       body: '',
-      chunks: ['data: {"choices":[{"delta":{"content":"a bowl"}}]}\n\n', 'data: {"choices":[{"delta":{"content":" of rice"}}]}\n\n', 'data: [DONE]\n\n'],
+      chunks: [
+        'data: {"choices":[{"delta":{"content":"a bowl"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":" of rice"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ],
     };
 
     // Raw `fetch` rather than `service.request`, because the harness reads
@@ -657,7 +669,7 @@ test('a body over AI_MAX_REQUEST_BYTES is refused in the OpenAI shape, before th
   }
 });
 
-test('no other router\'s body parser reaches this route', async () => {
+test("no other router's body parser reaches this route", async () => {
   // THE ACTUAL CAUSE of the 413, and the reason the two tests above were not
   // enough on their own. Every router in this service is mounted with
   // `app.use(router)` at the ROOT, and each mounted its `express.json()` with

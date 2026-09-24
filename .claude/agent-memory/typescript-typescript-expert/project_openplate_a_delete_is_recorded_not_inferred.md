@@ -20,6 +20,7 @@ two things that failed together is not evidence. The journal fails together
 with the diary, which is exactly what is wanted.
 
 **How to apply:**
+
 - A new verb that removes a synced row must call `deleteEntity`, not `delRow`.
   A row removed directly is a delete no peer ever hears about, and no test that
   does not drive the real store will catch it. Grep `delRow` in

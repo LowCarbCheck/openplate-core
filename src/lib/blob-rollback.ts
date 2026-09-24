@@ -49,8 +49,7 @@ export type RollbackRefusal =
   | 'empty-ciphertext';
 
 export type RollbackPlan =
-  | { ok: true; targetVersion: number; discardedVersions: number[] }
-  | { ok: false; reason: RollbackRefusal };
+  { ok: true; targetVersion: number; discardedVersions: number[] } | { ok: false; reason: RollbackRefusal };
 
 /**
  * What rolling `versions` back to `targetVersion` would delete, or why it may

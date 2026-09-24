@@ -90,7 +90,12 @@ async function startFakeBiller(): Promise<FakeBiller> {
       for (const [name, value] of Object.entries(req.headers)) {
         headers[name] = Array.isArray(value) ? value.join(', ') : value;
       }
-      received.push({ method: req.method ?? '', url: req.url ?? '', headers, body: Buffer.concat(chunks).toString('utf8') });
+      received.push({
+        method: req.method ?? '',
+        url: req.url ?? '',
+        headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      });
       // A hang is an accepted request that is never answered, exactly what a
       // biller stuck on its own database looks like from here.
       if (reply.hang) return;
@@ -165,7 +170,11 @@ test('an unmatched declaration is persisted, forwarded, and answers 202', async 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.id, response.body.receiptId);
   assert.equal(rows[0]?.accountId, null);
-  assert.equal(rows[0]?.forwardedAt !== null, true, 'a configured biller that answers 202 must be recorded as forwarded');
+  assert.equal(
+    rows[0]?.forwardedAt !== null,
+    true,
+    'a configured biller that answers 202 must be recorded as forwarded',
+  );
   assert.equal(rows[0]?.forwardError, null);
 
   assert.equal(biller.received.length, 1);

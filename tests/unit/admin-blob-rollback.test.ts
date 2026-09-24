@@ -19,7 +19,13 @@ import type { BlobVersionSummary } from '../../src/lib/blob-rollback.js';
 
 /** The `GET .../blob/versions` body, transcribed from `server/admin-routes.ts`'s `AdminBlobVersionView`. */
 interface VersionsBody {
-  versions: { blobVersion: number; envelopeVersion: number; sizeBytes: number; createdAt: string; pinnedUntil: string | null }[];
+  versions: {
+    blobVersion: number;
+    envelopeVersion: number;
+    sizeBytes: number;
+    createdAt: string;
+    pinnedUntil: string | null;
+  }[];
 }
 
 /** The `POST .../blob/rollback` bodies, success and refusal. */

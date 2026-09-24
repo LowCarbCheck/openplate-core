@@ -18,6 +18,7 @@ empty diary plus a tombstone per entity.
 clean and pushes nothing. The empty store is.
 
 **How to apply:** three consequences, all reproduced:
+
 1. the wipe SPREADS. A second device that still holds the real diary pulls the
    tombstones, `applyMergedSnapshot`'s delete loops run, and its rows go too.
    Freeze or stop syncing the account before touching anything else.

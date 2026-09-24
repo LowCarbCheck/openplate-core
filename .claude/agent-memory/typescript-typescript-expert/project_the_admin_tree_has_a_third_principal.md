@@ -19,8 +19,7 @@ database read.
   to 3. Never write `'/accounts` in a comment in that file; the three allow
   list entries are the only lines allowed to contain it.
 - `GET /accounts/expiring` must be registered BEFORE `GET /accounts/:id` in
-  `admin-routes.ts`, or express matches the parameterised route and answers
-  404.
+  `admin-routes.ts`, or express matches the parameterised route and answers 404.
 - Changing `AdminPrincipal` breaks exactly ONE call site that tsc finds:
   `describeAdmin` in `admin-feedback-routes.ts`. `isSelfLockout` already
   narrowed on `kind === 'account'` and needed nothing.

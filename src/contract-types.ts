@@ -314,8 +314,7 @@ export interface SyncBlobRollbackStore {
 }
 
 export type RollbackBlobResult =
-  | { ok: true; blobVersion: number; discardedVersions: number[] }
-  | { ok: false; reason: RollbackRefusal };
+  { ok: true; blobVersion: number; discardedVersions: number[] } | { ok: false; reason: RollbackRefusal };
 
 // =============================================================================
 // Research contributions (ADR-0003)

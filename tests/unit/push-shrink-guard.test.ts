@@ -35,7 +35,14 @@ function bytes(length: number): Uint8Array {
 /** Seeds an account's stored blob at `sizeBytes`, and answers the version it landed on. */
 async function seedBlob(storage: SyncStorageAdapter, accountId: number, sizeBytes: number): Promise<number> {
   const result = await handlePushBlob(
-    { accountId, baseVersion: 0, envelopeVersion: 1, ciphertext: bytes(sizeBytes), shrinkAcknowledged: false, now: NOW },
+    {
+      accountId,
+      baseVersion: 0,
+      envelopeVersion: 1,
+      ciphertext: bytes(sizeBytes),
+      shrinkAcknowledged: false,
+      now: NOW,
+    },
     storage,
   );
   assert.equal(result.status, 'accepted');
@@ -89,7 +96,14 @@ test('a shrink just above the line is accepted unacknowledged: exactly half, and
 
   // 500 stored now, so 250 is the new line and 251 is just above it.
   const justOver = await handlePushBlob(
-    { accountId: 3, baseVersion: baseVersion + 1, envelopeVersion: 1, ciphertext: bytes(251), shrinkAcknowledged: false, now: NOW },
+    {
+      accountId: 3,
+      baseVersion: baseVersion + 1,
+      envelopeVersion: 1,
+      ciphertext: bytes(251),
+      shrinkAcknowledged: false,
+      now: NOW,
+    },
     storage,
   );
   assert.equal(justOver.status, 'accepted');

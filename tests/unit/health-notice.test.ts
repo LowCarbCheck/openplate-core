@@ -32,7 +32,16 @@ const servers: Server[] = [];
 
 /** A minimal instance block with one field under test, so a case names only what it is about. */
 function instanceInfo({ plans }: { plans: boolean }): InstanceInfo {
-  return { name: 'openplate', language: 'en', mail: false, memberInvites: false, openSignup: false, ai: null, plans, push: false };
+  return {
+    name: 'openplate',
+    language: 'en',
+    mail: false,
+    memberInvites: false,
+    openSignup: false,
+    ai: null,
+    plans,
+    push: false,
+  };
 }
 
 after(async () => {
@@ -55,7 +64,12 @@ async function readHandshake(notice: OperatorNotice | null, instance: InstanceIn
     trustProxy: false,
     notice,
     instance,
-    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore() },
+    admin: {
+      token: null,
+      blobs: createFakeBlobRollbackStore(),
+      metadata: createFakeAdminStore(),
+      invites: createFakeInviteStore(),
+    },
   });
   const server = app.listen(0);
   servers.push(server);

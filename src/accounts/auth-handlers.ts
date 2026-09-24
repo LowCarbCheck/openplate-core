@@ -263,7 +263,11 @@ async function toAccountView(account: AccountRecord, ctx: AuthContext): Promise<
       role: account.role,
       minted,
       policy: memberInvites?.policy ?? null,
-      isUnpaidTrial: isUnpaidTrial({ trialScans: account.trialScans, allowanceExpiresAt: account.allowanceExpiresAt, now: ctx.now() }),
+      isUnpaidTrial: isUnpaidTrial({
+        trialScans: account.trialScans,
+        allowanceExpiresAt: account.allowanceExpiresAt,
+        now: ctx.now(),
+      }),
     }),
     createdAt: account.createdAt.toISOString(),
   };
@@ -1221,7 +1225,9 @@ export async function handleMintMemberInvite(
     // invitation is a new trial, so without this one free account mints more.
     // Asked after the cap, because paying does not help a spent allowance,
     // and before the re-invite rule, which answers `202` and would hide it.
-    if (isUnpaidTrial({ trialScans: account.trialScans, allowanceExpiresAt: account.allowanceExpiresAt, now: ctx.now() })) {
+    if (
+      isUnpaidTrial({ trialScans: account.trialScans, allowanceExpiresAt: account.allowanceExpiresAt, now: ctx.now() })
+    ) {
       return { status: 'forbidden', reason: MEMBER_INVITES_NEED_A_PLAN };
     }
 

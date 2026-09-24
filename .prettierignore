@@ -11,6 +11,14 @@ drizzle/
 # Vendored third-party oxlint plugin — kept byte-identical to upstream.
 tools/oxlint/anti-slop
 
+# The vendored translator, copied by its sync script and re-hashed against
+# scripts/lib/TRANSLATE_SOURCE.json by tests/unit/translate-lib-provenance.test.ts.
+# A reformat breaks that hash, so only the sync may rewrite these.
+scripts/lib/translate.ts
+scripts/lib/translate-ui.ts
+scripts/lib/translate-language.ts
+scripts/lib/TRANSLATE_SOURCE.json
+
 # Mail template fixtures in the legal file contract's markdown subset
 # (M246/04). Prettier would rewrite `*emphasis*` as `_emphasis_`, which the
 # contract refuses, and the refused fixture must stay refused.

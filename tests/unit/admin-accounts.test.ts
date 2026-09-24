@@ -355,7 +355,11 @@ test('a MEMBER account is refused on the write routes, exactly as a garbage toke
 test('reset-mail writes a reset row and reports emailed:false with a link on a mailless instance', async () => {
   const id = await seedAccount();
 
-  const response = await harness.request({ method: 'POST', path: `/v1/admin/accounts/${id}/reset-mail`, token: ADMIN_TOKEN });
+  const response = await harness.request({
+    method: 'POST',
+    path: `/v1/admin/accounts/${id}/reset-mail`,
+    token: ADMIN_TOKEN,
+  });
   assert.equal(response.status, 202);
   // SAFETY: this endpoint answers JSON, and a body that did not parse would
   // have thrown above.
@@ -367,7 +371,9 @@ test('reset-mail writes a reset row and reports emailed:false with a link on a m
   assert.equal(body?.link, null);
 
   // THE WRITE HAPPENED, which is what makes the 202 mean anything.
-  const live = harness.fakeAccounts.allPasswordResets().filter((row) => row.accountId === id && row.consumedAt === null);
+  const live = harness.fakeAccounts
+    .allPasswordResets()
+    .filter((row) => row.accountId === id && row.consumedAt === null);
   assert.equal(live.length, 1);
 });
 
@@ -432,7 +438,11 @@ test('resending a redeemed or unknown invite is a 404', async () => {
     path: `/v1/admin/invites/${inviteId}/resend`,
     token: ADMIN_TOKEN,
   });
-  const unknown = await harness.request({ method: 'POST', path: '/v1/admin/invites/424242/resend', token: ADMIN_TOKEN });
+  const unknown = await harness.request({
+    method: 'POST',
+    path: '/v1/admin/invites/424242/resend',
+    token: ADMIN_TOKEN,
+  });
   assert.equal(spent.status, 404);
   assert.equal(unknown.status, 404);
   assert.equal(await spent.text(), await unknown.text());

@@ -57,7 +57,10 @@ interface GatingHarness {
 async function startGatingHarness(memberInvites: boolean): Promise<GatingHarness> {
   const fixture = createAuthFixture();
   if (memberInvites) {
-    fixture.ctx.memberInvites = { invites: createFakeInviteStore(), policy: { dailyAiLimit: 50, allowanceDays: 30, lifetimeCap: 5 } };
+    fixture.ctx.memberInvites = {
+      invites: createFakeInviteStore(),
+      policy: { dailyAiLimit: 50, allowanceDays: 30, lifetimeCap: 5 },
+    };
   }
 
   const app = createApp({
@@ -73,7 +76,13 @@ async function startGatingHarness(memberInvites: boolean): Promise<GatingHarness
     trustProxy: false,
     mailer: fixture.mailer,
     now: fixture.now,
-    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
+    admin: {
+      token: null,
+      blobs: createFakeBlobRollbackStore(),
+      metadata: createFakeAdminStore(),
+      invites: createFakeInviteStore(),
+      links: null,
+    },
   });
 
   const server: Server = app.listen(0);
@@ -159,7 +168,11 @@ test('with the feature ON the same path is locked rather than absent', async () 
     // 401, NOT 404: the route exists here and wants a session. This is the
     // assertion that fails if somebody deletes the route and leaves this file
     // behind.
-    assert.equal(response.status, 401, `the mounted route must answer 401 to an anonymous caller, not ${response.status}`);
+    assert.equal(
+      response.status,
+      401,
+      `the mounted route must answer 401 to an anonymous caller, not ${response.status}`,
+    );
   } finally {
     await lit.close();
   }

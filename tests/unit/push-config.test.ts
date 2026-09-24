@@ -96,7 +96,13 @@ async function startConfigHarness(options: { push: boolean }): Promise<ConfigHar
     trustProxy: false,
     mailer: fixture.mailer,
     now: fixture.now,
-    admin: { token: null, blobs: createFakeBlobRollbackStore(), metadata: createFakeAdminStore(), invites: createFakeInviteStore(), links: null },
+    admin: {
+      token: null,
+      blobs: createFakeBlobRollbackStore(),
+      metadata: createFakeAdminStore(),
+      invites: createFakeInviteStore(),
+      links: null,
+    },
     // BUILT FROM THE SAME FLAG that decides the surface, exactly as `main.ts`
     // builds both from `config.push`. A harness that reported one and mounted
     // the other would let a service that advertises a door it has not got pass.

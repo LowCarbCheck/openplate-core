@@ -67,7 +67,7 @@ change moves the minor.
   `AI_TRIAL_INSTANCE_DAILY_LIMIT` caps what trial accounts spend per day. The
   operator PATCH takes `trialScans`, the stats report trials granted and trial
   requests, and `POST /v1/admin/trials/grant-lapsed` (`pnpm sync-api trials
-  grant-lapsed`) gives the scans to day trials that ran out unpaid. CORS now
+grant-lapsed`) gives the scans to day trials that ran out unpaid. CORS now
   allows `X-Intake-Id` and exposes `X-Trial-Scans-Left`, `X-Quota-Used` and
   `X-Quota-Limit`. Migration `0020` adds the counts, the intake table and the
   hash table. Running three day trials keep their date, and an instance that
@@ -165,7 +165,7 @@ change moves the minor.
   A new `instance_settings` row holds one setting, the micronutrient reference
   basis: `dge` (the German DGE, the default), `efsa` (the EU) or `us` (NASEM).
   `PATCH /v1/admin/settings` changes it, `pnpm sync-api settings set
-  nutrient-reference-basis efsa` is the operator's command for it, and every
+nutrient-reference-basis efsa` is the operator's command for it, and every
   client reads it from `GET /health` as `instance.nutrientReferenceBasis` on
   its next connect. It is the first setting on this service an administrator
   can change without a redeploy; `NUTRIENT_REFERENCE_BASIS` in the environment

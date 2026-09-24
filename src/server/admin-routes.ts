@@ -475,7 +475,10 @@ function parseMintGrant(input: { body: JsonObject; trial: TrialPolicy | null }):
       return { ok: false, reason: 'this instance runs no scan trial: TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT are unset' };
     }
     if (body.dailyAiLimit !== undefined) {
-      return { ok: false, reason: 'trial and dailyAiLimit cannot both be named: the trial carries its own daily limit' };
+      return {
+        ok: false,
+        reason: 'trial and dailyAiLimit cannot both be named: the trial carries its own daily limit',
+      };
     }
     return { ok: true, dailyAiLimit: input.trial.dailyAiLimit, trialScans: input.trial.scans };
   }
@@ -635,8 +638,7 @@ function parseTrialScans(value: JsonValue): { ok: true; value: number | null } |
 
 /** The body of `POST /trials/grant-lapsed`, decoded. */
 type LapsedGrantRequest =
-  | { ok: true; trialDays: number; apply: boolean; exclude: Set<number> }
-  | { ok: false; reason: string };
+  { ok: true; trialDays: number; apply: boolean; exclude: Set<number> } | { ok: false; reason: string };
 
 /** The longest day trial the grant looks for, the member-invite lifetime ceiling. */
 const MAX_LAPSED_TRIAL_DAYS = 30;
@@ -835,7 +837,8 @@ const ROLLBACK_REFUSALS = {
   'already-current': 'That version is already the current one. Nothing was changed.',
   'unreadable-envelope':
     'That version was written with an envelope format this service no longer accepts, so no app could read it. Nothing was changed.',
-  'empty-ciphertext': 'That version holds no bytes, so restoring it would leave the account unreadable. Nothing was changed.',
+  'empty-ciphertext':
+    'That version holds no bytes, so restoring it would leave the account unreadable. Nothing was changed.',
 } satisfies Record<RollbackRefusal, string>;
 
 /**
@@ -890,7 +893,9 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         day: utcDayKey(options.now()),
       });
       res.status(200).json({
-        accounts: page.accounts.map((summary) => toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() })),
+        accounts: page.accounts.map((summary) =>
+          toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }),
+        ),
         total: page.total,
         limit: limit.value,
         offset: offset.value,
@@ -956,7 +961,9 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
         res.status(200).json({ account: toServiceAccountView(summary) });
         return;
       }
-      res.status(200).json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
+      res
+        .status(200)
+        .json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
     }),
   );
 
@@ -1163,7 +1170,9 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
       // The account id, never the values: a display name is personal data and a
       // role change is already legible from the row.
       logger.info('Account changed by admin', { accountId });
-      res.status(200).json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
+      res
+        .status(200)
+        .json({ account: toAccountView({ summary, memberInvites: options.memberInvites, now: options.now() }) });
     }),
   );
 
@@ -1359,7 +1368,9 @@ export function createAdminRoutes(options: AdminRoutesOptions): Router {
     express.json({ limit: 16 * 1024 }),
     asyncHandler(async (req, res) => {
       if (options.trial === null) {
-        res.status(409).json({ error: 'this instance runs no scan trial: set TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT first' });
+        res
+          .status(409)
+          .json({ error: 'this instance runs no scan trial: set TRIAL_SCANS and TRIAL_DAILY_AI_LIMIT first' });
         return;
       }
       // SAFETY: `express.json()` above has already parsed this body, so it is

@@ -151,8 +151,7 @@ function optionalDateString(value: JsonValue | undefined): FieldResult<string | 
   // separated by `-`; the check keeps the destructure honest without a cast.
   if (year === undefined || month === undefined || day === undefined) return invalid();
   const asDate = new Date(Date.UTC(year, month - 1, day));
-  const isReal =
-    asDate.getUTCFullYear() === year && asDate.getUTCMonth() === month - 1 && asDate.getUTCDate() === day;
+  const isReal = asDate.getUTCFullYear() === year && asDate.getUTCMonth() === month - 1 && asDate.getUTCDate() === day;
   return isReal ? valid(raw) : invalid();
 }
 

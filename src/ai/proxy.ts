@@ -677,13 +677,11 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
         // Scrubbed: a transport error can quote the request it failed to send.
         error: describeError(cause),
       });
-      res
-        .status(timedOut ? 504 : 502)
-        .json({
-          error: timedOut
-            ? `the upstream provider did not answer within ${upstreamConfig.timeoutMs} ms`
-            : 'the upstream provider could not be reached',
-        });
+      res.status(timedOut ? 504 : 502).json({
+        error: timedOut
+          ? `the upstream provider did not answer within ${upstreamConfig.timeoutMs} ms`
+          : 'the upstream provider could not be reached',
+      });
       return;
     }
 
