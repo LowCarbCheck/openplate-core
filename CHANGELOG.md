@@ -7,6 +7,8 @@ change moves the minor.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-24
+
 ### Changed
 
 - **The instance decides what one AI request costs, not the caller** (M256/01).
