@@ -4,7 +4,7 @@
 # There is no cloud CI: pushes from the workstation are what trigger Argo's
 # build/deploy, so the tests belong in front of the push rather than after it.
 #
-# Runs: docs manifest -> quadlet units -> lint -> typecheck -> unit tests -> integration tests (needs Postgres) -> build.
+# Runs: docs manifest -> quadlet units -> lint -> format -> typecheck -> unit tests -> integration tests (needs Postgres) -> build.
 #
 # Escape hatches (use deliberately, they push untested code):
 #   SKIP_TESTS=1 git push        skip the whole gate
@@ -63,6 +63,11 @@ fi
 
 echo "▶ pre-push: lint"
 run pnpm lint
+
+# Prettier drifted across 44 files while this hook ran lint but not format:check
+# (found 2026-09-24, M253/04). The check costs seconds, so it guards every push.
+echo "▶ pre-push: format"
+run pnpm format:check
 
 echo "▶ pre-push: typecheck"
 run pnpm typecheck
