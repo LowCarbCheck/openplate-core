@@ -148,6 +148,13 @@
       "when": 1790167113760,
       "tag": "0020_gifted_skrulls",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790254671801,
+      "tag": "0021_petite_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

@@ -29,11 +29,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import { aiInstanceDays, aiUsageDays, accounts } from '../../src/db/schema.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from '../../src/ai/chat-body-policy.js';
+import type { JsonObject } from '../../src/lib/json.js';
 import { setupTestDatabase, type TestDatabase } from './db-harness.js';
 import {
   startService,
   sampleCiphertext,
   DEFAULT_AI_MAX_REQUEST_BYTES,
+  type HttpResponse,
   type ServiceHarness,
 } from './service-harness.js';
 
@@ -210,12 +213,16 @@ test("a signed-in account's completion is proxied, and the row counts it", async
     assert.equal(answered.headers.get('x-quota-limit'), '5');
 
     // The provider saw the OPERATOR's key and the caller's body, and never the
-    // caller's own token.
+    // caller's own token. The body carries one addition, the output ceiling,
+    // because this harness names no model (M256).
     assert.equal(received.length, 1);
     assert.equal(received[0]?.authorization, `Bearer ${UPSTREAM_KEY}`);
     assert.ok(!received[0]?.authorization?.includes(session.tokens.accessToken));
     assert.equal(received[0]?.path, '/chat/completions');
-    assert.deepEqual(JSON.parse(received[0]?.body ?? 'null'), completionRequest());
+    assert.deepEqual(JSON.parse(received[0]?.body ?? 'null'), {
+      ...completionRequest(),
+      max_tokens: DEFAULT_AI_MAX_OUTPUT_TOKENS,
+    });
 
     // `last_seen_at` moves on a proxied call, which is what makes the admin
     // list's "last seen" column mean anything on an instance where people use
@@ -757,6 +764,124 @@ test('/health advertises the model an instance WITH a key will use', async () =>
     // the operator configured an upstream, never that this caller may use it.
     assert.notEqual(health.body.instance.ai, null);
     assert.equal(health.body.instance.ai?.model, null, 'this harness advertises no model name');
+  } finally {
+    await service.close();
+  }
+});
+
+// ── the instance decides what one request may cost (M256/01) ───────────────
+
+/** The model an instance under test names, and the ceiling it sets. Small, so a capped value is plainly not the caller's. */
+const INSTANCE_MODEL = 'google/the-instance-model';
+const OUTPUT_CEILING = 1_000;
+
+/** A body that asks for every cost multiplier the proxy knows about, and one ordinary field it must keep. */
+function expensiveRequest(): JsonObject {
+  return {
+    model: 'openai/a-very-expensive-model',
+    messages: [{ role: 'user', content: 'what is on this plate?' }],
+    max_tokens: 200_000,
+    max_completion_tokens: 150_000,
+    n: 5,
+    models: ['anthropic/another-expensive-model', 'openai/a-third-one'],
+    route: 'fallback',
+    provider: { order: ['the-dearest-endpoint'], allow_fallbacks: false },
+    plugins: [{ id: 'web', max_results: 20 }],
+    web_search_options: { search_context_size: 'high' },
+    prediction: { type: 'content', content: 'a long predicted answer' },
+    reasoning: { effort: 'high', max_tokens: 100_000 },
+    temperature: 0.2,
+  };
+}
+
+/** What the fake upstream received last, parsed. */
+function lastForwardedBody(): JsonObject {
+  const last = received.at(-1);
+  if (last === undefined) throw new Error('the upstream received nothing');
+  // SAFETY: the proxy serialises a JSON object and nothing else, which the
+  // assertions below then read field by field.
+  return JSON.parse(last.body) as JsonObject;
+}
+
+async function postAs(
+  service: ServiceHarness,
+  input: { token: string; body: JsonObject },
+): Promise<HttpResponse<unknown>> {
+  return service.request<unknown>({
+    method: 'POST',
+    path: '/v1/chat/completions',
+    accessToken: input.token,
+    body: input.body,
+  });
+}
+
+test('with a model set, a foreign model, a huge max_tokens, n=5, models and plugins reach the provider rewritten', async () => {
+  const service = await startService({
+    db: database.db,
+    ai: {
+      baseUrl: upstreamBaseUrl,
+      apiKey: UPSTREAM_KEY,
+      advertisedModel: INSTANCE_MODEL,
+      maxOutputTokens: OUTPUT_CEILING,
+    },
+  });
+  try {
+    // An administrator, the account the old pass-through trusted most: the
+    // rule is for every account, not only for a trial.
+    const session = await service.signupThroughInvite({ email: 'admin@example.org', dailyAiLimit: 5, role: 'admin' });
+    const answered = await postAs(service, { token: session.tokens.accessToken, body: expensiveRequest() });
+    // QUIETLY: the caller is answered, never refused for the fields it sent.
+    assert.equal(answered.status, 200);
+
+    const forwarded = lastForwardedBody();
+    assert.equal(forwarded.model, INSTANCE_MODEL, 'the caller picked the model');
+    assert.equal(forwarded.max_tokens, OUTPUT_CEILING, 'max_tokens was not capped');
+    assert.equal(forwarded.max_completion_tokens, OUTPUT_CEILING, 'max_completion_tokens was not capped');
+    assert.equal(forwarded.n, 1, 'n answers cost n times one');
+    assert.deepEqual(forwarded.reasoning, { effort: 'high', max_tokens: OUTPUT_CEILING });
+    for (const field of ['models', 'route', 'provider', 'plugins', 'web_search_options', 'prediction']) {
+      assert.equal(field in forwarded, false, `${field} reached the provider`);
+    }
+    // THE CONTROL for "rewritten, not rebuilt": what the proxy has no rule for
+    // arrives exactly as sent.
+    assert.deepEqual(forwarded.messages, expensiveRequest().messages);
+    assert.equal(forwarded.temperature, 0.2);
+
+    // And `/health` names the model the proxy sends: one binding for both.
+    const health = await service.request<{ instance: { ai: { model: string | null } | null } }>({
+      method: 'GET',
+      path: '/health',
+    });
+    assert.equal(health.body.instance.ai?.model, INSTANCE_MODEL);
+  } finally {
+    await service.close();
+  }
+});
+
+test('with no model set, the caller model passes through and the output ceiling still applies', async () => {
+  const service = await startService({
+    db: database.db,
+    ai: { baseUrl: upstreamBaseUrl, apiKey: UPSTREAM_KEY, maxOutputTokens: OUTPUT_CEILING },
+  });
+  try {
+    const session = await service.signupThroughInvite({ email: 'anna@example.org', dailyAiLimit: 5 });
+    const token = session.tokens.accessToken;
+
+    assert.equal((await postAs(service, { token, body: expensiveRequest() })).status, 200);
+    const huge = lastForwardedBody();
+    // SELF-HOST FREEDOM: no model configured, so the caller's stands.
+    assert.equal(huge.model, 'openai/a-very-expensive-model');
+    assert.equal(huge.max_tokens, OUTPUT_CEILING);
+    assert.equal(huge.n, 1);
+    assert.equal('plugins' in huge, false);
+
+    // A body with no cap at all gets the ceiling written in, so no answer is unbounded.
+    await postAs(service, { token, body: { ...completionRequest() } });
+    assert.equal(lastForwardedBody().max_tokens, OUTPUT_CEILING);
+
+    // THE CONTROL for "capped, not replaced": a value under the ceiling is the caller's.
+    await postAs(service, { token, body: { ...completionRequest(), max_tokens: 300 } });
+    assert.equal(lastForwardedBody().max_tokens, 300);
   } finally {
     await service.close();
   }

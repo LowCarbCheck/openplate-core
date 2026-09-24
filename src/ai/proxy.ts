@@ -5,8 +5,9 @@
  * WHAT IT IS. A signed-in account posts an ordinary OpenAI-compatible request
  * with their OWN access token. This service spends one unit of their daily
  * allowance, swaps their token for the operator's real provider key, forwards
- * the body untouched, and relays the answer back. The account never learns the
- * provider key; the provider never learns the access token.
+ * the body with the instance's model and a bounded answer (`ai/chat-body-policy.ts`,
+ * M256), and relays the answer back. The account never learns the provider
+ * key; the provider never learns the access token.
  *
  * THE BODY IS A PLATE PHOTOGRAPH. It arrives here, it is serialised once, it is
  * handed to `undici`, and it is dropped when the promise settles. Nothing
@@ -24,26 +25,30 @@
  * which tables the difference row by row.
  *
  * ORDER OF OPERATIONS, and every step is where it is on purpose:
- *   1. identity   — no session on the request is a WIRING bug; fail closed.
- *   2. allowance  — a `dailyAiLimit` of 0 is refused before an upstream call,
+ *   1. identity   : no session on the request is a WIRING bug; fail closed.
+ *   2. allowance  : a `dailyAiLimit` of 0 is refused before an upstream call,
  *                   and so is an allowance whose end date has passed
  *                   (403 allowance-expired). Both refuse BEFORE step 3,
  *                   because a reservation writes a row.
- *   3. RESERVE    — before the call, never after. Counting after the fact has a
+ *   3. RESERVE    : before the call, never after. Counting after the fact has a
  *                   window in which N parallel requests all read the old count.
  *                   The INSTANCE's ceiling is taken first and the account's
  *                   second, so a refusal of the whole instance never bills one
  *                   person for it (503, and step 3a says why it is not a 429).
- *   4. forward    — the caller's `Authorization` is REPLACED, not merged.
- *   5. release?   — only when the provider cannot have billed us. See the
+ *   4. forward    : the caller's `Authorization` is REPLACED, not merged, and
+ *                   the body is rewritten by the instance's body policy: its
+ *                   model when one is set, a capped answer always, and no
+ *                   field that multiplies the cost of one request.
+ *   5. release?   : only when the provider cannot have billed us. See the
  *                   spent-vs-released table below; it is the money question.
- *   6. relay      — piped, never buffered, so `stream: true` streams.
+ *   6. relay      : piped, never buffered, so `stream: true` streams.
  *
  * ── THE SCAN TRIAL (M253) ───────────────────────────────────────────────────
  * An account with free scans and NO allowance date is counted per AI action
  * as well as per request. After the two allowance refusals and the body check
  * comes THE SCAN CLAIM (`ai/quota-store.ts`): one scan per `X-Intake-Id`, a
- * retry on the same id riding on it, a request with no id its own action. The
+ * retry on the same id riding on it until an answer was delivered (M256/02,
+ * one scan buys one answer), a request with no id its own action. The
  * last scan used is `403 trial-scans-spent`, before any usage row and before
  * any upstream call. A future date lifts the gate: it is a paid or granted
  * window, and the count only decides where there is no date at all. Then the
@@ -135,7 +140,8 @@
  * replaced by `lib/json.ts` decoders, which is the same check without the
  * dependency: this is a PROXY, so the only validation a body gets is "is it a
  * JSON object", and a strict schema would reject every field the provider adds
- * next month.
+ * next month. The body policy is not a validation: it rewrites a few named
+ * fields and passes every other field through as it came.
  */
 import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -149,6 +155,7 @@ import type { AccountStore } from '../accounts/account-store.js';
 import { ACCOUNT_SUSPENDED } from '../accounts/auth-handlers.js';
 import type { AiQuotaStore, TrialClaim } from './quota-store.js';
 import { describeError, scrubPayloads } from './scrub.js';
+import { applyChatBodyPolicy, type ChatBodyPolicy } from './chat-body-policy.js';
 import { randomUUID } from 'node:crypto';
 import {
   INTAKE_ID_INVALID,
@@ -188,6 +195,13 @@ export interface ChatCompletionsDeps {
    * Required and nullable for the reason `instanceDailyLimit` is.
    */
   trialInstanceDailyLimit: number | null;
+  /**
+   * The model and the output ceiling every forwarded body gets
+   * (`AI_ADVERTISED_MODEL`, `AI_MAX_OUTPUT_TOKENS`, M256). Required for the
+   * reason `instanceDailyLimit` is: a wiring change that forgot it must not
+   * compile into a proxy that lets the caller pick the cost again.
+   */
+  bodyPolicy: ChatBodyPolicy;
   /** Injectable so a test can freeze the UTC day boundary the quota keys on. */
   now?: () => Date;
 }
@@ -310,7 +324,15 @@ function createByteCounter(): ByteCounter {
 }
 
 export function createChatCompletionsHandler(deps: ChatCompletionsDeps): RequestHandler {
-  const { accounts, instanceDailyLimit, logger, quota, trialInstanceDailyLimit, upstream: upstreamConfig } = deps;
+  const {
+    accounts,
+    bodyPolicy,
+    instanceDailyLimit,
+    logger,
+    quota,
+    trialInstanceDailyLimit,
+    upstream: upstreamConfig,
+  } = deps;
   const now = deps.now ?? ((): Date => new Date());
   const upstreamUrl = `${upstreamConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
@@ -398,6 +420,7 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
       const released = await quota.releaseTrialScan({
         accountId: input.accountId,
         intakeId: input.scan.intakeId,
+        claim: input.scan.claim,
         undeliver: input.undeliver,
       });
       if (released.givenBack && !input.res.headersSent) {
@@ -525,12 +548,19 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     // it is JSON-shaped by construction; `asObject` re-establishes that at the
     // type level and yields `null` for anything that is not an object.
     const body = req.body as JsonValue | undefined;
-    if (asObject(body) === null) {
+    const bodyObject = asObject(body);
+    if (bodyObject === null) {
       // The parse failure is NOT quoted: the message would carry the input.
       res.status(400).json({ error: 'request body must be a JSON object' });
       return;
     }
-    const forwardedBody = Buffer.from(JSON.stringify(body), 'utf8');
+    // THE INSTANCE DECIDES WHAT ONE REQUEST MAY COST (M256): its model when
+    // one is set, a capped answer always, and none of the fields that multiply
+    // a request. Quietly, never a 400, see `ai/chat-body-policy.ts`.
+    const forwardedBody = Buffer.from(
+      JSON.stringify(applyChatBodyPolicy({ body: bodyObject, policy: bodyPolicy })),
+      'utf8',
+    );
 
     // THE INTAKE ID (M253), checked for every account and before any row is
     // written, so a client that sends a malformed one learns it on its first
@@ -713,7 +743,7 @@ export function createChatCompletionsHandler(deps: ChatCompletionsDeps): Request
     // caller who goes away keeps it, and so keeps the scan (M253).
     if (scan !== null) {
       try {
-        await quota.markTrialScanDelivered({ accountId: account.id, intakeId: scan.intakeId });
+        await quota.markTrialScanDelivered({ accountId: account.id, intakeId: scan.intakeId, claim: scan.claim });
       } catch (cause) {
         logger.warn('Could not mark a trial scan delivered', { accountId: account.id, error: describeError(cause) });
       }

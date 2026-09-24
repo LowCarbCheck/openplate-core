@@ -19,6 +19,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { createChatCompletionsHandler } from '../../src/ai/proxy.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from '../../src/ai/chat-body-policy.js';
 import { scrubPayloads, describeError } from '../../src/ai/scrub.js';
 import type { AiQuotaStore, ReserveResult } from '../../src/ai/quota-store.js';
 import { createBearerAuthMiddleware } from '../../src/server/bearer-auth.js';
@@ -248,6 +249,9 @@ async function startProxy(options: {
       logger: logger.logger,
       instanceDailyLimit: options.instanceDailyLimit ?? null,
       trialInstanceDailyLimit: null,
+      // The production wiring's shape with no model: the caller's model
+      // passes, and the output ceiling is still written in (M256).
+      bodyPolicy: { model: null, maxOutputTokens: DEFAULT_AI_MAX_OUTPUT_TOKENS },
       now: fixture.now,
     }),
   );
@@ -306,9 +310,10 @@ test('the upstream sees the operator key and none of the caller headers', async 
   assert.equal(forwarded.cookie, undefined);
   assert.equal(forwarded.apiKey, undefined);
   assert.equal(forwarded.contentType, 'application/json');
-  // The body passed through untouched: this is a proxy, so the only validation
-  // it applies is "is it a JSON object".
-  assert.deepEqual(JSON.parse(forwarded.body), { model: 'm', messages: [] });
+  // The body passed through with one addition: this is a proxy, so the only
+  // validation it applies is "is it a JSON object", and the one field it
+  // writes with no model configured is the output ceiling (M256).
+  assert.deepEqual(JSON.parse(forwarded.body), { model: 'm', messages: [], max_tokens: DEFAULT_AI_MAX_OUTPUT_TOKENS });
 
   await harness.close();
 });

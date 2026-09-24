@@ -606,14 +606,16 @@ export const aiInstanceDays = pgTable('ai_instance_days', {
  *
  * WHY IT EXISTS. A scan is one AI action the person started, and one action
  * can be more than one upstream request: the app retries once without
- * `response_format` after a provider refusal, and once after a stale bearer.
- * The app sends one `X-Intake-Id` per action, and this row is what lets a
- * retry ride on the scan the first request claimed instead of costing a
- * second. It is also how a failed action gives its scan back: `requests`
- * counts the requests still riding on it, and `delivered` says whether any of
- * them reached the person with an answer.
+ * `response_format` after a provider refusal. (Its retry after a stale bearer
+ * is refused by the bearer check and never reaches the claim.) The app sends
+ * one `X-Intake-Id` per action, and this row is what lets a retry ride on the
+ * scan the first request claimed instead of costing a second. It is also how
+ * a failed action gives its scan back: `requests` counts the requests still
+ * riding on it, and `delivered` says whether any of them reached the person
+ * with an answer. A delivered row is never ridden on again (M256/02): one scan
+ * buys one answer, and the next request on the id claims a new scan.
  *
- * AN OPAQUE ID, A TIME AND TWO NUMBERS, NOTHING ELSE. No prompt, no model, no
+ * AN OPAQUE ID, A TIME AND THREE NUMBERS, NOTHING ELSE. No prompt, no model, no
  * answer. Only scan-trial accounts write here; everybody else never does. The
  * hourly usage sweep (`ai/usage-retention.ts`) deletes rows older than a day.
  */
@@ -630,6 +632,14 @@ export const aiTrialIntakes = pgTable(
     requests: integer('requests').default(0).notNull(),
     /** Whether an upstream 2xx arrived for it, after which a client disconnect keeps the scan. */
     delivered: boolean('delivered').default(false).notNull(),
+    /**
+     * Which claim on this id the row carries now: 1 for the first scan, one
+     * more for each new scan claimed on the same id (M256/02). A give-back or
+     * a delivery names the claim it belongs to and does nothing on any other,
+     * so a late failure of an old request never returns the scan a newer
+     * request claimed.
+     */
+    claim: integer('claim').default(0).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.accountId, table.intakeId] }),

@@ -111,6 +111,7 @@ import type { FeedbackImageStore } from '../feedback/feedback-image-store.js';
 import type { FeedbackStore } from '../feedback/feedback-store.js';
 import type { AiQuotaStore } from '../ai/quota-store.js';
 import type { AiUpstreamConfig } from '../ai/proxy.js';
+import type { ChatBodyPolicy } from '../ai/chat-body-policy.js';
 import { createBearerAuthMiddleware, createEntitledUserResolver } from './bearer-auth.js';
 import { createCorsMiddleware } from './cors.js';
 import { createErrorMiddleware, handleNotFound } from './error-middleware.js';
@@ -205,6 +206,11 @@ export interface AiSurfaceOptions {
    * from here.
    */
   trialInstanceDailyLimit?: number | null;
+  /**
+   * The model and output ceiling every forwarded chat body gets (M256).
+   * Required: see `ChatCompletionsDeps.bodyPolicy`.
+   */
+  bodyPolicy: ChatBodyPolicy;
 }
 
 /**
@@ -582,6 +588,7 @@ export function createApp(options: CreateAppOptions): Express {
       maxRequestBytes: ai.maxRequestBytes,
       instanceDailyLimit: ai.instanceDailyLimit,
       trialInstanceDailyLimit: ai.trialInstanceDailyLimit ?? null,
+      bodyPolicy: ai.bodyPolicy,
     });
   }
 

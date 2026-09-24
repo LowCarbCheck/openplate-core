@@ -121,7 +121,10 @@ services:
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-}
       UPSTREAM_API_KEY: ${UPSTREAM_API_KEY:-}
       UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-120000}
+      # The model the proxy sends every request to. Empty passes the caller's.
       AI_ADVERTISED_MODEL: ${AI_ADVERTISED_MODEL:-}
+      # The most output tokens one request may ask for, with or without a model.
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-8192}
       AI_RATE_LIMIT_PER_MINUTE: ${AI_RATE_LIMIT_PER_MINUTE:-20}
       # Sized for a camera photograph after base64, NOT for a stored blob.
       AI_MAX_REQUEST_BYTES: ${AI_MAX_REQUEST_BYTES:-8000000}

@@ -204,6 +204,10 @@ async function main(): Promise<void> {
           maxRequestBytes: config.aiMaxRequestBytes,
           instanceDailyLimit: config.aiInstanceDailyLimit,
           trialInstanceDailyLimit: config.aiTrialInstanceDailyLimit,
+          // THE SAME BINDING `/health` publishes below (M256): the model an
+          // instance names is the model its proxy sends, so the two cannot
+          // disagree.
+          bodyPolicy: { model: config.aiAdvertisedModel, maxOutputTokens: config.aiMaxOutputTokens },
         };
 
   const instance: InstanceInfo = {
@@ -224,8 +228,9 @@ async function main(): Promise<void> {
     openSignup: openSignup !== null,
     // DESCRIPTIVE, NEVER A GRANT. It says an upstream is configured, not that
     // the caller may use it: an account with `dailyAiLimit: 0` gets a 403
-    // whatever this says. The model name is advertising copy the operator
-    // chose, and `null` when they chose none.
+    // whatever this says. The model name is the one the proxy writes into
+    // every forwarded body (M256), and `null` when the operator chose none,
+    // in which case the caller's own model passes through.
     //
     // THE INSTANCE CEILING IS DELIBERATELY NOT HERE, and this is where a reader
     // looking for it will look. `AI_INSTANCE_DAILY_LIMIT` is the operator's

@@ -1,0 +1,1 @@
+ALTER TABLE "ai_trial_intakes" ADD COLUMN "claim" integer DEFAULT 0 NOT NULL;

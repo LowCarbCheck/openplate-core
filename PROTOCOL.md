@@ -463,7 +463,7 @@ Unauthenticated, deliberately: a client must be able to discover that it is inco
 }
 ```
 
-`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `openSignup` says whether a person may ask for an account here (§5.8.3), `signupCaptcha` says what that request needs, `trial` promises the free scans a new account gets (§5.19), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), `nutrientReferenceBasis` says whose micronutrient reference values it shows, and `ai` is `null` when no upstream key is configured.
+`instance` describes what this deployment is and what it can do, and it is **optional**: a service older than the field omits it, and a client that requires it would refuse to talk to every such instance. `name` is the operator's label for the instance, `language` is one of `en`, `de`, `fr`, `it`, `es`, `tr` (the six languages its mail is written in; a client shows it and never branches on it, so a seventh is not a protocol change), `mail` says whether it can send a letter at all, `memberInvites` says whether an ordinary member may invite people here (§5.21), `openSignup` says whether a person may ask for an account here (§5.8.3), `signupCaptcha` says what that request needs, `trial` promises the free scans a new account gets (§5.19), `plans` says whether a biller stands behind this instance so `/v1/plans/*` exists (§5.22), `push` says whether this instance can send web push so `/v1/push/*` exists (§5.24), `nutrientReferenceBasis` says whose micronutrient reference values it shows, and `ai` is `null` when no upstream key is configured. `ai.model` is the model the proxy sends every request to (§5.19), or `null` when the operator named none and the caller's own model is sent.
 
 `push` follows `plans` exactly: a boolean that says only whether a door exists. `false` means the whole `/v1/push` subtree answers the ordinary unknown-path `404`, so a client draws no notification settings. It says nothing about what a push contains, because a push contains a kind and nothing else (§5.24).
 
@@ -988,8 +988,28 @@ before offering a scan rather than probing the path.
 Authenticated with the account's ordinary **access token** (§4.1). The body is
 an OpenAI-compatible chat-completion request and this specification does not
 constrain it further: the service checks only that it is a JSON object, because
-a stricter schema would reject every field the next provider adds. The response
-is the provider's, relayed with its status.
+a stricter schema would reject every field the next provider adds. It then
+rewrites the few fields that set what one request costs (below) and forwards
+every other field as it came. The response is the provider's, relayed with its
+status.
+
+**The instance decides what one request may cost.** One upstream key may serve
+every account on an instance, and a daily count of requests says nothing about
+what one request costs. So the service rewrites these fields before it
+forwards, for every account, and never refuses a request for them:
+
+| Field                                                                        | What the provider receives                                                                                                                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`                                                                      | the instance's model, `AI_ADVERTISED_MODEL`, the same value `instance.ai.model` publishes (§5.6). When the operator set none, the caller's `model` is sent unchanged. |
+| `max_tokens`, `max_completion_tokens`                                        | at most `AI_MAX_OUTPUT_TOKENS` (default 8192). A value above it, or one that is not a number, becomes the ceiling. A body with neither gets `max_tokens` written in.  |
+| `reasoning.max_tokens`                                                       | at most the same ceiling. `reasoning.effort` is kept.                                                                                                                 |
+| `n`                                                                          | `1`, when present.                                                                                                                                                    |
+| `models`, `route`, `provider`, `plugins`, `web_search_options`, `prediction` | removed.                                                                                                                                                              |
+
+The ceiling applies with or without a model. A client that needs a longer
+answer than the ceiling allows gets a truncated one, and the operator raises
+`AI_MAX_OUTPUT_TOKENS`. A self-hosted instance that wants its people to pick
+the model leaves `AI_ADVERTISED_MODEL` unset.
 
 ```
 POST /v1/chat/completions
@@ -1112,7 +1132,8 @@ An account may carry free AI scans with no end date (`AccountView.trialScans`,
 §5.15), granted by the instance's trial (`instance.trial`, §5.6). **A scan is
 one AI action the person started**, and one action may be more than one
 upstream request: a client may retry once without `response_format` after a
-provider refusal, and once after a stale bearer.
+provider refusal. (A retry after a stale bearer is refused by the bearer check,
+§4.1, before any claim.) **One scan buys one delivered answer.**
 
 `X-Intake-Id` is how a client says which requests are one action. It is
 **optional**, 16 to 64 characters of `A-Z a-z 0-9 _ -` (a UUID with or without
@@ -1124,8 +1145,13 @@ configured themselves. The service:
   statement whose `WHERE` is the bound, so ten parallel requests on three scans
   claim three;
 - lets a later request with the same id ride on that scan while the id is
-  younger than 30 minutes and has carried fewer than 3 requests, and makes a
-  fourth request, or one after 30 minutes, a new action with a new scan;
+  younger than 30 minutes, has carried fewer than 2 requests and has
+  **delivered no answer**; a request after a delivered answer, a third
+  request, or one after 30 minutes is a new action with a new scan, refused
+  with `403 trial-scans-spent` when none is left;
+- ties each give-back and each delivery to the claim it belongs to, so a
+  request that fails late never returns a scan a newer request on the same id
+  claimed;
 - serialises parallel requests with one new id, so they claim exactly one
   scan between them;
 - treats a request with **no** id as its own action, so a client that never

@@ -263,10 +263,11 @@ export interface AiInstanceCeilingStore {
 // =============================================================================
 
 /**
- * A claimed or reused scan: the intake it rides on, and the scans left after
- * this request. `ok: false` is the last scan already used.
+ * A claimed or reused scan: the intake it rides on, which claim on that intake
+ * it is (M256/02), and the scans left after this request. `ok: false` is the
+ * last scan already used.
  */
-export type TrialClaim = { ok: true; intakeId: string; left: number } | { ok: false };
+export type TrialClaim = { ok: true; intakeId: string; claim: number; left: number } | { ok: false };
 
 /**
  * Thrown inside the claim transaction to roll it back when no scan is left,
@@ -292,9 +293,12 @@ class TrialScansSpentSignal extends Error {
  *     then locked (`FOR UPDATE`). Two parallel requests with one new id
  *     serialise here: the second one's insert waits for the first to commit,
  *     finds the row, and reuses the scan the first one claimed.
- *  2. A row that is younger than {@link INTAKE_REUSE_WINDOW_MS} and carries
- *     fewer than {@link INTAKE_MAX_REQUESTS} requests is reused: `requests + 1`
- *     and no new scan. Anything else claims one:
+ *  2. A row that is younger than {@link INTAKE_REUSE_WINDOW_MS}, carries
+ *     fewer than {@link INTAKE_MAX_REQUESTS} requests and has DELIVERED
+ *     NOTHING is reused: `requests + 1` and no new scan. A delivered row is
+ *     never reused (M256/02): one scan buys one answer, and the request after
+ *     an answer is a new action even under the same id. Anything else claims
+ *     one:
  *
  *     ```sql
  *     UPDATE accounts SET trial_scans_used = trial_scans_used + 1
@@ -303,11 +307,19 @@ class TrialScansSpentSignal extends Error {
  *     ```
  *
  *     No row back is the last scan already used, and the whole transaction
- *     rolls back so no intake row is left behind.
+ *     rolls back so no intake row is left behind. A claimed scan resets the
+ *     row and moves its `claim` number up by one.
  *
  * THE GIVE-BACK undoes one request: `requests - 1`, and when that reaches zero
  * on an intake that never delivered an answer, the row goes and the scan is
  * returned, floored at zero like every release here.
+ *
+ * THE CLAIM NUMBER TIES A GIVE-BACK AND A DELIVERY TO THEIR SCAN (M256/02).
+ * Every request is handed the number its claim carried, and both writes match
+ * it. Without it, a request still running when a newer request claimed a new
+ * scan on the same id could return THAT scan by failing late, or mark it
+ * delivered by succeeding late, and the newer request's own failure would
+ * then return nothing. A write for an older claim changes nothing.
  */
 export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
   return {
@@ -319,7 +331,12 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
             .values({ accountId: input.accountId, intakeId: input.intakeId, createdAt: input.now, requests: 0 })
             .onConflictDoNothing();
           const [intake] = await tx
-            .select({ requests: aiTrialIntakes.requests, createdAt: aiTrialIntakes.createdAt })
+            .select({
+              requests: aiTrialIntakes.requests,
+              createdAt: aiTrialIntakes.createdAt,
+              delivered: aiTrialIntakes.delivered,
+              claim: aiTrialIntakes.claim,
+            })
             .from(aiTrialIntakes)
             .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)))
             .for('update');
@@ -327,6 +344,7 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
 
           const isReusable =
             intake.requests > 0 &&
+            !intake.delivered &&
             intake.requests < INTAKE_MAX_REQUESTS &&
             input.now.getTime() - intake.createdAt.getTime() < INTAKE_REUSE_WINDOW_MS;
           if (isReusable) {
@@ -339,7 +357,7 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
               .from(accounts)
               .where(eq(accounts.id, input.accountId));
             const left = Math.max(0, (account?.granted ?? 0) - (account?.used ?? 0));
-            return { ok: true, intakeId: input.intakeId, left };
+            return { ok: true, intakeId: input.intakeId, claim: intake.claim, left };
           }
 
           const [claimed] = await tx
@@ -355,11 +373,17 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
             .returning({ granted: accounts.trialScans, used: accounts.trialScansUsed });
           if (!claimed) throw new TrialScansSpentSignal();
 
+          const claim = intake.claim + 1;
           await tx
             .update(aiTrialIntakes)
-            .set({ requests: 1, delivered: false, createdAt: input.now })
+            .set({ requests: 1, delivered: false, createdAt: input.now, claim })
             .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)));
-          return { ok: true, intakeId: input.intakeId, left: Math.max(0, (claimed.granted ?? 0) - claimed.used) };
+          return {
+            ok: true,
+            intakeId: input.intakeId,
+            claim,
+            left: Math.max(0, (claimed.granted ?? 0) - claimed.used),
+          };
         });
       } catch (error) {
         if (error instanceof TrialScansSpentSignal) return { ok: false };
@@ -370,10 +394,17 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
     async releaseTrialScan(input: {
       accountId: number;
       intakeId: string;
+      claim: number;
       undeliver: boolean;
     }): Promise<{ givenBack: boolean }> {
       return await db.transaction(async (tx): Promise<{ givenBack: boolean }> => {
-        const where = and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId));
+        // THE CLAIM IS PART OF THE KEY: a give-back for an older claim finds
+        // no row and returns nothing, see the section header.
+        const where = and(
+          eq(aiTrialIntakes.accountId, input.accountId),
+          eq(aiTrialIntakes.intakeId, input.intakeId),
+          eq(aiTrialIntakes.claim, input.claim),
+        );
         const changes: PgUpdateSetSource<typeof aiTrialIntakes> = { requests: sql`${aiTrialIntakes.requests} - 1` };
         // The relay failed after the headers: the person got no answer after
         // all, so the delivery this request stamped does not count.
@@ -396,11 +427,17 @@ export function createDrizzleAiTrialScans(db: Database): AiTrialScanStore {
       });
     },
 
-    async markTrialScanDelivered(input: { accountId: number; intakeId: string }): Promise<void> {
+    async markTrialScanDelivered(input: { accountId: number; intakeId: string; claim: number }): Promise<void> {
       await db
         .update(aiTrialIntakes)
         .set({ delivered: true })
-        .where(and(eq(aiTrialIntakes.accountId, input.accountId), eq(aiTrialIntakes.intakeId, input.intakeId)));
+        .where(
+          and(
+            eq(aiTrialIntakes.accountId, input.accountId),
+            eq(aiTrialIntakes.intakeId, input.intakeId),
+            eq(aiTrialIntakes.claim, input.claim),
+          ),
+        );
     },
 
     async purgeTrialIntakesBefore(input: { before: Date }): Promise<number> {
@@ -457,11 +494,22 @@ export interface AiTrialScanStore {
    * Gives one request back, and the scan with it when it was the last request
    * on an intake that delivered nothing. `undeliver` first clears the delivery
    * this request stamped, for an upstream body that failed after its headers.
-   * Never throws out of the proxy's hands (see its give-back).
+   * `claim` is the number {@link claimTrialScan} answered: a give-back for an
+   * older claim changes nothing (M256/02). Never throws out of the proxy's
+   * hands (see its give-back).
    */
-  releaseTrialScan(input: { accountId: number; intakeId: string; undeliver: boolean }): Promise<{ givenBack: boolean }>;
-  /** Stamps the intake delivered when an upstream 2xx's headers arrive: a client disconnect after that keeps the scan. */
-  markTrialScanDelivered(input: { accountId: number; intakeId: string }): Promise<void>;
+  releaseTrialScan(input: {
+    accountId: number;
+    intakeId: string;
+    claim: number;
+    undeliver: boolean;
+  }): Promise<{ givenBack: boolean }>;
+  /**
+   * Stamps the intake delivered when an upstream 2xx's headers arrive: a
+   * client disconnect after that keeps the scan, and the next request on the
+   * id claims a new one. Only for the claim named, like the give-back.
+   */
+  markTrialScanDelivered(input: { accountId: number; intakeId: string; claim: number }): Promise<void>;
   /** Deletes intake rows older than `before`. Driven hourly by `ai/usage-retention.ts`. */
   purgeTrialIntakesBefore(input: { before: Date }): Promise<number>;
   /**

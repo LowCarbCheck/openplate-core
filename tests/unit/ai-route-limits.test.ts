@@ -28,6 +28,7 @@ import express from 'express';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { registerAiRoute, CHAT_COMPLETIONS_PATH } from '../../src/ai/register-ai-route.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from '../../src/ai/chat-body-policy.js';
 import { createErrorMiddleware } from '../../src/server/error-middleware.js';
 import type { AiQuotaStore, ReserveResult } from '../../src/ai/quota-store.js';
 import { createBearerAuthMiddleware } from '../../src/server/bearer-auth.js';
@@ -134,6 +135,7 @@ async function startRoute(options: { maxRequestBytes?: number } = {}): Promise<R
     // handler, and `ai-proxy.test.ts` owns the ceiling's own properties.
     instanceDailyLimit: null,
     trialInstanceDailyLimit: null,
+    bodyPolicy: { model: null, maxOutputTokens: DEFAULT_AI_MAX_OUTPUT_TOKENS },
   });
   // The terminal handler the real app mounts last. Present so a test can see
   // that the route's own handler answered rather than falling through to it.

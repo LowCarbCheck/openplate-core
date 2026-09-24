@@ -117,7 +117,8 @@ service is the thing that stands between your users and your bill.
 ```bash
 UPSTREAM_BASE_URL=https://openrouter.ai/api/v1
 UPSTREAM_API_KEY=sk-...            # both, or neither. One alone is a boot failure.
-AI_ADVERTISED_MODEL=some/model     # optional, advertising copy for the app
+AI_ADVERTISED_MODEL=some/model     # optional, the model every request is sent to
+AI_MAX_OUTPUT_TOKENS=8192          # most output tokens per request, default 8192
 AI_RATE_LIMIT_PER_MINUTE=20        # per account, default 20
 UPSTREAM_TIMEOUT_MS=120000         # per request, default two minutes
 AI_INSTANCE_DAILY_LIMIT=2000       # optional, whole instance, per UTC day
@@ -126,8 +127,19 @@ AI_INSTANCE_DAILY_LIMIT=2000       # optional, whole instance, per UTC day
 With both set, a signed-in account posts an ordinary OpenAI-compatible request
 to `POST /v1/chat/completions` **with its own access token**. This service
 spends one unit of that account's daily allowance, replaces the token with your
-provider key, forwards the body untouched, and streams the answer back. The
-account never learns your key. The provider never learns the account's token.
+provider key, forwards the body, and streams the answer back. The account never
+learns your key. The provider never learns the account's token.
+
+**Your instance decides what one request costs, not the caller.** The body goes
+through as sent except for the fields that set its price. With
+`AI_ADVERTISED_MODEL` set, `model` is replaced by it, for every account. Leave
+it unset and the caller's model is sent, if you want your people to pick. With
+or without it, `max_tokens` and `max_completion_tokens` are capped at
+`AI_MAX_OUTPUT_TOKENS` (written in when the body has neither), so is
+`reasoning.max_tokens`, `n` becomes 1, and `models`, `route`, `provider`,
+`plugins`, `web_search_options` and `prediction` are removed. Nothing is
+refused for these fields, so a client that sends them still gets an answer.
+PROTOCOL.md §5.19 has the table.
 
 **The allowance is per account, per UTC day, and it defaults to zero.** A new
 invite hands out no AI at all unless you say otherwise, so an operator who
@@ -173,8 +185,9 @@ them. An account from open sign-up, from an invite minted with
 `pnpm sync-api invites create --trial`, or (with `MEMBER_INVITE_TRIAL=true`)
 from a member's invitation gets that many scans with no end date. A scan is one
 AI action the person started: the app sends one `X-Intake-Id` per action, a
-retry of it rides on the same scan, and an action that got no answer gives its
-scan back. After the last scan the proxy answers `403 trial-scans-spent`. A
+retry of it rides on the same scan until an answer is delivered, and an action
+that got no answer gives its scan back. One scan buys one answer: a request
+after an answer claims a new scan, even under the same id. After the last scan the proxy answers `403 trial-scans-spent`. A
 future allowance date, which a payment writes, lifts the count. One mailbox gets
 one trial, also after the account is deleted: deleting an account then keeps
 only a keyed hash of the mailbox and scrubs the address from its invite rows.
@@ -438,7 +451,7 @@ never reaches the service. `INSTANCE_NAME`, `INSTANCE_LANGUAGE`,
 `SERVER_PUBLIC_URL`, `CLIENT_BASE_URL`, `TRUST_PROXY`, `LOG_LEVEL`,
 `SYNC_SHARING`, `SYNC_RESEARCH`, `DATABASE_SSL`, `SYNC_NOTICE`,
 `SYNC_NOTICE_URL`, `MAIL_API_*`, `UPSTREAM_BASE_URL`, `UPSTREAM_API_KEY`,
-`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL`, `AI_RATE_LIMIT_PER_MINUTE`,
+`UPSTREAM_TIMEOUT_MS`, `AI_ADVERTISED_MODEL`, `AI_MAX_OUTPUT_TOKENS`, `AI_RATE_LIMIT_PER_MINUTE`,
 `AI_MAX_REQUEST_BYTES`, `SYNC_FEEDBACK`, `FEEDBACK_DAILY_LIMIT`,
 `FEEDBACK_MAX_REQUEST_BYTES`, `AI_INSTANCE_DAILY_LIMIT`,
 `MEMBER_INVITE_DAILY_AI_LIMIT`, `MEMBER_INVITE_ALLOWANCE_DAYS`,

@@ -7,6 +7,40 @@ change moves the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **The instance decides what one AI request costs, not the caller** (M256/01).
+  The proxy used to forward the chat body unchanged, so with open sign-up any
+  stranger could pick an expensive model or a huge answer on the operator's
+  key and drain it for every account. Now, for every account:
+  `AI_ADVERTISED_MODEL`, when set, replaces `model` in every forwarded body
+  (unset still passes the caller's model, for a self-hosted instance that wants
+  that); `max_tokens`, `max_completion_tokens` and `reasoning.max_tokens` are
+  capped at the new `AI_MAX_OUTPUT_TOKENS` (default 8192), and a body with no
+  cap gets `max_tokens` written in; `n` becomes 1; `models`, `route`,
+  `provider`, `plugins`, `web_search_options` and `prediction` are removed.
+  Nothing is refused for these fields. PROTOCOL.md §5.19 has the table.
+- **One scan buys one delivered answer** (M256/02). An intake id whose request
+  delivered an answer is no longer reused: the next request on it claims a new
+  scan, or is refused with `403 trial-scans-spent` when none is left. A retry
+  after an attempt that got no answer still costs nothing more. One id now
+  carries at most two overlapping requests on one scan, not three: the app
+  sends at most two per action, and its retry after a stale bearer never
+  reaches the claim.
+- **A late give-back cannot return a newer scan** (M256/02). Each intake row
+  carries a claim number (migration `0021_petite_black_tarantula`, one new
+  column `ai_trial_intakes.claim`), and a give-back or a delivery only acts on
+  the claim it belongs to.
+- **One mailbox gets one trial under a race** (M256/02). Redemption and the
+  lapsed-trial grant take a transaction-scoped advisory lock on the mailbox
+  hash before they ask whether the mailbox had a trial, so two spellings
+  redeemed at the same moment grant one trial.
+
+### Added
+
+- **`AI_MAX_OUTPUT_TOKENS`**, the most output tokens one proxied request may ask
+  for, default 8192. Forwarded by `docker/compose.yml` and the quadlet.
+
 ## [0.21.0] - 2026-09-23
 
 ### Changed

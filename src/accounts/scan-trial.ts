@@ -33,11 +33,18 @@ export const INTAKE_REUSE_WINDOW_MS = 30 * 60 * 1000;
 
 /**
  * How many upstream requests one intake id may make on one scan: the first
- * try plus the app's two retries (one without `response_format`, one after a
- * stale bearer). A fourth request on the same id is a new person action, or a
- * client that reuses ids, and it costs a new scan.
+ * try plus the app's one retry without `response_format` (M256/02 measured it;
+ * the app's retry after a stale bearer is refused by the bearer check and
+ * never reaches the claim). A third request on the same id is a new person
+ * action, or a client that reuses ids, and it costs a new scan. So does any
+ * request after one on the id delivered an answer, whatever this count says.
+ *
+ * TWO, NOT THREE, because the count only matters for requests that overlap: a
+ * failed request gives its scan back before it answers, so a sequential retry
+ * claims afresh anyway. Overlapping requests on one id are the one way to get
+ * more than one answer for one scan, and the app never sends them.
  */
-export const INTAKE_MAX_REQUESTS = 3;
+export const INTAKE_MAX_REQUESTS = 2;
 
 /** How long an intake row is kept at all. The hourly usage sweep deletes older ones. */
 export const INTAKE_RETENTION_MS = 24 * 60 * 60 * 1000;

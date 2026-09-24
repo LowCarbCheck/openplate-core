@@ -57,6 +57,7 @@ import { createDrizzleBlobRollbackStore } from '../../src/db/blob-rollback-store
 import { createDrizzleInstanceSettingsStore } from '../../src/db/settings-store.js';
 import { startInstanceSettings, type InstanceSettings } from '../../src/instance/instance-settings.js';
 import type { InstanceInfo, NutrientReferenceBasis } from '../../src/protocol.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from '../../src/ai/chat-body-policy.js';
 
 export interface HttpResponse<T> {
   status: number;
@@ -244,8 +245,14 @@ export interface StartServiceOptions {
     apiKey: string;
     timeoutMs?: number;
     perMinute?: number;
+    /**
+     * `AI_ADVERTISED_MODEL`. Absent publishes no model and lets the caller's
+     * model through, exactly as `main.ts` wires the same binding (M256).
+     */
     advertisedModel?: string;
     maxRequestBytes?: number;
+    /** `AI_MAX_OUTPUT_TOKENS`. Absent is the production default. */
+    maxOutputTokens?: number;
     /**
      * The whole instance's ceiling in requests per UTC day
      * (`AI_INSTANCE_DAILY_LIMIT`). Absent means NO ceiling, which is what
@@ -472,6 +479,11 @@ export async function startService(options: StartServiceOptions): Promise<Servic
           instanceDailyLimit: options.ai.instanceDailyLimit ?? null,
           // `null` by default for the reason `instanceDailyLimit` is (M253).
           trialInstanceDailyLimit: options.ai.trialInstanceDailyLimit ?? null,
+          // ONE BINDING FOR `/health` AND THE PROXY, as in `main.ts` (M256).
+          bodyPolicy: {
+            model: options.ai.advertisedModel ?? null,
+            maxOutputTokens: options.ai.maxOutputTokens ?? DEFAULT_AI_MAX_OUTPUT_TOKENS,
+          },
         };
 
   const feedbackSurface =

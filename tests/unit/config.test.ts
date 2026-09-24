@@ -646,3 +646,13 @@ test('the trial sub-ceiling refuses zero and refuses an instance with no trial t
     1000,
   );
 });
+
+test('AI_MAX_OUTPUT_TOKENS defaults to 8192, takes a positive integer, and refuses anything else', () => {
+  // ALWAYS SET, unlike the instance ceiling above: an unbounded answer is the
+  // cost path M256 closes, so there is no "off" (M256/01).
+  assert.equal(parseConfig(baseEnv()).aiMaxOutputTokens, 8192);
+  assert.equal(parseConfig(baseEnv({ AI_MAX_OUTPUT_TOKENS: '2048' })).aiMaxOutputTokens, 2048);
+  for (const invalid of ['0', '-1', '1.5', 'lots']) {
+    assert.throws(() => parseConfig(baseEnv({ AI_MAX_OUTPUT_TOKENS: invalid })), /AI_MAX_OUTPUT_TOKENS/, invalid);
+  }
+});

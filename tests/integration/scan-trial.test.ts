@@ -6,8 +6,12 @@
  *
  *  - the ladder: two scans, then `403 trial-scans-spent`; a future date lifts
  *    the gate; a passed date is still `allowance-expired`;
- *  - one scan per intake id, a retry riding on it, a fourth request or one
- *    after thirty minutes costing a new one, and no id meaning its own scan;
+ *  - one scan per intake id, an overlapping request riding on it, a request
+ *    after a delivered answer, a third overlapping request or one after
+ *    thirty minutes costing a new one, and no id meaning its own scan
+ *    (M256/02: one scan buys one delivered answer);
+ *  - a give-back or a delivery for an older claim on an id changes nothing
+ *    (M256/02);
  *  - the give-back: a 4xx, a 5xx, a connect error and a body cut mid-stream
  *    leave the count where it was, a 2xx moves it, and a 5xx still spends the
  *    daily unit;
@@ -207,6 +211,24 @@ function intake(label: string): string {
   return `intake${label.padStart(12, '0')}`;
 }
 
+/**
+ * Waits until an intake row carries `requests` requests, with a bound, so a
+ * test can send the next request while the earlier ones are still in flight
+ * rather than guessing a sleep.
+ */
+async function waitForIntakeRequests(input: { intakeId: string; requests: number }): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const [row] = await database.db
+      .select({ requests: aiTrialIntakes.requests })
+      .from(aiTrialIntakes)
+      .where(eq(aiTrialIntakes.intakeId, input.intakeId));
+    if (row !== undefined && row.requests >= input.requests) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`intake ${input.intakeId} never carried ${input.requests} requests`);
+}
+
 // ── the ladder ─────────────────────────────────────────────────────────────
 
 test('two scans, then 403 trial-scans-spent before any upstream call or usage row', async () => {
@@ -263,34 +285,60 @@ test('an account with no scan trial is never counted and never sees the header',
 
 // ── the intake id ──────────────────────────────────────────────────────────
 
-test('two requests with one intake id cost one scan; two ids cost two', async () => {
+test('a delivered intake id is not reused: the next request claims a new scan, then is refused', async () => {
+  // M256/02: ONE SCAN BUYS ONE DELIVERED ANSWER. Before it, a client could
+  // send one id three times and get three answers for one scan.
   await withService({}, async (service) => {
-    const one = await trialAccount(service, { email: 'one-id@example.org', granted: 5 });
-    await scan(service, { token: one, intakeId: intake('same') });
-    await scan(service, { token: one, intakeId: intake('same') });
-    assert.equal(await usedScans('one-id@example.org'), 1);
+    const token = await trialAccount(service, { email: 'delivered@example.org', granted: 2 });
+    const first = await scan(service, { token, intakeId: intake('same') });
+    assert.equal(first.status, 200);
+    assert.equal(first.headers.get('x-trial-scans-left'), '1');
 
-    // THE CONTROL: the same two requests under two ids.
-    const two = await trialAccount(service, { email: 'two-ids@example.org', granted: 5 });
-    await scan(service, { token: two, intakeId: intake('x') });
-    await scan(service, { token: two, intakeId: intake('y') });
-    assert.equal(await usedScans('two-ids@example.org'), 2);
+    const again = await scan(service, { token, intakeId: intake('same') });
+    assert.equal(again.status, 200);
+    assert.equal(again.headers.get('x-trial-scans-left'), '0', 'the answer after an answer rode on the spent scan');
+    assert.equal(await usedScans('delivered@example.org'), 2);
+
+    const refused = await scan(service, { token, intakeId: intake('same') });
+    assert.equal(refused.status, 403);
+    assert.deepEqual(refused.body, { error: 'trial-scans-spent' });
+    assert.equal(upstreamCalls, 2, 'the refused request never reached the provider');
   });
 });
 
-test('a fourth request on one id, or one after thirty minutes, costs a new scan', async () => {
+test('a retry after an attempt that got no answer costs nothing more on the same id', async () => {
+  // THE CONTROL for the rule above: it is the ANSWER that spends the scan,
+  // not the id. The app's one retry follows a refusal, which delivered nothing.
   await withService({}, async (service) => {
-    const token = await trialAccount(service, { email: 'fourth@example.org', granted: 5 });
-    for (let request = 1; request <= 3; request += 1) await scan(service, { token, intakeId: intake('r') });
-    assert.equal(await usedScans('fourth@example.org'), 1);
-    await scan(service, { token, intakeId: intake('r') });
-    assert.equal(await usedScans('fourth@example.org'), 2, 'the fourth request is a new action');
+    const token = await trialAccount(service, { email: 'retry@example.org', granted: 5 });
+    mode = { status: 400 };
+    assert.equal((await scan(service, { token, intakeId: intake('retry') })).status, 400);
+    mode = 'ok';
+    assert.equal((await scan(service, { token, intakeId: intake('retry') })).status, 200);
+    assert.equal(await usedScans('retry@example.org'), 1);
+  });
+});
 
+test('a third overlapping request on one id, or one after thirty minutes, costs a new scan', async () => {
+  await withService({}, async (service) => {
+    answerDelayMs = 200;
+    const token = await trialAccount(service, { email: 'third@example.org', granted: 5 });
+    // Two in flight ride on one scan; the third is past the bound.
+    const inFlight = [scan(service, { token, intakeId: intake('r') }), scan(service, { token, intakeId: intake('r') })];
+    await waitForIntakeRequests({ intakeId: intake('r'), requests: 2 });
+    assert.equal(await usedScans('third@example.org'), 1);
+    const third = scan(service, { token, intakeId: intake('r') });
+    await Promise.all([...inFlight, third]);
+    assert.equal(await usedScans('third@example.org'), 2, 'the third overlapping request is a new action');
+
+    // Thirty minutes on the service clock while the first request is still in
+    // flight: the id is a new action even though nothing was delivered.
     const later = await trialAccount(service, { email: 'later@example.org', granted: 5 });
-    await scan(service, { token: later, intakeId: intake('t') });
+    const slow = scan(service, { token: later, intakeId: intake('t') });
+    await waitForIntakeRequests({ intakeId: intake('t'), requests: 1 });
     service.advance(30 * MS_PER_MINUTE);
     const renewed = await signInAgain(service, 'later@example.org');
-    await scan(service, { token: renewed, intakeId: intake('t') });
+    await Promise.all([slow, scan(service, { token: renewed, intakeId: intake('t') })]);
     assert.equal(await usedScans('later@example.org'), 2, 'thirty minutes later the id is a new action');
   });
 });
@@ -401,14 +449,60 @@ test('parallel requests with one new id claim exactly one scan', async () => {
   await withService({}, async (service) => {
     answerDelayMs = 50;
     const token = await trialAccount(service, { email: 'same-id@example.org', granted: 5 });
-    // Three, the most one id may carry: a fourth would be a new action by the
-    // rule the test above pins.
-    const responses = await Promise.all([1, 2, 3].map(() => scan(service, { token, intakeId: intake('one') })));
+    // Two, the most one id may carry: a third would be a new action by the
+    // rule the tests above pin.
+    const responses = await Promise.all([1, 2].map(() => scan(service, { token, intakeId: intake('one') })));
     assert.deepEqual(
       responses.map((response) => response.status),
-      [200, 200, 200],
+      [200, 200],
     );
     assert.equal(await usedScans('same-id@example.org'), 1);
+  });
+});
+
+test('a late give-back or delivery for an older claim on an id changes nothing', async () => {
+  // M256/02: THE CLAIM NUMBER. Two requests ride on claim 1, a third claims a
+  // new scan (claim 2) on the same id, and then the first one fails late.
+  // Before the claim number, that give-back found claim 2's row, dropped it
+  // and returned claim 2's scan, and claim 2's answer was then free.
+  await withService({}, async (service) => {
+    await trialAccount(service, { email: 'late@example.org', granted: 5 });
+    const [account] = await database.db.select().from(accounts).where(eq(accounts.email, 'late@example.org'));
+    if (!account) throw new Error('no account');
+    const quota = createDrizzleAiQuotaStore(database.db);
+    const now = new Date(service.now());
+    const id = intake('late');
+
+    const first = await quota.claimTrialScan({ accountId: account.id, intakeId: id, now });
+    const second = await quota.claimTrialScan({ accountId: account.id, intakeId: id, now });
+    const third = await quota.claimTrialScan({ accountId: account.id, intakeId: id, now });
+    assert.ok(first.ok && second.ok && third.ok);
+    assert.equal(second.claim, first.claim, 'the second request rode on the first scan');
+    assert.equal(third.claim, first.claim + 1, 'the third request claimed a new scan');
+    assert.equal(await usedScans('late@example.org'), 2);
+
+    const late = await quota.releaseTrialScan({
+      accountId: account.id,
+      intakeId: id,
+      claim: first.claim,
+      undeliver: false,
+    });
+    assert.equal(late.givenBack, false);
+    assert.equal(await usedScans('late@example.org'), 2, "the late failure returned the newer claim's scan");
+    await quota.markTrialScanDelivered({ accountId: account.id, intakeId: id, claim: first.claim });
+    const [row] = await database.db.select().from(aiTrialIntakes).where(eq(aiTrialIntakes.intakeId, id));
+    assert.equal(row?.delivered, false, "a late 2xx for claim 1 marked claim 2's scan delivered");
+    assert.equal(row?.requests, 1);
+
+    // THE CONTROL: the give-back for the claim the row carries does return it.
+    const own = await quota.releaseTrialScan({
+      accountId: account.id,
+      intakeId: id,
+      claim: third.claim,
+      undeliver: false,
+    });
+    assert.equal(own.givenBack, true);
+    assert.equal(await usedScans('late@example.org'), 1);
   });
 });
 
@@ -620,6 +714,58 @@ test('a live trial account blocks a second spelling of its mailbox', async () =>
     service.advance(MS_PER_DAY + MS_PER_MINUTE);
     const second = await openAccount(service, 'c.arla@gmail.com');
     assert.deepEqual(second.body.account.trialScans, { granted: 0, left: 0 });
+  });
+});
+
+/** Mints a ten-scan trial letter for one spelling, with the mailbox hash the service computes. */
+async function mintTrialLetter(service: ServiceHarness, email: string): Promise<string> {
+  const minted = await createDrizzleInviteStore(database.db, { hashAddress: createTrialAddressHasher(PEPPER) }).mint({
+    email,
+    displayName: null,
+    role: 'member',
+    dailyAiLimit: TRIAL.dailyAiLimit,
+    trialScans: TRIAL.scans,
+    expiresAt: new Date(service.now() + 7 * MS_PER_DAY),
+    now: new Date(service.now()),
+    invitedByAccountId: null,
+    source: 'open-signup',
+  });
+  if (!minted.ok) throw new Error(`could not mint for ${email}`);
+  return minted.minted.token;
+}
+
+test('two spellings of one mailbox redeemed at the same moment grant one trial', async () => {
+  // M256/02: THE RACE. Both letters were minted while neither spelling had
+  // redeemed, so both carry ten scans, and the redemption's mailbox read is
+  // the only thing between them and a second trial. Without the lock both
+  // reads run before either commit and both say "no trial yet". Five pairs,
+  // so one lucky interleaving cannot pass the check.
+  await withService({}, async (service) => {
+    for (const [index, local] of ['anna', 'bert', 'carla', 'dora', 'emil'].entries()) {
+      const plain = index === 0 ? 'anna@gmail.com' : `${local}${index}@gmail.com`;
+      const dotted = index === 0 ? 'a.nna@gmail.com' : `${local.slice(0, 1)}.${local.slice(1)}${index}@gmail.com`;
+      const tokens = [await mintTrialLetter(service, plain), await mintTrialLetter(service, dotted)];
+      const created = await Promise.all(tokens.map((token) => redeem(service, token)));
+
+      assert.deepEqual(
+        created.map((response) => response.status),
+        [201, 201],
+        'both spellings still get an account',
+      );
+      const granted = created.map((response) => response.body.account.trialScans?.granted).toSorted();
+      assert.deepEqual(granted, [0, TRIAL.scans], `${plain} and ${dotted} got two trials`);
+    }
+    // THE CONTROL the loop cannot pass by granting nothing: a second mailbox
+    // redeemed at the same moment is a different person and gets its own.
+    const tokens = [
+      await mintTrialLetter(service, 'fritz@example.org'),
+      await mintTrialLetter(service, 'greta@example.org'),
+    ];
+    const created = await Promise.all(tokens.map((token) => redeem(service, token)));
+    assert.deepEqual(
+      created.map((response) => response.body.account.trialScans?.granted),
+      [TRIAL.scans, TRIAL.scans],
+    );
   });
 });
 
@@ -865,14 +1011,14 @@ test('no intake id and no address reaches a log line', async () => {
   };
   await withService({ logger, authLogger: logger }, async (service) => {
     // Every branch that touches an intake: a claim, a give-back after a 5xx,
-    // a reuse, and the refusal after the last scan.
+    // a delivered id asked again, and the refusal after the last scan.
     const token = await trialAccount(service, { email: 'quiet@example.org', granted: 2 });
     assert.equal((await scan(service, { token, intakeId: intake('quiet') })).status, 200);
     mode = { status: 500 };
     assert.equal((await scan(service, { token, intakeId: intake('loud') })).status, 500);
     mode = 'ok';
     assert.equal((await scan(service, { token, intakeId: intake('spent') })).status, 200);
-    assert.equal((await scan(service, { token, intakeId: intake('spent') })).status, 200);
+    assert.equal((await scan(service, { token, intakeId: intake('spent') })).status, 403);
     assert.equal((await scan(service, { token, intakeId: intake('over') })).status, 403);
   });
   // THE CONTROL the sweep cannot pass by finding nothing.

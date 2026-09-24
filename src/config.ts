@@ -29,6 +29,7 @@ import { MAX_DAILY_AI_LIMIT } from './admin/invite-store.js';
 import { DEFAULT_MEMBER_INVITE_LIFETIME_CAP, type MemberInvitePolicy } from './accounts/member-invites.js';
 import type { TurnstileConfig } from './accounts/captcha.js';
 import { MAX_TRIAL_SCANS, type TrialPolicy } from './accounts/scan-trial.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from './ai/chat-body-policy.js';
 
 /**
  * Minimum accepted `SERVER_SECRET` length. 32 characters is the shortest
@@ -147,8 +148,23 @@ export interface ServiceConfig {
    * and share trees do (`server/create-app.ts`).
    */
   ai: AiUpstreamConfig | null;
-  /** What `/health` advertises as the model behind the proxy, or `null`. Descriptive, never a routing decision. */
+  /**
+   * `AI_ADVERTISED_MODEL`: the model behind the proxy, or `null`.
+   *
+   * ENFORCED SINCE M256, not only advertised. `/health` publishes it, and the
+   * proxy writes it into every forwarded chat body, for every account, so a
+   * caller cannot pick a dearer model on the operator's key. `null` publishes
+   * no model and passes the caller's `model` through, which is the freedom a
+   * self-hosted instance may want. See `ai/chat-body-policy.ts`.
+   */
   aiAdvertisedModel: string | null;
+  /**
+   * `AI_MAX_OUTPUT_TOKENS`: the most output tokens one proxied request may ask
+   * for, default {@link DEFAULT_AI_MAX_OUTPUT_TOKENS}. Applied with or without
+   * a model: a larger value is capped, a missing one is written in. See
+   * `ai/chat-body-policy.ts` for how the default was measured.
+   */
+  aiMaxOutputTokens: number;
   /** Requests per account in any trailing 60 seconds on the proxy route. `AI_RATE_LIMIT_PER_MINUTE`, default 20. */
   aiRateLimitPerMinute: number;
   /**
@@ -1290,6 +1306,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): ServiceConfig {
     contentDir: env.CONTENT_DIR?.trim() || null,
     ai: parseAi(env),
     aiAdvertisedModel: env.AI_ADVERTISED_MODEL?.trim() || null,
+    aiMaxOutputTokens: parsePositiveInteger(env, 'AI_MAX_OUTPUT_TOKENS', DEFAULT_AI_MAX_OUTPUT_TOKENS),
     aiRateLimitPerMinute: parsePositiveInteger(env, 'AI_RATE_LIMIT_PER_MINUTE', 20),
     aiInstanceDailyLimit: parseAiInstanceDailyLimit(env),
     memberInvites: parseMemberInvites(env, trial),

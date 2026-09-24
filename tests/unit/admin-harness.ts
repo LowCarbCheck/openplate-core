@@ -39,6 +39,7 @@ import {
 import type { FeedbackReportDetail } from '../../src/feedback/feedback-admin-store.js';
 import { createFakeBlobRollbackStore, type FakeBlobRollbackStore } from './fake-blob-rollback-store.js';
 import { createUnusedTrialScanStore } from './fake-trial-scans.js';
+import { DEFAULT_AI_MAX_OUTPUT_TOKENS } from '../../src/ai/chat-body-policy.js';
 
 /** One emitted log line, kept whole so a test can assert on the message AND the fields. */
 export interface CapturedLogLine {
@@ -208,6 +209,7 @@ export async function startAdminHarness(options: StartAdminHarnessOptions): Prom
             perMinute: 10_000,
             maxRequestBytes: 8_000_000,
             instanceDailyLimit: options.aiInstanceDailyLimit,
+            bodyPolicy: { model: null, maxOutputTokens: DEFAULT_AI_MAX_OUTPUT_TOKENS },
           },
   });
 

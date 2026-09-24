@@ -54,7 +54,7 @@ import {
   trialAddressHashes,
 } from './schema.js';
 import type { TrialAddressHasher } from '../accounts/trial-address.js';
-import { mailboxHadTrial } from './trial-mailbox.js';
+import { lockTrialMailbox, mailboxHadTrial } from './trial-mailbox.js';
 
 /** One day in milliseconds, for the one place this module does date arithmetic. */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -453,15 +453,15 @@ export function createDrizzleAccountStore(db: Database, options: DrizzleAccountS
           // already redeemed one, under any spelling or before a deletion,
           // becomes `0`. The mint checked too, but a letter minted before the
           // other spelling was redeemed would slip past it.
+          //
+          // UNDER THE MAILBOX LOCK (M256/02), so two spellings redeemed at the
+          // same moment grant one trial: the second waits here until the
+          // first commits, and its read below then sees the first's row.
           const standing = standingFor({ claimed, grant: input.memberInviteGrant, now: input.now });
           const trialKey = hashAddress === null ? null : hashAddress(claimed.email);
-          if (
-            standing.trialScans !== null &&
-            standing.trialScans > 0 &&
-            trialKey !== null &&
-            (await mailboxHadTrial(tx, { hash: trialKey, exceptInviteId: claimed.id }))
-          ) {
-            standing.trialScans = 0;
+          if (standing.trialScans !== null && standing.trialScans > 0 && trialKey !== null) {
+            await lockTrialMailbox(tx, { hash: trialKey });
+            if (await mailboxHadTrial(tx, { hash: trialKey, exceptInviteId: claimed.id })) standing.trialScans = 0;
           }
 
           let account: AccountRow | undefined;
@@ -657,6 +657,10 @@ export function createDrizzleAccountStore(db: Database, options: DrizzleAccountS
           .limit(1);
         if (!match) return false;
         const trialKey = hashAddress === null ? null : hashAddress(match.email);
+        // Under the mailbox lock, for the reason the redemption takes it
+        // (M256/02): a redemption of another spelling must not grant a second
+        // trial between this read and this commit.
+        if (trialKey !== null) await lockTrialMailbox(tx, { hash: trialKey });
         if (trialKey !== null && (await mailboxHadTrial(tx, { hash: trialKey }))) return false;
 
         await tx
